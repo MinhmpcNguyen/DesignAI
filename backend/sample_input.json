@@ -1,0 +1,68 @@
+{
+  "user_id": "user_f1a4e69d3672aab8",
+  "input_payload": {
+    "tenant_id": "demo_tenant",
+    "user_input": {
+      "description": "Design a modern bedroom for 1-2 people. Keep the layout clean and minimal with clear circulation from the door to the bed.",
+      "room_type": "bedroom",
+      "floor_area_m2": 16.65,
+      "height": 2800,
+      "shape_points": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 4650,
+          "y": 0
+        },
+        {
+          "x": 4650,
+          "y": 3600
+        },
+        {
+          "x": 50,
+          "y": 3600
+        }
+      ],
+      "windows": 1,
+      "window_direction": "",
+      "style": "modern"
+    },
+    "doors": [
+      {
+        "id": "door_1",
+        "segment_mm": [
+          {
+            "x": 0,
+            "y": 1608
+          },
+          {
+            "x": 0,
+            "y": 2608
+          }
+        ],
+        "swing_radius_mm": 900,
+        "hinge_hint": "LEFT"
+      }
+    ],
+    "windows": [
+      {
+        "id": "window_1",
+        "segment_mm": [
+          {
+            "x": 2000,
+            "y": 8
+          },
+          {
+            "x": 4000,
+            "y": 8
+          }
+        ],
+        "clearance_mm": 150
+      }
+    ]
+  },
+  "description": "Modern bedroom layout test from existing case user_f1a4e69d3672aab8_20260507T083710Z",
+  "special_notes": "Avoid blocking window clearance. Do not place tall furniture in front of windows."
+}

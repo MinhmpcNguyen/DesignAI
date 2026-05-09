@@ -1,0 +1,2591 @@
+{
+  "compiler_version": "semantic_program_compiler_v1",
+  "source_file": "rule.json",
+  "compile_notes": [
+    "Flattened nested root arrays into a single room list.",
+    "Merged pick_rules and top-level cluster pick fields into one canonical object_program.",
+    "Inferred cluster priority when absent: must_include -> core; *_optional -> optional; *_support/*support* -> support; otherwise support.",
+    "Moved conditional and conditional_rules into activation.conditions with normalized effects.",
+    "Preserved rule intent and global soft preferences as symbolic semantics to be consumed later by the semantic planner / solver."
+  ],
+  "warnings": [
+    "Flattened nested list at root index 4 containing 8 entries."
+  ],
+  "rooms": [
+    {
+      "room_type": "living_room",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "main_seating",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "coffee_table",
+              "armchair",
+              "side_table",
+              "floor_lamp"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "coffee_table",
+              "armchair",
+              "side_table",
+              "floor_lamp",
+              "sofa",
+              "sectional_sofa"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": []
+          }
+        },
+        {
+          "cluster_id": "media",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "tv_console"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "media_shelf"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "tv_console"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "tv_console"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "media_shelf"
+            ]
+          }
+        },
+        {
+          "cluster_id": "storage_display_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "bookshelf",
+              "storage_cabinet",
+              "console_table"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bookshelf",
+              "storage_cabinet",
+              "console_table"
+            ]
+          }
+        },
+        {
+          "cluster_id": "pet_or_entry_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": [
+              {
+                "predicate": "brief_mentions_pet",
+                "effects": {
+                  "required": [],
+                  "required_if_kept": [],
+                  "choose_exactly_one_from": [],
+                  "choose_exactly_one_from_if_kept": [],
+                  "choose_at_least_one_from": [],
+                  "optional": [
+                    "pet_bed"
+                  ],
+                  "optional_limits": {
+                    "global": null,
+                    "by_object": {}
+                  }
+                }
+              },
+              {
+                "predicate": "entry_logic_present",
+                "effects": {
+                  "required": [],
+                  "required_if_kept": [],
+                  "choose_exactly_one_from": [],
+                  "choose_exactly_one_from_if_kept": [],
+                  "choose_at_least_one_from": [],
+                  "optional": [
+                    "shoe_rack"
+                  ],
+                  "optional_limits": {
+                    "global": null,
+                    "by_object": {}
+                  }
+                }
+              }
+            ]
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "pet_bed",
+              "shoe_rack"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [],
+        "dominant_workflow_required": [],
+        "group_caps": [],
+        "group_minimums": [],
+        "soft_preferences": []
+      }
+    },
+    {
+      "room_type": "bedroom",
+      "policy": {
+        "intent": "balanced, functional, restful, uncluttered",
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "sleep_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "bed"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "nightstand"
+            ],
+            "optional_limits": {
+              "global": null,
+              "by_object": {
+                "nightstand": 2
+              }
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "bed"
+            ],
+            "notes": [
+              "The bed must remain the dominant anchor.",
+              "Nightstands are useful support objects but should be limited.",
+              "A bench is optional and should only be kept if it improves completeness without clutter."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "bed"
+            ],
+            "shrink_before_drop": [
+              "nightstand"
+            ],
+            "drop_first": [
+              "nightstand"
+            ]
+          }
+        },
+        {
+          "cluster_id": "storage_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [
+              "wardrobe",
+              "dresser"
+            ],
+            "optional": [
+              "bookshelf",
+              "storage_cabinet"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "wardrobe",
+              "dresser"
+            ],
+            "notes": [
+              "Keep at least one strong storage anchor.",
+              "Only one additional storage/display support object should be added."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "wardrobe",
+              "dresser"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bookshelf",
+              "storage_cabinet"
+            ]
+          }
+        },
+        {
+          "cluster_id": "work_study",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "desk"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [
+              "chair",
+              "office_chair"
+            ],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "bookshelf"
+            ],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": [
+              "Only include this cluster if the brief implies study, work, or multi-use bedroom behavior.",
+              "Keep just one desk seat."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bookshelf"
+            ]
+          }
+        },
+        {
+          "cluster_id": "lounge_reading",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "armchair"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "side_table",
+              "floor_lamp"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": [
+              "Use this as a quiet secondary relaxation zone.",
+              "Do not create this cluster if the room already feels crowded."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "side_table",
+              "floor_lamp"
+            ]
+          }
+        },
+        {
+          "cluster_id": "media_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": [
+              {
+                "predicate": "brief_mentions_tv_or_media",
+                "effects": {
+                  "required": [
+                    "tv_console"
+                  ],
+                  "required_if_kept": [],
+                  "choose_exactly_one_from": [],
+                  "choose_exactly_one_from_if_kept": [],
+                  "choose_at_least_one_from": [],
+                  "optional": [],
+                  "optional_limits": {
+                    "global": null,
+                    "by_object": {}
+                  }
+                }
+              }
+            ]
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": [
+              "Only include media furniture when the brief explicitly supports it."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "tv_console"
+            ]
+          }
+        },
+        {
+          "cluster_id": "utility_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": [
+              {
+                "predicate": "brief_mentions_laundry_or_daily_storage",
+                "effects": {
+                  "required": [],
+                  "required_if_kept": [],
+                  "choose_exactly_one_from": [],
+                  "choose_exactly_one_from_if_kept": [],
+                  "choose_at_least_one_from": [],
+                  "optional": [
+                    "laundry_basket"
+                  ],
+                  "optional_limits": {
+                    "global": null,
+                    "by_object": {}
+                  }
+                }
+              }
+            ]
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": [
+              "Utility items should be included only when justified."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "laundry_basket"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [
+          "bed"
+        ],
+        "dominant_workflow_required": [],
+        "group_caps": [
+          {
+            "objects": [
+              "wardrobe",
+              "dresser"
+            ],
+            "max_keep": 2
+          },
+          {
+            "objects": [
+              "bookshelf",
+              "storage_cabinet"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "chair",
+              "office_chair"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "armchair"
+            ],
+            "max_keep": 1
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": [
+          "prefer_core_before_support",
+          "prefer_restfulness_and_clearance",
+          "prefer_completeness_without_clutter"
+        ]
+      }
+    },
+    {
+      "room_type": "kitchen",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "kitchen_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "kitchen_base_cabinet",
+              "fridge",
+              "stove",
+              "sink"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "dishwasher"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "kitchen_base_cabinet"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "kitchen_base_cabinet",
+              "fridge",
+              "stove",
+              "sink"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "dishwasher"
+            ]
+          }
+        },
+        {
+          "cluster_id": "storage_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "kitchen_tall_cabinet",
+              "pantry_cabinet"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "kitchen_tall_cabinet",
+              "pantry_cabinet"
+            ]
+          }
+        },
+        {
+          "cluster_id": "island_prep_social",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "kitchen_island"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": []
+          }
+        },
+        {
+          "cluster_id": "hospitality_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "wine_cabinet",
+              "bar_cart"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "wine_cabinet",
+              "bar_cart"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [],
+        "dominant_workflow_required": [
+          [
+            "fridge",
+            "sink",
+            "stove"
+          ]
+        ],
+        "group_caps": [
+          {
+            "objects": [
+              "kitchen_tall_cabinet",
+              "pantry_cabinet"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "wine_cabinet",
+              "bar_cart"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "kitchen_island"
+            ],
+            "max_keep": 1
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": []
+      }
+    },
+    {
+      "room_type": "studio",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "sleep_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "bed"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "nightstand",
+              "dresser"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "bed"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "bed"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "nightstand",
+              "dresser"
+            ]
+          }
+        },
+        {
+          "cluster_id": "storage_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "wardrobe",
+              "bookshelf",
+              "storage_cabinet"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "wardrobe",
+              "bookshelf",
+              "storage_cabinet"
+            ]
+          }
+        },
+        {
+          "cluster_id": "work_study",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "desk"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [
+              "office_chair",
+              "chair"
+            ],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": []
+          }
+        },
+        {
+          "cluster_id": "living_media",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "armchair",
+              "ottoman",
+              "coffee_table",
+              "side_table",
+              "tv_console",
+              "floor_lamp"
+            ],
+            "optional_limits": {
+              "global": 4,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "armchair",
+              "ottoman",
+              "coffee_table",
+              "side_table",
+              "tv_console",
+              "floor_lamp"
+            ]
+          }
+        },
+        {
+          "cluster_id": "dining_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "dining_table"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "dining_chair"
+            ],
+            "optional_limits": {
+              "global": null,
+              "by_object": {
+                "dining_chair": 2
+              }
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [
+              "dining_chair"
+            ],
+            "drop_first": [
+              "dining_chair"
+            ]
+          }
+        },
+        {
+          "cluster_id": "kitchen_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "kitchen_base_cabinet",
+              "fridge",
+              "stove",
+              "sink"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "kitchen_tall_cabinet"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "kitchen_base_cabinet"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "kitchen_base_cabinet",
+              "fridge",
+              "stove",
+              "sink"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "kitchen_tall_cabinet"
+            ]
+          }
+        },
+        {
+          "cluster_id": "utility_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": [
+              {
+                "predicate": "brief_mentions_laundry_or_daily_storage",
+                "effects": {
+                  "required": [],
+                  "required_if_kept": [],
+                  "choose_exactly_one_from": [],
+                  "choose_exactly_one_from_if_kept": [],
+                  "choose_at_least_one_from": [],
+                  "optional": [
+                    "laundry_basket"
+                  ],
+                  "optional_limits": {
+                    "global": null,
+                    "by_object": {}
+                  }
+                }
+              }
+            ]
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "laundry_basket"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [
+          "bed"
+        ],
+        "dominant_workflow_required": [
+          [
+            "fridge",
+            "sink",
+            "stove"
+          ]
+        ],
+        "group_caps": [
+          {
+            "objects": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "office_chair",
+              "chair"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "wardrobe",
+              "dresser",
+              "storage_cabinet"
+            ],
+            "max_keep": 2
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": [
+          "prefer_sleep_and_kitchen_before_secondary_zones",
+          "prefer_multi_function_without_clutter"
+        ]
+      }
+    },
+    {
+      "room_type": "guest_room",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "sleep_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "bed"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "nightstand",
+              "bench"
+            ],
+            "optional_limits": {
+              "global": null,
+              "by_object": {
+                "nightstand": 2,
+                "bench": 1
+              }
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "bed"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "bed"
+            ],
+            "shrink_before_drop": [
+              "nightstand"
+            ],
+            "drop_first": [
+              "nightstand",
+              "bench"
+            ]
+          }
+        },
+        {
+          "cluster_id": "storage_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [
+              "wardrobe",
+              "dresser"
+            ],
+            "optional": [
+              "bookshelf",
+              "storage_cabinet"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "wardrobe",
+              "dresser"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "wardrobe",
+              "dresser"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bookshelf",
+              "storage_cabinet"
+            ]
+          }
+        },
+        {
+          "cluster_id": "work_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "desk"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [
+              "chair"
+            ],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": []
+          }
+        },
+        {
+          "cluster_id": "lounge_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "armchair"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "side_table",
+              "floor_lamp"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "side_table",
+              "floor_lamp"
+            ]
+          }
+        },
+        {
+          "cluster_id": "utility_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": [
+              {
+                "predicate": "brief_mentions_laundry_or_long_stay",
+                "effects": {
+                  "required": [],
+                  "required_if_kept": [],
+                  "choose_exactly_one_from": [],
+                  "choose_exactly_one_from_if_kept": [],
+                  "choose_at_least_one_from": [],
+                  "optional": [
+                    "laundry_basket"
+                  ],
+                  "optional_limits": {
+                    "global": null,
+                    "by_object": {}
+                  }
+                }
+              }
+            ]
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "laundry_basket"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [
+          "bed"
+        ],
+        "dominant_workflow_required": [],
+        "group_caps": [
+          {
+            "objects": [
+              "bookshelf",
+              "storage_cabinet"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "armchair",
+              "bench"
+            ],
+            "max_keep": 1
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": []
+      }
+    },
+    {
+      "room_type": "kids_room",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "sleep_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "bed"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "nightstand"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "bed"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "bed"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "nightstand"
+            ]
+          }
+        },
+        {
+          "cluster_id": "storage_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [
+              "wardrobe",
+              "dresser",
+              "storage_cabinet"
+            ],
+            "optional": [
+              "bookshelf"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "wardrobe",
+              "dresser",
+              "storage_cabinet"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "wardrobe",
+              "dresser",
+              "storage_cabinet"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bookshelf"
+            ]
+          }
+        },
+        {
+          "cluster_id": "study_core",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "desk",
+              "chair"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "bookshelf"
+            ],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bookshelf"
+            ]
+          }
+        },
+        {
+          "cluster_id": "casual_play",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "bean_bag",
+              "side_table",
+              "floor_lamp"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bean_bag",
+              "side_table",
+              "floor_lamp"
+            ]
+          }
+        },
+        {
+          "cluster_id": "utility_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": [
+              {
+                "predicate": "brief_mentions_laundry_or_daily_storage",
+                "effects": {
+                  "required": [],
+                  "required_if_kept": [],
+                  "choose_exactly_one_from": [],
+                  "choose_exactly_one_from_if_kept": [],
+                  "choose_at_least_one_from": [],
+                  "optional": [
+                    "laundry_basket"
+                  ],
+                  "optional_limits": {
+                    "global": null,
+                    "by_object": {}
+                  }
+                }
+              }
+            ]
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "laundry_basket"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [
+          "bed"
+        ],
+        "dominant_workflow_required": [],
+        "group_caps": [
+          {
+            "objects": [
+              "bookshelf",
+              "storage_cabinet"
+            ],
+            "max_keep": 1
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": [
+          "prefer_storage_and_study_before_lounge"
+        ]
+      }
+    },
+    {
+      "room_type": "dining_room",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "dining_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "dining_table"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "dining_chair"
+            ],
+            "optional_limits": {
+              "global": null,
+              "by_object": {
+                "dining_chair": 6
+              }
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "dining_table"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "dining_table"
+            ],
+            "shrink_before_drop": [
+              "dining_chair"
+            ],
+            "drop_first": [
+              "dining_chair"
+            ]
+          }
+        },
+        {
+          "cluster_id": "service_storage",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "buffet_sideboard",
+              "china_cabinet"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "buffet_sideboard",
+              "china_cabinet"
+            ]
+          }
+        },
+        {
+          "cluster_id": "hospitality_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "bar_cart",
+              "console_table",
+              "side_table"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bar_cart",
+              "console_table",
+              "side_table"
+            ]
+          }
+        },
+        {
+          "cluster_id": "display_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "bookshelf",
+              "storage_cabinet",
+              "plant"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bookshelf",
+              "storage_cabinet",
+              "plant"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [
+          "dining_table"
+        ],
+        "dominant_workflow_required": [],
+        "group_caps": [
+          {
+            "objects": [
+              "buffet_sideboard",
+              "china_cabinet"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "bar_cart",
+              "console_table",
+              "side_table"
+            ],
+            "max_keep": 1
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": []
+      }
+    },
+    {
+      "room_type": "bathroom",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "bathroom_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "bathroom_vanity",
+              "toilet"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [
+              "shower",
+              "bathtub"
+            ],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "bathroom_vanity",
+              "shower",
+              "bathtub"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "bathroom_vanity",
+              "toilet",
+              "shower",
+              "bathtub"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": []
+          }
+        },
+        {
+          "cluster_id": "hygiene_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "bidet",
+              "bathroom_stool"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bidet",
+              "bathroom_stool"
+            ]
+          }
+        },
+        {
+          "cluster_id": "utility_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": [
+              {
+                "predicate": "brief_mentions_laundry_or_extra_storage",
+                "effects": {
+                  "required": [],
+                  "required_if_kept": [],
+                  "choose_exactly_one_from": [],
+                  "choose_exactly_one_from_if_kept": [],
+                  "choose_at_least_one_from": [],
+                  "optional": [
+                    "laundry_basket"
+                  ],
+                  "optional_limits": {
+                    "global": null,
+                    "by_object": {}
+                  }
+                }
+              }
+            ]
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": null,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "laundry_basket"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [],
+        "dominant_workflow_required": [
+          [
+            "bathroom_vanity",
+            "toilet"
+          ]
+        ],
+        "group_caps": [],
+        "group_minimums": [
+          {
+            "objects": [
+              "shower",
+              "bathtub"
+            ],
+            "min_keep": 1
+          }
+        ],
+        "soft_preferences": []
+      }
+    },
+    {
+      "room_type": "laundry_room",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "laundry_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "washing_machine",
+              "laundry_basket"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "dryer",
+              "utility_sink"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "washing_machine"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "washing_machine",
+              "laundry_basket"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "dryer",
+              "utility_sink"
+            ]
+          }
+        },
+        {
+          "cluster_id": "drying_prep",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "drying_rack",
+              "ironing_board"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "drying_rack",
+              "ironing_board"
+            ]
+          }
+        },
+        {
+          "cluster_id": "storage_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "storage_cabinet"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "storage_cabinet"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [],
+        "dominant_workflow_required": [
+          [
+            "washing_machine",
+            "laundry_basket"
+          ]
+        ],
+        "group_caps": [],
+        "group_minimums": [],
+        "soft_preferences": [
+          "prefer_workflow_before_storage"
+        ]
+      }
+    },
+    {
+      "room_type": "home_office",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "work_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "desk"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [
+              "office_chair",
+              "chair"
+            ],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "printer",
+              "office_pedestal",
+              "filing_cabinet"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "desk",
+              "office_chair",
+              "chair"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "desk",
+              "office_chair",
+              "chair"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "printer",
+              "office_pedestal",
+              "filing_cabinet"
+            ]
+          }
+        },
+        {
+          "cluster_id": "storage_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "bookshelf",
+              "storage_cabinet"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "bookshelf",
+              "storage_cabinet"
+            ]
+          }
+        },
+        {
+          "cluster_id": "lounge_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "armchair"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "side_table",
+              "floor_lamp"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "side_table",
+              "floor_lamp"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [
+          "desk"
+        ],
+        "dominant_workflow_required": [],
+        "group_caps": [
+          {
+            "objects": [
+              "office_chair",
+              "chair"
+            ],
+            "max_keep": 1
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": [
+          "prefer_productivity_before_lounge"
+        ]
+      }
+    },
+    {
+      "room_type": "entryway",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "entry_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [
+              "entry_bench",
+              "bench",
+              "console_table",
+              "shoe_rack",
+              "coat_rack",
+              "storage_cabinet"
+            ],
+            "optional": [
+              "umbrella_stand"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "entry_bench",
+              "bench",
+              "console_table",
+              "shoe_rack",
+              "coat_rack",
+              "storage_cabinet"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "entry_bench",
+              "bench",
+              "console_table",
+              "shoe_rack",
+              "coat_rack",
+              "storage_cabinet"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "umbrella_stand"
+            ]
+          }
+        },
+        {
+          "cluster_id": "drop_zone",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "console_table",
+              "side_table"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "console_table",
+              "side_table"
+            ]
+          }
+        },
+        {
+          "cluster_id": "entry_storage",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "shoe_rack",
+              "coat_rack",
+              "storage_cabinet"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "shoe_rack",
+              "coat_rack",
+              "storage_cabinet"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [],
+        "dominant_workflow_required": [],
+        "group_caps": [
+          {
+            "objects": [
+              "entry_bench",
+              "bench"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "console_table",
+              "side_table"
+            ],
+            "max_keep": 1
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": [
+          "prefer_storage_if_entry_is_active"
+        ]
+      }
+    },
+    {
+      "room_type": "balcony",
+      "policy": {
+        "intent": null,
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "seating_core",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [
+              "chair",
+              "armchair",
+              "bench"
+            ],
+            "optional": [
+              "side_table"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "chair",
+              "armchair",
+              "bench"
+            ],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "chair",
+              "armchair",
+              "bench"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "side_table"
+            ]
+          }
+        },
+        {
+          "cluster_id": "greenery_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "plant"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "plant"
+            ]
+          }
+        },
+        {
+          "cluster_id": "storage_optional",
+          "priority": "optional",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "storage_cabinet"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "storage_cabinet"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [],
+        "dominant_workflow_required": [],
+        "group_caps": [
+          {
+            "objects": [
+              "chair",
+              "armchair",
+              "bench"
+            ],
+            "max_keep": 2
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": [
+          "prefer_openness_and_lightness"
+        ]
+      }
+    }
+  ]
+}

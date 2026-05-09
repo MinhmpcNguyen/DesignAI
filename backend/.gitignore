@@ -1,0 +1,67 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+private_key*.enc
+*.pem
+*.key
+
+# Test, type-check, and lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Build and packaging artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Runtime outputs
+logs/
+generated/
+cases/
+outputs/
+outputs1/
+tmp/
+temp/
+
+# Local databases and dumps
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+
+# Model and embedding artifacts
+OpenShape-Embeddings/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Editor and OS files
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Optional local JS tooling
+node_modules/

@@ -1,0 +1,30 @@
+{
+  "floorplan_geometry": {
+    "room": {
+      "room_id": "room_1",
+      "name": "Main",
+      "polygon_mm": [
+        {"x": 0, "y": 0},
+        {"x": 6000, "y": 0},
+        {"x": 6000, "y": 4000},
+        {"x": 0, "y": 4000}
+      ]
+    },
+    "walls": [],
+    "openings": {"doors": [], "windows": []}
+  },
+  "placements": [
+    {
+      "placement_id": "p1",
+      "asset_id": "desk_001",
+      "category": "desk",
+      "position_mm": {"x": 5800, "y": 2000},
+      "rotation_deg": 0,
+      "footprint_mm": {"w": 1200, "d": 600},
+      "height_mm": 750,
+      "color_hex": "#CFCAC2",
+      "anchor": "center"
+    }
+  ],
+  "constraints": {}
+}

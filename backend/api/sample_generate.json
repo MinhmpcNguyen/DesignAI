@@ -1,0 +1,30 @@
+{
+  "tenant_id": "demo_tenant",
+  "user_input": {
+    "description": "Thiết kế office phong cách japandi",
+    "room_type": "office",
+    "style": "japandi",
+    "special_description": "cần 2 khu làm việc"
+  },
+  "floorplan_geometry": {
+    "room": {
+      "room_id": "room_1",
+      "name": "Main",
+      "polygon_mm": [
+        {"x": 0, "y": 0},
+        {"x": 6000, "y": 0},
+        {"x": 6000, "y": 4000},
+        {"x": 0, "y": 4000}
+      ]
+    },
+    "walls": [],
+    "openings": {
+      "doors": [],
+      "windows": []
+    }
+  },
+  "constraints": {
+    "room_type": "office",
+    "description": "Thiết kế office phong cách japandi"
+  }
+}

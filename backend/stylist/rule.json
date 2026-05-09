@@ -1,0 +1,982 @@
+[
+    {
+        "room_type": "living_room",
+        "selection_guidance": {
+            "use_all_objects": false,
+            "cluster_templates": [
+                {
+                    "cluster_id": "main_seating",
+                    "selection_rule": "must_include",
+                    "exactly_one_of": [
+                        "sofa",
+                        "sectional_sofa"
+                    ],
+                    "required_all_of": [
+                        "coffee_table",
+                        "armchair",
+                        "side_table",
+                        "floor_lamp"
+                    ]
+                },
+                {
+                    "cluster_id": "media",
+                    "selection_rule": "must_include",
+                    "required_all_of": [
+                        "tv_console"
+                    ],
+                    "optional_from": [
+                        "media_shelf"
+                    ],
+                    "optional_at_most": 1
+                },
+                {
+                    "cluster_id": "storage_display_support",
+                    "selection_rule": "may_include_if_useful",
+                    "optional_from": [
+                        "bookshelf",
+                        "storage_cabinet",
+                        "console_table"
+                    ],
+                    "optional_at_most": 1
+                },
+                {
+                    "cluster_id": "pet_or_entry_support",
+                    "selection_rule": "may_include_if_useful",
+                    "conditional": {
+                        "brief_mentions_pet": [
+                            "pet_bed"
+                        ],
+                        "entry_logic_present": [
+                            "shoe_rack"
+                        ]
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "room_type": "bedroom",
+        "selection_guidance": {
+            "intent": "balanced, functional, restful, uncluttered",
+            "use_all_objects": false,
+            "cluster_templates": [
+                {
+                    "cluster_id": "sleep_core",
+                    "priority": "core",
+                    "selection_rule": "must_include",
+                    "pick_rules": {
+                        "required_all_of": [
+                            "bed"
+                        ],
+                        "optional_from": [
+                            "nightstand"
+                        ],
+                        "max_keep": {
+                            "nightstand": 2,
+                            "bench": 1
+                        }
+                    },
+                    "notes": [
+                        "The bed must remain the dominant anchor.",
+                        "Nightstands are useful support objects but should be limited.",
+                        "A bench is optional and should only be kept if it improves completeness without clutter."
+                    ]
+                },
+                {
+                    "cluster_id": "storage_core",
+                    "priority": "core",
+                    "selection_rule": "must_include",
+                    "pick_rules": {
+                        "at_least_one_of": [
+                            "wardrobe",
+                            "dresser"
+                        ],
+                        "optional_from": [
+                            "bookshelf",
+                            "storage_cabinet"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    "notes": [
+                        "Keep at least one strong storage anchor.",
+                        "Only one additional storage/display support object should be added."
+                    ]
+                },
+                {
+                    "cluster_id": "work_study",
+                    "priority": "support",
+                    "selection_rule": "may_include_if_useful",
+                    "pick_rules": {
+                        "required_all_of_if_kept": [
+                            "desk"
+                        ],
+                        "exactly_one_of_if_kept": [
+                            "chair",
+                            "office_chair"
+                        ],
+                        "optional_from": [
+                            "bookshelf"
+                        ]
+                    },
+                    "notes": [
+                        "Only include this cluster if the brief implies study, work, or multi-use bedroom behavior.",
+                        "Keep just one desk seat."
+                    ]
+                },
+                {
+                    "cluster_id": "lounge_reading",
+                    "priority": "support",
+                    "selection_rule": "may_include_if_useful",
+                    "pick_rules": {
+                        "required_all_of_if_kept": [
+                            "armchair"
+                        ],
+                        "optional_from": [
+                            "side_table",
+                            "floor_lamp"
+                        ],
+                        "optional_at_most": 2
+                    },
+                    "notes": [
+                        "Use this as a quiet secondary relaxation zone.",
+                        "Do not create this cluster if the room already feels crowded."
+                    ]
+                },
+                {
+                    "cluster_id": "media_optional",
+                    "priority": "optional",
+                    "selection_rule": "may_include_if_useful",
+                    "conditional_rules": [
+                        {
+                            "if": "brief_mentions_tv_or_media",
+                            "required_all_of": [
+                                "tv_console"
+                            ]
+                        }
+                    ],
+                    "notes": [
+                        "Only include media furniture when the brief explicitly supports it."
+                    ]
+                },
+                {
+                    "cluster_id": "utility_optional",
+                    "priority": "optional",
+                    "selection_rule": "may_include_if_useful",
+                    "conditional_rules": [
+                        {
+                            "if": "brief_mentions_laundry_or_daily_storage",
+                            "optional_from": [
+                                "laundry_basket"
+                            ]
+                        }
+                    ],
+                    "notes": [
+                        "Utility items should be included only when justified."
+                    ]
+                }
+            ],
+            "global_selection_rules": [
+                {
+                    "type": "dominant_anchor_required",
+                    "object": "bed"
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "wardrobe",
+                        "dresser"
+                    ],
+                    "max_keep": 2
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "bookshelf",
+                        "storage_cabinet"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "chair",
+                        "office_chair"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "armchair"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "prefer_core_before_support",
+                    "enabled": true
+                },
+                {
+                    "type": "prefer_restfulness_and_clearance",
+                    "enabled": true
+                },
+                {
+                    "type": "prefer_completeness_without_clutter",
+                    "enabled": true
+                }
+            ]
+        }
+    },
+    {
+        "room_type": "kitchen",
+        "selection_guidance": {
+            "use_all_objects": false,
+            "cluster_templates": [
+                {
+                    "cluster_id": "kitchen_core",
+                    "selection_rule": "must_include",
+                    "required_all_of": [
+                        "kitchen_base_cabinet",
+                        "fridge",
+                        "stove",
+                        "sink"
+                    ],
+                    "optional_from": [
+                        "dishwasher"
+                    ],
+                    "optional_at_most": 1
+                },
+                {
+                    "cluster_id": "storage_support",
+                    "selection_rule": "may_include_if_useful",
+                    "optional_from": [
+                        "kitchen_tall_cabinet",
+                        "pantry_cabinet"
+                    ],
+                    "optional_at_most": 1
+                },
+                {
+                    "cluster_id": "island_prep_social",
+                    "selection_rule": "may_include_if_useful",
+                    "required_all_of_if_kept": [
+                        "kitchen_island"
+                    ],
+                    "optional_at_most": 1
+                },
+                {
+                    "cluster_id": "hospitality_support",
+                    "selection_rule": "may_include_if_useful",
+                    "optional_from": [
+                        "wine_cabinet",
+                        "bar_cart"
+                    ],
+                    "optional_at_most": 1
+                }
+            ],
+            "global_selection_rules": [
+                {
+                    "type": "dominant_workflow_required",
+                    "objects": [
+                        "fridge",
+                        "sink",
+                        "stove"
+                    ]
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "kitchen_tall_cabinet",
+                        "pantry_cabinet"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "wine_cabinet",
+                        "bar_cart"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "kitchen_island"
+                    ],
+                    "max_keep": 1
+                }
+            ]
+        }
+    },
+    {
+        "room_type": "studio",
+        "selection_guidance": {
+            "use_all_objects": false,
+            "cluster_templates": [
+                {
+                    "cluster_id": "sleep_core",
+                    "selection_rule": "must_include",
+                    "required_all_of": [
+                        "bed"
+                    ],
+                    "optional_from": [
+                        "nightstand",
+                        "dresser"
+                    ],
+                    "optional_at_most": 2
+                },
+                {
+                    "cluster_id": "storage_support",
+                    "selection_rule": "may_include_if_useful",
+                    "optional_from": [
+                        "wardrobe",
+                        "bookshelf",
+                        "storage_cabinet"
+                    ],
+                    "optional_at_most": 2
+                },
+                {
+                    "cluster_id": "work_study",
+                    "selection_rule": "may_include_if_useful",
+                    "required_all_of_if_kept": [
+                        "desk"
+                    ],
+                    "exactly_one_of_if_kept": [
+                        "office_chair",
+                        "chair"
+                    ]
+                },
+                {
+                    "cluster_id": "living_media",
+                    "selection_rule": "may_include_if_useful",
+                    "exactly_one_of_if_kept": [
+                        "sofa",
+                        "sectional_sofa"
+                    ],
+                    "optional_from": [
+                        "armchair",
+                        "ottoman",
+                        "coffee_table",
+                        "side_table",
+                        "tv_console",
+                        "floor_lamp"
+                    ],
+                    "optional_at_most": 4
+                },
+                {
+                    "cluster_id": "dining_optional",
+                    "selection_rule": "may_include_if_useful",
+                    "required_all_of_if_kept": [
+                        "dining_table"
+                    ],
+                    "optional_from": [
+                        "dining_chair"
+                    ],
+                    "max_keep": {
+                        "dining_chair": 2
+                    }
+                },
+                {
+                    "cluster_id": "kitchen_core",
+                    "selection_rule": "must_include",
+                    "required_all_of": [
+                        "kitchen_base_cabinet",
+                        "fridge",
+                        "stove",
+                        "sink"
+                    ],
+                    "optional_from": [
+                        "kitchen_tall_cabinet"
+                    ],
+                    "optional_at_most": 1
+                },
+                {
+                    "cluster_id": "utility_optional",
+                    "selection_rule": "may_include_if_useful",
+                    "conditional": {
+                        "brief_mentions_laundry_or_daily_storage": [
+                            "laundry_basket"
+                        ]
+                    }
+                }
+            ],
+            "global_selection_rules": [
+                {
+                    "type": "dominant_anchor_required",
+                    "object": "bed"
+                },
+                {
+                    "type": "dominant_workflow_required",
+                    "objects": [
+                        "fridge",
+                        "sink",
+                        "stove"
+                    ]
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "sofa",
+                        "sectional_sofa"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "office_chair",
+                        "chair"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "wardrobe",
+                        "dresser",
+                        "storage_cabinet"
+                    ],
+                    "max_keep": 2
+                },
+                {
+                    "type": "prefer_sleep_and_kitchen_before_secondary_zones",
+                    "enabled": true
+                },
+                {
+                    "type": "prefer_multi_function_without_clutter",
+                    "enabled": true
+                }
+            ]
+        }
+    },
+    [
+        {
+            "room_type": "guest_room",
+            "selection_guidance": {
+                "use_all_objects": false,
+                "cluster_templates": [
+                    {
+                        "cluster_id": "sleep_core",
+                        "selection_rule": "must_include",
+                        "required_all_of": [
+                            "bed"
+                        ],
+                        "optional_from": [
+                            "nightstand",
+                            "bench"
+                        ],
+                        "max_keep": {
+                            "nightstand": 2,
+                            "bench": 1
+                        }
+                    },
+                    {
+                        "cluster_id": "storage_core",
+                        "selection_rule": "must_include",
+                        "at_least_one_of": [
+                            "wardrobe",
+                            "dresser"
+                        ],
+                        "optional_from": [
+                            "bookshelf",
+                            "storage_cabinet"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "work_optional",
+                        "selection_rule": "may_include_if_useful",
+                        "required_all_of_if_kept": [
+                            "desk"
+                        ],
+                        "exactly_one_of_if_kept": [
+                            "chair"
+                        ]
+                    },
+                    {
+                        "cluster_id": "lounge_optional",
+                        "selection_rule": "may_include_if_useful",
+                        "required_all_of_if_kept": [
+                            "armchair"
+                        ],
+                        "optional_from": [
+                            "side_table",
+                            "floor_lamp"
+                        ],
+                        "optional_at_most": 2
+                    },
+                    {
+                        "cluster_id": "utility_optional",
+                        "selection_rule": "may_include_if_useful",
+                        "conditional": {
+                            "brief_mentions_laundry_or_long_stay": [
+                                "laundry_basket"
+                            ]
+                        }
+                    }
+                ],
+                "global_selection_rules": [
+                    {
+                        "type": "dominant_anchor_required",
+                        "object": "bed"
+                    },
+                    {
+                        "type": "max_keep_from_group",
+                        "objects": [
+                            "bookshelf",
+                            "storage_cabinet"
+                        ],
+                        "max_keep": 1
+                    },
+                    {
+                        "type": "max_keep_from_group",
+                        "objects": [
+                            "armchair",
+                            "bench"
+                        ],
+                        "max_keep": 1
+                    }
+                ]
+            }
+        },
+        {
+            "room_type": "kids_room",
+            "selection_guidance": {
+                "use_all_objects": false,
+                "cluster_templates": [
+                    {
+                        "cluster_id": "sleep_core",
+                        "selection_rule": "must_include",
+                        "required_all_of": [
+                            "bed"
+                        ],
+                        "optional_from": [
+                            "nightstand"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "storage_core",
+                        "selection_rule": "must_include",
+                        "at_least_one_of": [
+                            "wardrobe",
+                            "dresser",
+                            "storage_cabinet"
+                        ],
+                        "optional_from": [
+                            "bookshelf"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "study_core",
+                        "selection_rule": "may_include_if_useful",
+                        "required_all_of_if_kept": [
+                            "desk",
+                            "chair"
+                        ],
+                        "optional_from": [
+                            "bookshelf"
+                        ]
+                    },
+                    {
+                        "cluster_id": "casual_play",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "bean_bag",
+                            "side_table",
+                            "floor_lamp"
+                        ],
+                        "optional_at_most": 2
+                    },
+                    {
+                        "cluster_id": "utility_optional",
+                        "selection_rule": "may_include_if_useful",
+                        "conditional": {
+                            "brief_mentions_laundry_or_daily_storage": [
+                                "laundry_basket"
+                            ]
+                        }
+                    }
+                ],
+                "global_selection_rules": [
+                    {
+                        "type": "dominant_anchor_required",
+                        "object": "bed"
+                    },
+                    {
+                        "type": "max_keep_from_group",
+                        "objects": [
+                            "bookshelf",
+                            "storage_cabinet"
+                        ],
+                        "max_keep": 1
+                    },
+                    {
+                        "type": "prefer_storage_and_study_before_lounge",
+                        "enabled": true
+                    }
+                ]
+            }
+        },
+        {
+            "room_type": "dining_room",
+            "selection_guidance": {
+                "use_all_objects": false,
+                "cluster_templates": [
+                    {
+                        "cluster_id": "dining_core",
+                        "selection_rule": "must_include",
+                        "required_all_of": [
+                            "dining_table"
+                        ],
+                        "optional_from": [
+                            "dining_chair"
+                        ],
+                        "max_keep": {
+                            "dining_chair": 6
+                        }
+                    },
+                    {
+                        "cluster_id": "service_storage",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "buffet_sideboard",
+                            "china_cabinet"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "hospitality_support",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "bar_cart",
+                            "console_table",
+                            "side_table"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "display_optional",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "bookshelf",
+                            "storage_cabinet",
+                            "plant"
+                        ],
+                        "optional_at_most": 1
+                    }
+                ],
+                "global_selection_rules": [
+                    {
+                        "type": "dominant_anchor_required",
+                        "object": "dining_table"
+                    },
+                    {
+                        "type": "max_keep_from_group",
+                        "objects": [
+                            "buffet_sideboard",
+                            "china_cabinet"
+                        ],
+                        "max_keep": 1
+                    },
+                    {
+                        "type": "max_keep_from_group",
+                        "objects": [
+                            "bar_cart",
+                            "console_table",
+                            "side_table"
+                        ],
+                        "max_keep": 1
+                    }
+                ]
+            }
+        },
+        {
+            "room_type": "bathroom",
+            "selection_guidance": {
+                "use_all_objects": false,
+                "cluster_templates": [
+                    {
+                        "cluster_id": "bathroom_core",
+                        "selection_rule": "must_include",
+                        "required_all_of": [
+                            "bathroom_vanity",
+                            "toilet"
+                        ],
+                        "at_least_one_of": [
+                            "shower",
+                            "bathtub"
+                        ]
+                    },
+                    {
+                        "cluster_id": "hygiene_support",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "bidet",
+                            "bathroom_stool"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "utility_optional",
+                        "selection_rule": "may_include_if_useful",
+                        "conditional": {
+                            "brief_mentions_laundry_or_extra_storage": [
+                                "laundry_basket"
+                            ]
+                        }
+                    }
+                ],
+                "global_selection_rules": [
+                    {
+                        "type": "dominant_workflow_required",
+                        "objects": [
+                            "bathroom_vanity",
+                            "toilet"
+                        ]
+                    },
+                    {
+                        "type": "at_least_one_required_from_group",
+                        "objects": [
+                            "shower",
+                            "bathtub"
+                        ],
+                        "min_keep": 1
+                    }
+                ]
+            }
+        },
+        {
+            "room_type": "laundry_room",
+            "selection_guidance": {
+                "use_all_objects": false,
+                "cluster_templates": [
+                    {
+                        "cluster_id": "laundry_core",
+                        "selection_rule": "must_include",
+                        "required_all_of": [
+                            "washing_machine",
+                            "laundry_basket"
+                        ],
+                        "optional_from": [
+                            "dryer",
+                            "utility_sink"
+                        ],
+                        "optional_at_most": 2
+                    },
+                    {
+                        "cluster_id": "drying_prep",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "drying_rack",
+                            "ironing_board"
+                        ],
+                        "optional_at_most": 2
+                    },
+                    {
+                        "cluster_id": "storage_support",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "storage_cabinet"
+                        ],
+                        "optional_at_most": 1
+                    }
+                ],
+                "global_selection_rules": [
+                    {
+                        "type": "dominant_workflow_required",
+                        "objects": [
+                            "washing_machine",
+                            "laundry_basket"
+                        ]
+                    },
+                    {
+                        "type": "prefer_workflow_before_storage",
+                        "enabled": true
+                    }
+                ]
+            }
+        },
+        {
+            "room_type": "home_office",
+            "selection_guidance": {
+                "use_all_objects": false,
+                "cluster_templates": [
+                    {
+                        "cluster_id": "work_core",
+                        "selection_rule": "must_include",
+                        "required_all_of": [
+                            "desk"
+                        ],
+                        "exactly_one_of": [
+                            "office_chair",
+                            "chair"
+                        ],
+                        "optional_from": [
+                            "printer",
+                            "office_pedestal",
+                            "filing_cabinet"
+                        ],
+                        "optional_at_most": 2
+                    },
+                    {
+                        "cluster_id": "storage_support",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "bookshelf",
+                            "storage_cabinet"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "lounge_support",
+                        "selection_rule": "may_include_if_useful",
+                        "required_all_of_if_kept": [
+                            "armchair"
+                        ],
+                        "optional_from": [
+                            "side_table",
+                            "floor_lamp"
+                        ],
+                        "optional_at_most": 2
+                    }
+                ],
+                "global_selection_rules": [
+                    {
+                        "type": "dominant_anchor_required",
+                        "object": "desk"
+                    },
+                    {
+                        "type": "max_keep_from_group",
+                        "objects": [
+                            "office_chair",
+                            "chair"
+                        ],
+                        "max_keep": 1
+                    },
+                    {
+                        "type": "prefer_productivity_before_lounge",
+                        "enabled": true
+                    }
+                ]
+            }
+        },
+        {
+            "room_type": "entryway",
+            "selection_guidance": {
+                "use_all_objects": false,
+                "cluster_templates": [
+                    {
+                        "cluster_id": "entry_core",
+                        "selection_rule": "must_include",
+                        "at_least_one_of": [
+                            "entry_bench",
+                            "bench",
+                            "console_table",
+                            "shoe_rack",
+                            "coat_rack",
+                            "storage_cabinet"
+                        ],
+                        "optional_from": [
+                            "umbrella_stand"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "drop_zone",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "console_table",
+                            "side_table"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "entry_storage",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "shoe_rack",
+                            "coat_rack",
+                            "storage_cabinet"
+                        ],
+                        "optional_at_most": 2
+                    }
+                ],
+                "global_selection_rules": [
+                    {
+                        "type": "max_keep_from_group",
+                        "objects": [
+                            "entry_bench",
+                            "bench"
+                        ],
+                        "max_keep": 1
+                    },
+                    {
+                        "type": "max_keep_from_group",
+                        "objects": [
+                            "console_table",
+                            "side_table"
+                        ],
+                        "max_keep": 1
+                    },
+                    {
+                        "type": "prefer_storage_if_entry_is_active",
+                        "enabled": true
+                    }
+                ]
+            }
+        },
+        {
+            "room_type": "balcony",
+            "selection_guidance": {
+                "use_all_objects": false,
+                "cluster_templates": [
+                    {
+                        "cluster_id": "seating_core",
+                        "selection_rule": "may_include_if_useful",
+                        "at_least_one_of": [
+                            "chair",
+                            "armchair",
+                            "bench"
+                        ],
+                        "optional_from": [
+                            "side_table"
+                        ],
+                        "optional_at_most": 1
+                    },
+                    {
+                        "cluster_id": "greenery_support",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "plant"
+                        ],
+                        "optional_at_most": 2
+                    },
+                    {
+                        "cluster_id": "storage_optional",
+                        "selection_rule": "may_include_if_useful",
+                        "optional_from": [
+                            "storage_cabinet"
+                        ],
+                        "optional_at_most": 1
+                    }
+                ],
+                "global_selection_rules": [
+                    {
+                        "type": "max_keep_from_group",
+                        "objects": [
+                            "chair",
+                            "armchair",
+                            "bench"
+                        ],
+                        "max_keep": 2
+                    },
+                    {
+                        "type": "prefer_openness_and_lightness",
+                        "enabled": true
+                    }
+                ]
+            }
+        }
+    ]
+]
