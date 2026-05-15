@@ -33,10 +33,7 @@ def summarize_layout_coverage(
     complete = len(missing_cluster_ids) == 0
     acceptable = bool(hard_valid if acceptable_valid is None else acceptable_valid)
     gallery_eligible = (
-        bool(hard_valid)
-        and acceptable
-        and complete
-        and primary_cluster_present
+        bool(hard_valid) and acceptable and complete and primary_cluster_present
     )
 
     return {

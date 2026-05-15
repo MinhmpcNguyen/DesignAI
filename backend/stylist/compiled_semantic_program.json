@@ -246,19 +246,18 @@
           },
           "object_program": {
             "required": [
-              "bed"
+              "bed",
+              "nightstand"
             ],
             "required_if_kept": [],
             "choose_exactly_one_from": [],
             "choose_exactly_one_from_if_kept": [],
             "choose_at_least_one_from": [],
-            "optional": [
-              "nightstand"
-            ],
+            "optional": [],
             "optional_limits": {
               "global": null,
               "by_object": {
-                "nightstand": 2
+                "nightstand": 1
               }
             }
           },
@@ -268,20 +267,17 @@
             ],
             "notes": [
               "The bed must remain the dominant anchor.",
-              "Nightstands are useful support objects but should be limited.",
+              "One nightstand is a default bedroom support object and should stay beside the bed.",
               "A bench is optional and should only be kept if it improves completeness without clutter."
             ]
           },
           "degradation_hints": {
             "preserve_first": [
-              "bed"
-            ],
-            "shrink_before_drop": [
+              "bed",
               "nightstand"
             ],
-            "drop_first": [
-              "nightstand"
-            ]
+            "shrink_before_drop": [],
+            "drop_first": []
           }
         },
         {

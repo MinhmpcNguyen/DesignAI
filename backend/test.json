@@ -1,145 +1,168 @@
 {
-  "room": {
-    "key": "bedroom-01",
-    "name": "Phòng ngủ chính",
-    "polygons": [
-      [
-        0,
-        0
-      ],
-      [
-        4.2,
-        0
-      ],
-      [
-        4.2,
-        3.6
-      ],
-      [
-        0,
-        3.6
-      ]
+    "room": {
+        "key": "-3:2.5",
+        "name": "Phòng ngủ chính",
+        "polygons": [
+            [
+                3.7,
+                3.5
+            ],
+            [
+                0.0,
+                3.5
+            ],
+            [
+                0.0,
+                1.2
+            ],
+            [
+                0.0,
+                0.0
+            ],
+            [
+                1.7,
+                0.0
+            ],
+            [
+                5.2,
+                0.0
+            ],
+            [
+                5.2,
+                3.5
+            ]
+        ],
+        "materialId": "modern",
+        "description": "Phòng ngủ hiện đại và tiện dụng, ưu tiên bố trí giường không nằm sát cửa ra vào, có tủ quần áo trên tường kín, có bàn, có ghế, rèm cửa, đèn trần và lối đi thoải mái quanh giường.",
+        "materialLabel": "Hiện đại"
+    },
+    "walls": [
+        {
+            "id": "wall_1",
+            "color": "#cccccc",
+            "height": 3.0,
+            "endPoint": [
+                0.0,
+                3.5
+            ],
+            "thickness": 0.12,
+            "startPoint": [
+                3.7,
+                3.5
+            ]
+        },
+        {
+            "id": "wall_2",
+            "color": "#cccccc",
+            "height": 3.0,
+            "endPoint": [
+                0.0,
+                1.2
+            ],
+            "thickness": 0.12,
+            "startPoint": [
+                0.0,
+                3.5
+            ]
+        },
+        {
+            "id": "wall_3",
+            "color": "#cccccc",
+            "height": 3.0,
+            "endPoint": [
+                0.0,
+                0.0
+            ],
+            "thickness": 0.12,
+            "startPoint": [
+                0.0,
+                1.2
+            ]
+        },
+        {
+            "id": "wall_4",
+            "color": "#cccccc",
+            "height": 3.0,
+            "endPoint": [
+                1.7,
+                0.0
+            ],
+            "thickness": 0.12,
+            "startPoint": [
+                0.0,
+                0.0
+            ]
+        },
+        {
+            "id": "wall_5",
+            "color": "#cccccc",
+            "height": 3.0,
+            "endPoint": [
+                5.2,
+                0.0
+            ],
+            "thickness": 0.12,
+            "startPoint": [
+                1.7,
+                0.0
+            ]
+        },
+        {
+            "id": "wall_6",
+            "color": "#cccccc",
+            "height": 3.0,
+            "endPoint": [
+                5.2,
+                3.5
+            ],
+            "thickness": 0.12,
+            "startPoint": [
+                5.2,
+                0.0
+            ]
+        },
+        {
+            "id": "wall_7",
+            "color": "#cccccc",
+            "height": 3.0,
+            "endPoint": [
+                3.7,
+                3.5
+            ],
+            "thickness": 0.12,
+            "startPoint": [
+                5.2,
+                3.5
+            ]
+        }
     ],
-    "materialId": "wood_light",
-    "description": "Phòng ngủ 15 mét vuông, cần 1 giường đôi, 2 tủ đầu giường, 1 tủ quần áo sát tường và một bàn trang điểm nhỏ. Giữ lối đi thoáng từ cửa vào giường, không chắn cửa sổ.",
-    "materialLabel": "Gỗ sáng"
-  },
-  "walls": [
-    {
-      "id": "bedroom-wall-bottom",
-      "color": "#cccccc",
-      "height": 2.8,
-      "endPoint": [
-        4.2,
-        0
-      ],
-      "thickness": 0.12,
-      "startPoint": [
-        0,
-        0
-      ]
-    },
-    {
-      "id": "bedroom-wall-right",
-      "color": "#cccccc",
-      "height": 2.8,
-      "endPoint": [
-        4.2,
-        3.6
-      ],
-      "thickness": 0.12,
-      "startPoint": [
-        4.2,
-        0
-      ]
-    },
-    {
-      "id": "bedroom-wall-top",
-      "color": "#cccccc",
-      "height": 2.8,
-      "endPoint": [
-        0,
-        3.6
-      ],
-      "thickness": 0.12,
-      "startPoint": [
-        4.2,
-        3.6
-      ]
-    },
-    {
-      "id": "bedroom-wall-left",
-      "color": "#cccccc",
-      "height": 2.8,
-      "endPoint": [
-        0,
-        0
-      ],
-      "thickness": 0.12,
-      "startPoint": [
-        0,
-        3.6
-      ]
-    }
-  ],
-  "openings": [
-    {
-      "id": "bedroom-door-01",
-      "name": "Cửa phòng ngủ",
-      "size": [
-        0.9,
-        2.1,
-        0.1
-      ],
-      "type": "model",
-      "color": "#4a90e2",
-      "modelUrl": "https://storage.mazig.io/catalog/models/forest-ngu/door.glb",
-      "position": [
-        0.95,
-        1.05,
-        -0.02
-      ],
-      "rotation": [
-        0,
-        1,
-        0,
-        6.123233995736766e-17
-      ],
-      "objectRole": "door",
-      "catalogItemId": "f815cab8-9cc8-45cb-b4b6-deba805b8622",
-      "placementType": "wall",
-      "snappedToWall": "bedroom-wall-bottom"
-    },
-    {
-      "id": "bedroom-window-01",
-      "name": "Cửa sổ phòng ngủ",
-      "type": "model",
-      "position": [
-        2.8,
-        1.55,
-        3.62
-      ],
-      "rotation": [
-        0,
-        0,
-        0,
-        1
-      ],
-      "color": "#4a90e2",
-      "size": [
-        1.4,
-        1.2,
-        0.05
-      ],
-      "modelUrl": "https://storage.mazig.io/catalog/models/flora-master/SlideWindowLeaf05_018.glb",
-      "placementType": "wall",
-      "snappedToWall": "bedroom-wall-top",
-      "objectRole": "window",
-      "catalogItemId": "4821ab19-b99f-4434-9db3-6ff0f15367f7",
-      "selectedColorHex": "#FFFFFF",
-      "selectedColorName": "Trắng",
-      "selectedMaterialName": "Gỗ",
-      "variantPriceCents": 1000000
-    }
-  ]
+    "openings": [
+        {
+            "id": "7551b5ca-48c3-42e3-8fdb-38a6e97afb8e",
+            "name": "Cửa (XHome)",
+            "size": [
+                0.9,
+                2.1,
+                0.1
+            ],
+            "type": "model",
+            "color": "#4a90e2",
+            "modelUrl": "https://storage.mazig.io/catalog/models/forest-ngu/door.glb",
+            "position": [
+                0.708,
+                1.05,
+                3.48
+            ],
+            "rotation": [
+                0,
+                1,
+                0,
+                6.123233995736766e-17
+            ],
+            "objectRole": "door",
+            "catalogItemId": "f815cab8-9cc8-45cb-b4b6-deba805b8622",
+            "placementType": "wall",
+            "snappedToWall": "wall_1"
+        }
+    ]
 }

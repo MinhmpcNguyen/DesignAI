@@ -3990,7 +3990,7 @@ def _run_with_tools(
                 json.dumps(seed_preview, ensure_ascii=True),
             )
 
-            # Nếu seed đã VALID thì tối ưu host-side vài bước rồi đưa cho model tiếp tục
+            # If the seed is already valid, refine it host-side before model handoff.
             if seed_eval.get("result") == "VALID":
                 current_seed = _canonicalize_local_placements(seeded_placements)
                 current_eval = seed_eval
@@ -4041,7 +4041,7 @@ def _run_with_tools(
                     }
                 )
 
-            # Nếu seed chưa VALID thì ép model dùng seed này làm first attempt
+            # If the seed is not valid, force the model to verify it as the first attempt.
             messages.append(
                 {
                     "role": "user",
@@ -4909,9 +4909,9 @@ def _seed_anchor_zone_bounds(
     if span_mode == "right":
         return (2 * free_span + 2) // 3, free_span
 
-    # outer-third semantics:
-    # left/bottom = outer 1/3 đầu
-    # right/top   = outer 1/3 cuối
+    # Outer-third semantics:
+    # left/bottom = first outer third
+    # right/top = last outer third
     if qualifier_world in {"left", "bottom"}:
         return 0, free_span // 3
     if qualifier_world in {"right", "top"}:

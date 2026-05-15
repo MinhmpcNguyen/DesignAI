@@ -129,7 +129,9 @@ def _setup_extra_loggers() -> None:
 
 def _has_file_handler(logger: logging.Logger, path: str) -> bool:
     for handler in logger.handlers:
-        if isinstance(handler, logging.FileHandler):
-            if str(Path(getattr(handler, "baseFilename", "")).resolve()) == path:
-                return True
+        if (
+            isinstance(handler, logging.FileHandler)
+            and str(Path(getattr(handler, "baseFilename", "")).resolve()) == path
+        ):
+            return True
     return False

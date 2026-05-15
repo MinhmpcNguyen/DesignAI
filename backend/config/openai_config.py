@@ -20,11 +20,9 @@ _LEGACY_AZURE_OPENAI_ENDPOINT_ENV = "OPENAI_AZURE_ENDPOINT"
 _OPENAI_AGENT_MODEL_ENV = "OPENAI_AGENT_MODEL"
 _OPENAI_PRIMARY_MODEL_ENV = "OPENAI_PRIMARY_MODEL"
 _OPENAI_HELPER_MODEL_ENV = "OPENAI_HELPER_MODEL"
-_OPENAI_EMBEDDING_MODEL_ENV = "OPENAI_EMBEDDING_MODEL"
 _AZURE_OPENAI_CHAT_DEPLOYMENT_ENV = "AZURE_OPENAI_CHAT_DEPLOYMENT"
 _AZURE_OPENAI_PRIMARY_DEPLOYMENT_ENV = "AZURE_OPENAI_PRIMARY_DEPLOYMENT"
 _AZURE_OPENAI_HELPER_DEPLOYMENT_ENV = "AZURE_OPENAI_HELPER_DEPLOYMENT"
-_AZURE_OPENAI_EMBEDDING_DEPLOYMENT_ENV = "AZURE_OPENAI_EMBEDDING_DEPLOYMENT"
 
 
 def _configured_value(value: str | None) -> str | None:
@@ -139,7 +137,6 @@ def _generation_models() -> OpenAIModelGroupConfig:
     if not forced_model_name:
         primary = models.primary_model()
         helper = models.helper_model()
-        embedding = models.embedding_model()
         return OpenAIModelGroupConfig(
             primary=_with_runtime_overrides(
                 primary,
@@ -163,14 +160,6 @@ def _generation_models() -> OpenAIModelGroupConfig:
                     ),
                 ),
             ),
-            embedding=_with_runtime_overrides(
-                embedding,
-                name=_model_name_override(
-                    default=embedding.name,
-                    openai_env=_OPENAI_EMBEDDING_MODEL_ENV,
-                    azure_envs=(_AZURE_OPENAI_EMBEDDING_DEPLOYMENT_ENV,),
-                ),
-            ),
         )
     return OpenAIModelGroupConfig(
         primary=_with_runtime_overrides(
@@ -180,10 +169,6 @@ def _generation_models() -> OpenAIModelGroupConfig:
         helper=_with_runtime_overrides(
             models.helper_model(),
             name=forced_model_name,
-        ),
-        embedding=_with_runtime_overrides(
-            models.embedding_model(),
-            name=models.embedding_model().name,
         ),
     )
 
@@ -203,9 +188,7 @@ def _agent_models() -> dict[str, str]:
         )
     if agent_override:
         return {
-            name: agent_override
-            for name in openai_config.agent_models
-            if name.strip()
+            name: agent_override for name in openai_config.agent_models if name.strip()
         }
     return {name: model.name for name, model in openai_config.agent_models.items()}
 

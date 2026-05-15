@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Literal, Protocol, TypedDict
 
-LLMModelKey = Literal["primary", "helper", "embedding"]
+LLMModelKey = Literal["primary", "helper"]
 ThinkingLevel = Literal["minimal", "low", "medium", "high"]
 
 
@@ -30,11 +30,4 @@ class LLMClientProtocol(Protocol):
         response_schema: Mapping[str, object] | None = None,
         tools: Sequence[dict[str, object]] | None = None,
         tool_choice: dict[str, object] | str | None = None,
-    ) -> object: ...
-
-    def embeddings(
-        self,
-        inputs: str | Sequence[str],
-        *,
-        model_key: LLMModelKey = "embedding",
     ) -> object: ...

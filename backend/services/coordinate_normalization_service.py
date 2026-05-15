@@ -299,7 +299,9 @@ class CoordinateNormalizationService:
         living_polygon, kitchen_polygon = split_geometries
         base_id = self._string_or_none(raw_room.get("key") or raw_room.get("room_id"))
         if base_id is None:
-            base_id = self._slugify(self._string_or_none(raw_room.get("name")) or "room")
+            base_id = self._slugify(
+                self._string_or_none(raw_room.get("name")) or "room"
+            )
         base_name = self._string_or_none(raw_room.get("name")) or base_id
 
         living_room = self._split_child_room(
@@ -767,7 +769,9 @@ class CoordinateNormalizationService:
                 out[room_id][bucket].append(local_opening)
         return out
 
-    def _extract_explicit_openings(self, payload: Mapping[str, Any]) -> list[JsonObject]:
+    def _extract_explicit_openings(
+        self, payload: Mapping[str, Any]
+    ) -> list[JsonObject]:
         openings: list[JsonObject] = []
         for kind, key in (("door", "doors"), ("window", "windows")):
             rows = payload.get(key)
@@ -844,7 +848,9 @@ class CoordinateNormalizationService:
             openings.append(opening)
         return openings
 
-    def _wall_map(self, payload: Mapping[str, Any]) -> dict[str, tuple[PlanarPoint, PlanarPoint]]:
+    def _wall_map(
+        self, payload: Mapping[str, Any]
+    ) -> dict[str, tuple[PlanarPoint, PlanarPoint]]:
         walls = payload.get("walls")
         if not isinstance(walls, list):
             return {}
@@ -852,7 +858,9 @@ class CoordinateNormalizationService:
         for index, wall in enumerate(walls, start=1):
             if not isinstance(wall, Mapping):
                 continue
-            start = self._point_from_mapping(wall.get("startPoint") or wall.get("start"))
+            start = self._point_from_mapping(
+                wall.get("startPoint") or wall.get("start")
+            )
             end = self._point_from_mapping(wall.get("endPoint") or wall.get("end"))
             if start is None or end is None:
                 continue
@@ -895,11 +903,11 @@ class CoordinateNormalizationService:
             return center_hint, center_hint
         ux = dx / length
         uy = dy / length
-        projected_t = (
-            (center_hint.x - start.x) * ux + (center_hint.y - start.y) * uy
-        )
+        projected_t = (center_hint.x - start.x) * ux + (center_hint.y - start.y) * uy
         half_width = min(max(width / 2.0, 1.0), length / 2.0)
-        center_t = min(max(projected_t, half_width), max(half_width, length - half_width))
+        center_t = min(
+            max(projected_t, half_width), max(half_width, length - half_width)
+        )
         center = PlanarPoint(x=start.x + ux * center_t, y=start.y + uy * center_t)
         return (
             PlanarPoint(x=center.x - ux * half_width, y=center.y - uy * half_width),
@@ -937,7 +945,9 @@ class CoordinateNormalizationService:
         py = start.y + clamped_t * dy
         return math.hypot(point.x - px, point.y - py)
 
-    def _shape_points_from_room_payload(self, room_payload: Mapping[str, Any]) -> list[JsonObject]:
+    def _shape_points_from_room_payload(
+        self, room_payload: Mapping[str, Any]
+    ) -> list[JsonObject]:
         points = self._room_points(room_payload)
         return [
             {
@@ -972,7 +982,9 @@ class CoordinateNormalizationService:
                 for wall in walls
                 if isinstance(wall, Mapping)
             ]
-            valid_heights = [height for height in heights if height is not None and height > 0]
+            valid_heights = [
+                height for height in heights if height is not None and height > 0
+            ]
             if valid_heights:
                 return int(round(max(valid_heights)))
         return 2800
@@ -1405,7 +1417,9 @@ class CoordinateNormalizationService:
                 else numeric_rotation
             )
 
-        if isinstance(rotation_value, list) and self._is_numeric_list(rotation_value, 3):
+        if isinstance(rotation_value, list) and self._is_numeric_list(
+            rotation_value, 3
+        ):
             yaw = float(rotation_value[1])
             return math.degrees(yaw) if rotation_input != "degrees" else yaw
         return None
@@ -1418,9 +1432,7 @@ class CoordinateNormalizationService:
             w = self._number(value.get("w"))
             if None in {x, y, z, w}:
                 return None
-            return self._normalize_quaternion(
-                [x or 0.0, y or 0.0, z or 0.0, w or 0.0]
-            )
+            return self._normalize_quaternion([x or 0.0, y or 0.0, z or 0.0, w or 0.0])
         if isinstance(value, list) and self._is_numeric_list(value, 4):
             return self._normalize_quaternion([float(item) for item in value[:4]])
         return None
@@ -1492,9 +1504,10 @@ class CoordinateNormalizationService:
     def _is_xy_mapping(self, value: Mapping[str, Any]) -> bool:
         if "z" in value and "w" in value:
             return False
-        return self._number(value.get("x")) is not None and self._number(
-            value.get("y")
-        ) is not None
+        return (
+            self._number(value.get("x")) is not None
+            and self._number(value.get("y")) is not None
+        )
 
     def _is_xyz_mapping(self, value: Mapping[str, Any]) -> bool:
         return (

@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-INPUT_PATH = ROOT / "result3.json"
-CONTEXT_PATH = ROOT / "test3.json"
-OUTPUT_PATH = ROOT / "result_visual3.html"
+INPUT_PATH = ROOT / "result.json"
+CONTEXT_PATH = ROOT / "test.json"
+OUTPUT_PATH = ROOT / "result_visual.html"
 
 
 def main() -> None:
@@ -208,7 +208,7 @@ def _html(data_json: str) -> str:
       const yaw = yawFromQuat(item.rotation || {{ x: 0, y: 0, z: 0, w: 1 }});
       ctx.save();
       ctx.translate(c.x, c.y);
-      ctx.rotate(-yaw);
+      ctx.rotate(yaw);
       ctx.fillStyle = item.color || palette(index);
       ctx.strokeStyle = "#252525";
       ctx.lineWidth = 1.5;

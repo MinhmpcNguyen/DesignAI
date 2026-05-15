@@ -8,7 +8,6 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import httpx
-from openai import OpenAI
 
 from clients.base_client import ChatMessage, LLMModelKey, ThinkingLevel
 from config.mistral_config import MistralConfig
@@ -20,7 +19,6 @@ class MistralClient:
     _lock: ClassVar[Lock] = Lock()
 
     _initialized: bool = False
-    _embedding_client: OpenAI
     _http_client: httpx.Client
     _model_map: dict[LLMModelKey, MistralModelConfig]
     _base_url: str
@@ -44,16 +42,8 @@ class MistralClient:
         self._chat_url = self._build_chat_url()
         self._generate_url = self._build_generate_url()
         self._model_map = self._build_model_map()
-        self._embedding_client = OpenAI(
-            api_key=self._api_key,
-            base_url=self._base_url,
-        )
         self._http_client = httpx.Client(timeout=300.0)
         self._initialized = True
-
-    @property
-    def client(self) -> OpenAI:
-        return self._embedding_client
 
     def get_model_name(self, key: LLMModelKey) -> str:
         return self._model_map[key].name
@@ -129,18 +119,6 @@ class MistralClient:
         data = response.json()
         return self._to_openai_style_response(data)
 
-    def embeddings(
-        self,
-        inputs: str | Sequence[str],
-        *,
-        model_key: LLMModelKey = "embedding",
-    ) -> object:
-        normalized_inputs = self._normalize_embedding_input(inputs)
-        return self._embedding_client.embeddings.create(
-            model=self.get_model_name(model_key),
-            input=normalized_inputs,
-        )
-
     def _build_model_map(self) -> dict[LLMModelKey, MistralModelConfig]:
         if MistralConfig.MODELS is None:
             raise ValueError("Missing Mistral models configuration.")
@@ -148,7 +126,6 @@ class MistralClient:
         return {
             "primary": models.primary,
             "helper": models.helper,
-            "embedding": models.embedding,
         }
 
     def _build_chat_url(self) -> str:
@@ -167,14 +144,6 @@ class MistralClient:
         return parsed._replace(
             path=f"{path}{path_suffix}", params="", query="", fragment=""
         ).geturl()
-
-    def _normalize_embedding_input(
-        self,
-        inputs: str | Sequence[str],
-    ) -> str | list[str]:
-        if isinstance(inputs, str):
-            return inputs
-        return list(inputs)
 
     def _require_api_key(self) -> str:
         api_key = MistralConfig.API_KEY

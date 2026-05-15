@@ -10,7 +10,8 @@ from config.demo_inventory import (
 )
 from config.semantic_search_config import SemanticSearchConfig
 from db.models import AssetFilter, DesignKnowledgeFilter, TenantId
-from db.pg_repository import PostgresAssetRepository, PostgresDesignKnowledgeRepository
+from db.pg_assets import PostgresAssetRepository
+from db.pg_knowledge import PostgresDesignKnowledgeRepository
 from stylist.room_essentials_seed import ROOM_SURFACE_GROUPS
 
 logger = logging.getLogger(__name__)
@@ -162,7 +163,7 @@ def ListDesignKnowledge(
             limit=limit,
         )
 
-    # Ưu tiên tenant-specific trước, sau đó fallback global.
+    # Prefer tenant-specific knowledge first, then fall back to global knowledge.
     filters: list[DesignKnowledgeFilter] = []
     if tenant_id:
         filters.append(

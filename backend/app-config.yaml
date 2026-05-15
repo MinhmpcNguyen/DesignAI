@@ -1,7 +1,3 @@
-# NOTE: For all authentication and validation,
-# use a random generated-string from `openssl rand -hex "bits"`,
-# "bits" can be 16 or 32
-
 authentication:
   api_key:
     name: "X-API-KEY"
@@ -11,30 +7,26 @@ services:
   semantic_search:
     enabled: false
 
+  pydantic_ai:
+    agents:
+      normalize_run:
+        model: "gpt-5.4-mini"
+        output_mode: "json"
+        retries: 1
+
   openai:
     enabled: true
-    # Keep false for OpenAI. Set OPENAI_AZURE=1 in .env to use Azure OpenAI
-    # without editing this file.
     azure: false
     api_version: "2024-08-01-preview"
-    # For OpenAI: set OPENAI_API_KEY.
-    # For Azure: set AZURE_OPENAI_API_KEY or reuse OPENAI_API_KEY.
     api_key: "${OPENAI_API_KEY}"
     public_key: "${OPENAI_PUBLIC_KEY}"
     private_key_file: "${OPENAI_PRIVATE_KEY_FILE}"
-    # For OpenAI-compatible APIs: set OPENAI_BASE_URL.
-    # For Azure: prefer AZURE_OPENAI_ENDPOINT in .env.
     base_url: "${OPENAI_BASE_URL}"
     models:
       primary:
-        # With Azure, this must be the deployment name.
         name: "gpt-5.4-mini"
       helper:
-        # With Azure, this must be the deployment name.
         name: "gpt-5.4-mini"
-      embedding:
-        # With Azure, this must be the embedding deployment name.
-        name: "text-embedding-3-small"
     agent_models:
       forge:
         name: "gpt-5.4-mini"
@@ -79,45 +71,31 @@ services:
     enabled: false
     api_key: "ollama"
     base_url: "http://localhost:11434/v1"
-    # Pull these models before starting the API:
-    # ollama pull gemma3:27b
-    # ollama pull nomic-embed-text
     models:
       primary:
         name: "gemma3:27b"
       helper:
         name: "gemma3:27b"
-      embedding:
-        name: "nomic-embed-text"
 
   mistral:
     enabled: false
     api_key: "mistral"
     base_url: "http://localhost:11434/v1"
-    # Enable this block and disable services.ollama to run all agents on Mistral.
-    # Pull these models before starting the API:
-    # ollama pull mistral:instruct
-    # ollama pull nomic-embed-text
     models:
       primary:
         name: "mistral:instruct"
       helper:
         name: "mistral:instruct"
-      embedding:
-        name: "nomic-embed-text"
 
   gemini:
     enabled: false
     api_key: "${GEMINI_API_KEY}"
     base_url: "https://generativelanguage.googleapis.com/v1beta"
-    # Gemini-compatible routing for both Gemini and Gemma models.
     models:
       primary:
         name: "gemini-3-flash-preview"
       helper:
         name: "gemini-3.1-flash-lite-preview"
-      embedding:
-        name: "gemini-embedding-001"
     agent_models:
       forge:
         name: "gemini-3-flash-preview"
@@ -157,269 +135,3 @@ services:
         name: "gemini-3-flash-preview"
       judge:
         name: "gemini-3.1-flash-lite-preview"
-
-  gemini_image:
-    enabled: true
-    api_key: "${GEMINI_IMAGE_API_KEY}"
-    base_url: "https://generativelanguage.googleapis.com/v1beta"
-    model: "gemini-3.1-flash-image-preview"
-    image_size: "1K"
-    max_output_tokens: 256
-    include_layout_2d_reference: false
-presets:
-  lights:
-    daylight_1:
-      label: "Ban ngày 1 — Hừng Đông"
-      prompt_suffix:
-        "apply warm early-morning lighting only through existing visible
-        openings; preserve the original opening geometry and shadow direction
-        implied by the source image; lighting may change mood but must not imply
-        new windows or architectural changes"
-      reference_image: "assets_gen/lighting/daylight_1.png"
-    daylight_2:
-      label: "Ban ngày 2 — Chính Ngọ"
-      prompt_suffix: "bright midday sunlight, neutral white daylight, crisp
-        high-contrast illumination, clear sky overhead light"
-      reference_image: "assets_gen/lighting/daylight_2.png"
-    daylight_3:
-      label: "Ban ngày 3 — Hoàng Hôn"
-      prompt_suffix:
-        "warm sunset light, golden hour amber tones, long horizontal
-        shadows, rich orange-pink sky glow"
-      reference_image: "assets_gen/lighting/daylight_3.png"
-    night_1:
-      label: "Ban đêm 1 — Tự nhiên"
-      prompt_suffix:
-        "natural night interior lighting, warm incandescent ambient glow,
-        soft pools of light, cozy evening atmosphere"
-      reference_image: "assets_gen/lighting/night_1.png"
-    night_2:
-      label: "Ban đêm 2 — Chạng vạng"
-      prompt_suffix: "blue-hour twilight, dusk sky gradient, cool exterior light
-        blending with warm interior, cinematic evening mood"
-      reference_image: "assets_gen/lighting/night_2.png"
-    daylight_4:
-      label: "Ban ngày 4 — Mây nhẹ"
-      prompt_suffix:
-        "soft overcast daylight, diffused natural illumination, gentle
-        low-contrast shadows, calm cloudy-day atmosphere; preserve the original
-        opening geometry, architecture, and furniture layout"
-      reference_image: "assets_gen/lighting/daylight_4.png"
-    daylight_5:
-      label: "Ban ngày 5 — Ngày mưa"
-      prompt_suffix: "rainy-day interior mood, cool diffused daylight, muted
-        atmosphere, subtle wet exterior reflections visible only through
-        existing openings; do not add windows or change wall geometry"
-      reference_image: "assets_gen/lighting/daylight_5.png"
-    daylight_6:
-      label: "Ban ngày 6 — Studio sáng"
-      prompt_suffix:
-        "bright even studio-style interior lighting, clean catalogue
-        render illumination, balanced exposure, minimal harsh shadows; preserve
-        the original architecture and furniture layout"
-      reference_image: "assets_gen/lighting/daylight_6.png"
-    night_3:
-      label: "Ban đêm 3 — Tối ấm"
-      prompt_suffix:
-        "warm evening interior lighting, cozy golden lamp glow, soft
-        ambient pools of light, relaxed home atmosphere; preserve the original
-        architecture and furniture layout"
-      reference_image: "assets_gen/lighting/night_3.png"
-    night_4:
-      label: "Ban đêm 4 — Ánh trăng"
-      prompt_suffix:
-        "cool moonlit interior atmosphere, subtle blue night light from
-        existing openings, cinematic but natural low-light mood; do not create
-        new openings or alter wall geometry"
-      reference_image: "assets_gen/lighting/night_4.png"
-    night_5:
-      label: "Ban đêm 5 — Ánh sáng pha"
-      prompt_suffix:
-        "mixed natural daylight from existing exterior openings with warm
-        interior practical lighting, balanced cool-warm contrast, realistic
-        layered illumination; preserve the original architecture and layout"
-      reference_image: "assets_gen/lighting/night_5.png"
-    night_6:
-      label: "Ban đêm 6 — Luxury mềm"
-      prompt_suffix: "soft luxury hotel-resort interior lighting, gentle premium
-        ambient glow, refined low-contrast highlights, calm elegant atmosphere;
-        preserve the original architecture and furniture layout"
-      reference_image: "assets_gen/lighting/night_6.png"
-  sceneries:
-    none:
-      label: "Không có"
-      prompt_suffix: null
-      reference_image: null
-    city:
-      label: "Thành phố"
-      prompt_suffix:
-        "show a subtle Vietnamese city skyline only outside the original
-        window visible in the source image; do not create any additional
-        exterior opening; do not change wall geometry"
-      reference_image: "assets_gen/scenery/city.png"
-    mountain:
-      label: "Núi đồi"
-      prompt_suffix:
-        "show a subtle Vietnamese misty mountain landscape only outside
-        the original window or opening visible in the source image; exterior
-        view only; do not create any additional exterior opening; do not change
-        wall geometry"
-      reference_image: "assets_gen/scenery/mountain.png"
-    coastal:
-      label: "Ven biển"
-      prompt_suffix:
-        "show a subtle Vietnamese coastal landscape only outside the
-        original window or opening visible in the source image; exterior view
-        only; do not create any additional exterior opening; do not change wall
-        geometry"
-      reference_image: "assets_gen/scenery/coastal.png"
-    garden:
-      label: "Sân vườn"
-      prompt_suffix:
-        "show a subtle lush garden and greenery view only outside the
-        original window or opening visible in the source image; exterior view
-        only; do not create any additional exterior opening; do not change wall
-        geometry"
-      reference_image: "assets_gen/scenery/garden.png"
-    courtyard:
-      label: "Sân trong"
-      prompt_suffix:
-        "show a subtle Vietnamese townhouse courtyard view only outside
-        the original window or opening visible in the source image; exterior
-        view only; do not create any additional exterior opening; do not change
-        wall geometry"
-      reference_image: "assets_gen/scenery/courtyard.png"
-    rice_field:
-      label: "Đồng lúa"
-      prompt_suffix:
-        "show a subtle Vietnamese rice field landscape only outside the
-        original window or opening visible in the source image; exterior view
-        only; do not create any additional exterior opening; do not change wall
-        geometry"
-      reference_image: "assets_gen/scenery/rice-field.png"
-    river:
-      label: "Sông nước"
-      prompt_suffix:
-        "show a subtle Vietnamese river or canal landscape only outside
-        the original window or opening visible in the source image; exterior
-        view only; do not create any additional exterior opening; do not change
-        wall geometry"
-      reference_image: "assets_gen/scenery/river.png"
-    forest:
-      label: "Rừng cây"
-      prompt_suffix:
-        "show a subtle dense green forest landscape only outside the
-        original window or opening visible in the source image; exterior view
-        only; do not create any additional exterior opening; do not change wall
-        geometry"
-      reference_image: "assets_gen/scenery/forest.png"
-    suburban:
-      label: "Ngoại ô"
-      prompt_suffix:
-        "show a subtle quiet Vietnamese suburban neighborhood view only
-        outside the original window or opening visible in the source image;
-        exterior view only; do not create any additional exterior opening; do
-        not change wall geometry"
-      reference_image: "assets_gen/scenery/suburban.png"
-    old_town:
-      label: "Phố cổ"
-      prompt_suffix:
-        "show a subtle Vietnamese old-town view with distant tiled roofs
-        only outside the original window or opening visible in the source image;
-        exterior view only; do not create any additional exterior opening; do
-        not change wall geometry"
-      reference_image: "assets_gen/scenery/old-town.png"
-    tropical_resort:
-      label: "Resort nhiệt đới"
-      prompt_suffix: "show a subtle tropical resort garden view only outside the
-        original window or opening visible in the source image; exterior view
-        only; do not create any additional exterior opening; do not change wall
-        geometry"
-      reference_image: "assets_gen/scenery/tropical-resort.png"
-  styles:
-    wabi_sabi:
-      label: "Wabi-Sabi"
-      prompt_suffix:
-        "wabi-sabi aesthetic, natural imperfection, organic textures,
-        warm earthy tones, serene simplicity"
-      reference_image: "assets_gen/styles/wabi-sabi.png"
-    neo_classic:
-      label: "Tân cổ điển"
-      prompt_suffix: "apply neoclassical materials, wall trim, molding profiles,
-        palette, and furniture finish details only to existing visible surfaces
-        and objects; do not add columns, pediments, arches, fireplaces, windows,
-        built-ins, decor clusters, or furniture"
-      reference_image: "assets_gen/styles/neo-classic.png"
-    modern:
-      label: "Hiện đại"
-      prompt_suffix: "apply a premium modern interior finish language through
-        materials, textures, color palette, and detailing only; preserve the
-        original architecture and furniture layout"
-      reference_image: "assets_gen/styles/modern.png"
-    minimalist:
-      label: "Tối giản"
-      prompt_suffix:
-        "apply a minimalist interior style through neutral palette, clean
-        surfaces, restrained detailing, and uncluttered material finishes only;
-        preserve the original architecture, objects, and furniture layout"
-      reference_image: "assets_gen/styles/minimalist.png"
-    scandinavian:
-      label: "Bắc Âu"
-      prompt_suffix:
-        "apply a Scandinavian interior style with light wood, soft white,
-        cream, and grey tones, simple friendly textures, and airy material
-        finishes only; preserve the original architecture and furniture layout"
-      reference_image: "assets_gen/styles/scandinavian.png"
-    japandi:
-      label: "Japandi"
-      prompt_suffix: "apply a Japandi interior style blending Japanese calm with
-        Scandinavian warmth, natural wood, muted neutrals, tactile simplicity,
-        and refined minimal details only; preserve the original layout"
-      reference_image: "assets_gen/styles/japandi.png"
-    indochine:
-      label: "Đông Dương"
-      prompt_suffix:
-        "apply an Indochine interior style suited to Vietnam through dark
-        wood finishes, rattan and cane textures, subtle patterned surfaces, and
-        refined colonial-era material details only; do not add furniture"
-      reference_image: "assets_gen/styles/indochine.png"
-    industrial:
-      label: "Industrial"
-      prompt_suffix:
-        "apply an industrial interior style through concrete texture, raw
-        wood, blackened metal accents, exposed-look material finishes, and a
-        loft-like palette only; preserve the original architecture and layout"
-      reference_image: "assets_gen/styles/industrial.png"
-    luxury_contemporary:
-      label: "Sang trọng đương đại"
-      prompt_suffix: "apply a luxury contemporary interior style through premium
-        stone, champagne metal accents, high-end fabric textures, refined
-        neutral palette, and polished detailing only; preserve the original
-        layout"
-      reference_image: "assets_gen/styles/luxury-contemporary.png"
-    mid_century:
-      label: "Mid-century"
-      prompt_suffix:
-        "apply a mid-century modern interior style through warm wood,
-        compact retro forms, muted accent colors, simple geometric detailing,
-        and vintage-inspired material finishes only; preserve the layout"
-      reference_image: "assets_gen/styles/mid-century.png"
-    mediterranean:
-      label: "Địa Trung Hải"
-      prompt_suffix:
-        "apply a Mediterranean interior style through white plaster,
-        natural stone, warm wood, sun-washed neutral tones, and relaxed resort
-        material finishes only; preserve the original architecture and layout"
-      reference_image: "assets_gen/styles/mediterranean.png"
-    bohemian:
-      label: "Bohemian"
-      prompt_suffix: "apply a bohemian interior style through layered textile
-        textures, handcrafted material details, warm earthy colors, and natural
-        greenery cues on existing elements only; do not add decor clusters"
-      reference_image: "assets_gen/styles/bohemian.png"
-    zen:
-      label: "Zen"
-      prompt_suffix: "apply a zen interior style through calm minimal finishes,
-        natural materials, soft neutral tones, balanced negative space, and
-        restful spa-like simplicity only; preserve the original layout"
-      reference_image: "assets_gen/styles/zen.png"

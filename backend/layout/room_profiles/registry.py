@@ -381,12 +381,8 @@ def profile_layout_role_for_objects(
 
     canonical_types = set(_profile_canonical_object_types(profile, object_types))
     cluster_key = normalize_profile_token(cluster_id)
-    if (
-        profile.canonical_room_type == "kitchen"
-        and (
-            "dining" in cluster_key
-            or canonical_types & {"dining_table", "dining_chair"}
-        )
+    if profile.canonical_room_type == "kitchen" and (
+        "dining" in cluster_key or canonical_types & {"dining_table", "dining_chair"}
     ):
         return "support"
     return None
@@ -488,10 +484,10 @@ def profile_relation_intents_for_objects(
         )
     elif "floating" in traits:
         workflow_target = profile.relation_targets.get("workflow")
-        if (
-            profile.canonical_room_type == "kitchen"
-            and canonical_types & {"dining_table", "dining_chair"}
-        ):
+        if profile.canonical_room_type == "kitchen" and canonical_types & {
+            "dining_table",
+            "dining_chair",
+        }:
             intents.append(
                 {"type": "claim_daylight", "target": "window_side", "strength": "soft"}
             )

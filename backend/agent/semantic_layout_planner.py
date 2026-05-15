@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -288,12 +289,25 @@ _ADAPTIVE_STAGE_SPECS: dict[str, _AdaptiveStageSpec] = {
 }
 
 _MEDIA_TOKENS = ("tv", "media", "screen", "projector", "console")
-_WORK_TOKENS = ("work", "study", "desk", "office", "laptop", "computer")
+_WORK_TOKENS = (
+    "work",
+    "study",
+    "desk",
+    "office",
+    "laptop",
+    "computer",
+    "ban",
+    "ban lam viec",
+    "ban hoc",
+    "ghe lam viec",
+    "ghe van phong",
+)
 _READING_TOKENS = ("read", "reading", "lounge", "relax", "armchair")
 _PET_TOKENS = ("pet", "dog", "cat")
 _ENTRY_TOKENS = ("entry", "shoe", "foyer", "landing")
 _LAUNDRY_TOKENS = ("laundry", "hamper", "daily storage", "basket")
 _LAYOUT_ROLES = {"primary", "secondary", "support", "optional"}
+_VIETNAMESE_PRONOUN_RE = re.compile(r"\bb\u1ea1n\b", re.IGNORECASE)
 
 _STRING_SCHEMA: dict[str, object] = {"type": "STRING"}
 _NUMBER_SCHEMA: dict[str, object] = {"type": "NUMBER"}
@@ -3357,18 +3371,18 @@ def _priority(value: Any) -> str:
 
 
 def _predicate_supported(predicate: str, brief_text: str) -> bool:
-    text = brief_text.lower()
-    key = predicate.lower()
-    if "tv" in key or "media" in key:
-        return any(token in text for token in _MEDIA_TOKENS)
-    if "work" in key or "study" in key:
-        return any(token in text for token in _WORK_TOKENS)
-    if "pet" in key:
-        return any(token in text for token in _PET_TOKENS)
-    if "entry" in key:
-        return any(token in text for token in _ENTRY_TOKENS)
-    if "laundry" in key or "storage" in key:
-        return any(token in text for token in _LAUNDRY_TOKENS)
+    text = _semantic_text(brief_text)
+    key = _semantic_text(predicate)
+    if _contains_any(key, _MEDIA_TOKENS):
+        return _contains_any(text, _MEDIA_TOKENS)
+    if _contains_any(key, ("work", "study")):
+        return _contains_any(text, _WORK_TOKENS)
+    if _contains_any(key, _PET_TOKENS):
+        return _contains_any(text, _PET_TOKENS)
+    if _contains_any(key, _ENTRY_TOKENS):
+        return _contains_any(text, _ENTRY_TOKENS)
+    if _contains_any(key, ("laundry", "storage")):
+        return _contains_any(text, _LAUNDRY_TOKENS)
     return False
 
 
@@ -3377,7 +3391,7 @@ def _brief_support_score(
     objects: Sequence[Any],
     brief_text: str,
 ) -> float:
-    text = brief_text.lower()
+    text = _semantic_text(brief_text)
     haystack = f"{cluster_id} " + " ".join(
         str(item.get("object_type") or item) if isinstance(item, Mapping) else str(item)
         for item in objects
@@ -3390,15 +3404,13 @@ def _brief_support_score(
     score = 0.35
     if tokens & set(re.findall(r"[a-z0-9]+", text)):
         score += 0.25
-    if any(token in text for token in _WORK_TOKENS) and "work" in tokens:
+    if _contains_any(text, _WORK_TOKENS) and "work" in tokens:
         score += 0.35
-    if any(token in text for token in _READING_TOKENS) and (
+    if _contains_any(text, _READING_TOKENS) and (
         "lounge" in tokens or "reading" in tokens
     ):
         score += 0.3
-    if any(token in text for token in _MEDIA_TOKENS) and (
-        "media" in tokens or "tv" in tokens
-    ):
+    if _contains_any(text, _MEDIA_TOKENS) and ("media" in tokens or "tv" in tokens):
         score += 0.35
     return min(score, 1.0)
 
@@ -3693,15 +3705,36 @@ def _confidence(
 
 
 def _contains_any(value: str, tokens: Sequence[str]) -> bool:
-    key = value.lower()
-    return any(token in key for token in tokens)
+    key = _semantic_text(value)
+    for token in tokens:
+        normalized_token = _semantic_text(token)
+        if not normalized_token:
+            continue
+        if re.search(rf"\b{re.escape(normalized_token)}\b", key):
+            return True
+    return False
 
 
 def _snake_token(value: str) -> str:
-    text = value.strip().lower()
+    text = _semantic_text(value)
     text = re.sub(r"[^a-z0-9]+", "_", text)
     text = re.sub(r"_+", "_", text)
     return text.strip("_")
+
+
+def _ascii_fold(text: str) -> str:
+    normalized_text = str(text or "").replace("\u0111", "d").replace("\u0110", "D")
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFKD", normalized_text)
+        if not unicodedata.combining(char)
+    )
+
+
+def _semantic_text(value: str) -> str:
+    protected = _VIETNAMESE_PRONOUN_RE.sub(" pronounyou ", str(value or ""))
+    folded = _ascii_fold(protected).lower()
+    return " ".join(folded.replace("-", " ").replace("_", " ").split())
 
 
 def _uniq(values: Sequence[str]) -> list[str]:

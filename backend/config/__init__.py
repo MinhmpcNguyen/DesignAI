@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any
+from typing import cast
 
 import yaml
 from dotenv import load_dotenv
@@ -17,21 +17,19 @@ logger = logging.getLogger(__name__)
 
 def load_config(app_config_path: str) -> RootConfig:
     """
-    Load the application configuration from a YAML file with environment variable expansion.
+    Load the application configuration from YAML with environment expansion.
 
     Args:
         config_path (str): Path to the YAML configuration file.
 
     Returns:
-        dict: The loaded configuration dictionary.
+        The validated root configuration model.
 
     Raises:
         FileNotFoundError: If the configuration file does not exist.
         yaml.YAMLError: If there's an issue parsing the YAML file.
         Exception: For any other unforeseen errors.
     """
-    config: dict[str, Any]
-
     try:
         # Resolve absolute path of the config file
         full_path_app_config = os.path.abspath(app_config_path)
@@ -41,14 +39,17 @@ def load_config(app_config_path: str) -> RootConfig:
                 f"Application configuration file not found: {full_path_app_config}"
             )
 
-        with open(full_path_app_config, "r") as f:
+        with open(full_path_app_config, encoding="utf-8") as f:
             raw_content = f.read()
 
         # Expand environment variables and load YAML content
         expanded_content = os.path.expandvars(raw_content)
-        config = yaml.safe_load(expanded_content)
+        # PyYAML returns untyped data; RootConfig validation below cleans the boundary.
+        config_payload = cast(object, yaml.safe_load(expanded_content))
+        if not isinstance(config_payload, dict):
+            raise ValueError("Application configuration root must be a mapping.")
 
-        validated_config = RootConfig(**config)
+        validated_config = RootConfig.model_validate(config_payload)
         logger.info(
             "Configuration loaded and validated successfully: %s", full_path_app_config
         )

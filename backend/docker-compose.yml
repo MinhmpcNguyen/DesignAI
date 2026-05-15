@@ -30,6 +30,8 @@ services:
       TKNT_ENABLE_DEMO_INVENTORY: ${TKNT_ENABLE_DEMO_INVENTORY:-1}
       TKNT_DEMO_INVENTORY_ENABLED: ${TKNT_ENABLE_DEMO_INVENTORY:-1}
       TKNT_LOG_LEVEL: ${TKNT_LOG_LEVEL:-INFO}
+      TKNT_CORS_ALLOWED_ORIGINS: ${TKNT_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173,https://house-design-protocol.vercel.app}
+      TKNT_CORS_ALLOWED_ORIGIN_REGEX: ${TKNT_CORS_ALLOWED_ORIGIN_REGEX:-}
     ports:
       - "${TKNT_API_PORT:-8000}:8000"
     depends_on:
@@ -37,7 +39,6 @@ services:
         condition: service_healthy
     volumes:
       - ./cases:/app/cases
-      - ./generated:/app/generated
     healthcheck:
       test:
         [

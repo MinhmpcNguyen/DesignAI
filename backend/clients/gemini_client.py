@@ -209,46 +209,6 @@ class GeminiClient:
         )
         return self._to_openai_style_response(data)
 
-    def embeddings(
-        self,
-        inputs: str | Sequence[str],
-        *,
-        model_key: LLMModelKey = "embedding",
-    ) -> object:
-        model_name = self.get_model_name(model_key)
-        model_resource = self._to_model_resource(model_name)
-
-        if isinstance(inputs, str):
-            payload: dict[str, object] = {
-                "model": model_resource,
-                "content": self._text_content(inputs, role="user"),
-            }
-            data = self._post_json(
-                self._build_model_url(model_name, "embedContent"),
-                payload,
-            )
-            embedding = self._extract_embedding_values(data.get("embedding"))
-            return self._to_openai_style_embedding_response([embedding], data)
-
-        payload = {
-            "requests": [
-                {
-                    "model": model_resource,
-                    "content": self._text_content(text, role="user"),
-                }
-                for text in inputs
-            ]
-        }
-        data = self._post_json(
-            self._build_model_url(model_name, "batchEmbedContents"),
-            payload,
-        )
-        embeddings = [
-            self._extract_embedding_values(item)
-            for item in self._as_list(data.get("embeddings"))
-        ]
-        return self._to_openai_style_embedding_response(embeddings, data)
-
     def _build_model_map(self) -> dict[LLMModelKey, GeminiModelConfig]:
         if GeminiConfig.MODELS is None:
             raise ValueError("Missing Gemini models configuration.")
@@ -256,7 +216,6 @@ class GeminiClient:
         return {
             "primary": models.primary,
             "helper": models.helper,
-            "embedding": models.embedding,
         }
 
     def _require_api_key(self) -> str:
@@ -1086,29 +1045,6 @@ class GeminiClient:
                 )
             )
         return out
-
-    def _to_openai_style_embedding_response(
-        self,
-        embeddings: Sequence[list[float]],
-        raw_response: Mapping[str, object],
-    ) -> object:
-        data = [
-            SimpleNamespace(index=idx, embedding=list(embedding))
-            for idx, embedding in enumerate(embeddings)
-        ]
-        return SimpleNamespace(
-            data=data,
-            model=raw_response.get("modelVersion"),
-            raw_response=raw_response,
-        )
-
-    def _extract_embedding_values(self, embedding: object) -> list[float]:
-        if not isinstance(embedding, Mapping):
-            return []
-        values = embedding.get("values")
-        if not isinstance(values, list):
-            return []
-        return [float(value) for value in values if isinstance(value, int | float)]
 
     def _to_model_resource(self, model_name: str) -> str:
         if model_name.startswith("models/"):

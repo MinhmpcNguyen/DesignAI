@@ -57,9 +57,6 @@ class OpenAIClient:
     def get_model_name(self, key: LLMModelKey) -> str:
         return self._model_map[key].name
 
-    def get_model_endpoint(self, key: LLMModelKey) -> str | None:
-        return self._model_map[key].azure_endpoint
-
     @classmethod
     def reset_usage_totals(cls) -> None:
         with cls._usage_lock:
@@ -135,21 +132,6 @@ class OpenAIClient:
         self._record_usage(resolved_model_name, response)
         return response
 
-    def embeddings(
-        self,
-        inputs: str | Sequence[str],
-        *,
-        model_key: LLMModelKey = "embedding",
-    ) -> object:
-        model_name = self.get_model_name(model_key)
-        normalized_inputs = self._normalize_embedding_input(inputs)
-        response = self._client.embeddings.create(
-            model=model_name,
-            input=normalized_inputs,
-        )
-        self._record_usage(model_name, response)
-        return response
-
     def _build_client(self) -> OpenAI | AzureOpenAI:
         if OpenAIConfig.IS_OPENAI_AZURE:
             if self._azure_endpoint is None:
@@ -168,7 +150,6 @@ class OpenAIClient:
         return {
             "primary": models.primary_model(),
             "helper": models.helper_model(),
-            "embedding": models.embedding_model(),
         }
 
     def _resolve_azure_endpoint(self) -> str | None:
@@ -202,13 +183,6 @@ class OpenAIClient:
         if not parsed.scheme or not parsed.netloc:
             raise ValueError(f"Invalid Azure endpoint: {endpoint}")
         return f"{parsed.scheme}://{parsed.netloc}"
-
-    def _normalize_embedding_input(
-        self, inputs: str | Sequence[str]
-    ) -> str | list[str]:
-        if isinstance(inputs, str):
-            return inputs
-        return list(inputs)
 
     @staticmethod
     def _max_tokens_param_name(model_name: str) -> str:

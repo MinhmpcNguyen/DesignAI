@@ -41,7 +41,6 @@ def _generation_models() -> GeminiModelGroupConfig | None:
     return GeminiModelGroupConfig(
         primary=GeminiModelConfig(name=forced_model_name),
         helper=GeminiModelConfig(name=forced_model_name),
-        embedding=models.embedding,
     )
 
 

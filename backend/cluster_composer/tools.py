@@ -2688,10 +2688,10 @@ def _rotate_vec_ccw_90s_local(
 def _infer_base_axis_from_spec(spec: dict[str, Any]) -> dict[str, int]:
     w = int(spec.get("w", 0) or 0)
     h = int(spec.get("h", 0) or 0)
-    # deterministic:
-    # - object dài theo ngang -> axis = +X
-    # - object dài theo dọc -> axis = +Y
-    # - vuông -> mặc định +X
+    # Deterministic fallback:
+    # - wider objects use +X
+    # - taller objects use +Y
+    # - square objects default to +X
     if h > w:
         return {"dx": 0, "dy": 1}
     return {"dx": 1, "dy": 0}
@@ -2791,12 +2791,12 @@ def _build_orientation_inference_debug(
         rot = int(p.get("rot", 0)) % 360
         area = _rect_area(rect)
 
-        # front gốc lấy từ facing/spec, rồi rotate theo object rot thực tế
+        # Start from the facing/spec front, then rotate by the object rotation.
         base_front_side = _get_front_base(oid, facing_map, specs)
         base_front_vec = _side_to_vec(base_front_side)
         front_local = _rotate_vec_ccw_90s_local(base_front_vec, rot)
 
-        # axis gốc lấy từ kích thước base object, rồi rotate theo rot thực tế
+        # Start from the base object dimensions, then rotate by the object rotation.
         base_axis_vec = _infer_base_axis_from_spec(spec)
         axis_local = _rotate_vec_ccw_90s_local(base_axis_vec, rot)
 

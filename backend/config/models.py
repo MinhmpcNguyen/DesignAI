@@ -1,5 +1,6 @@
+from typing import Literal, Self
+
 from pydantic import BaseModel, Field, model_validator
-from typing_extensions import Self
 
 
 class APIKeyConfig(BaseModel):
@@ -19,10 +20,8 @@ class OpenAIModelConfig(BaseModel):
 class OpenAIModelGroupConfig(BaseModel):
     primary: OpenAIModelConfig | None = None
     helper: OpenAIModelConfig | None = None
-    embedding: OpenAIModelConfig | None = None
     gpt_4o: OpenAIModelConfig | None = None
     gpt_4o_mini: OpenAIModelConfig | None = None
-    text_embedding_3_small: OpenAIModelConfig | None = None
 
     def primary_model(self) -> OpenAIModelConfig:
         return self._require_model(self.primary or self.gpt_4o, "primary")
@@ -30,17 +29,10 @@ class OpenAIModelGroupConfig(BaseModel):
     def helper_model(self) -> OpenAIModelConfig:
         return self._require_model(self.helper or self.gpt_4o_mini, "helper")
 
-    def embedding_model(self) -> OpenAIModelConfig:
-        return self._require_model(
-            self.embedding or self.text_embedding_3_small,
-            "embedding",
-        )
-
     def resolved_models(self) -> dict[str, OpenAIModelConfig]:
         return {
             "primary": self.primary_model(),
             "helper": self.helper_model(),
-            "embedding": self.embedding_model(),
         }
 
     @staticmethod
@@ -60,7 +52,6 @@ class OllamaModelConfig(BaseModel):
 class OllamaModelGroupConfig(BaseModel):
     primary: OllamaModelConfig
     helper: OllamaModelConfig
-    embedding: OllamaModelConfig
 
 
 class MistralModelConfig(BaseModel):
@@ -70,7 +61,6 @@ class MistralModelConfig(BaseModel):
 class MistralModelGroupConfig(BaseModel):
     primary: MistralModelConfig
     helper: MistralModelConfig
-    embedding: MistralModelConfig
 
 
 class GeminiModelConfig(BaseModel):
@@ -80,35 +70,6 @@ class GeminiModelConfig(BaseModel):
 class GeminiModelGroupConfig(BaseModel):
     primary: GeminiModelConfig
     helper: GeminiModelConfig
-    embedding: GeminiModelConfig
-
-
-class GeminiImageConfig(BaseModel):
-    enabled: bool = True
-    api_key: str | None = None
-    base_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    model: str = "gemini-3.1-flash-image-preview"
-    image_size: str = "1K"
-    max_output_tokens: int = 256
-    include_layout_2d_reference: bool = False
-
-    @model_validator(mode="after")
-    def validate_enabled_config(self) -> Self:
-        if not self.enabled:
-            return self
-        if not self.base_url:
-            raise ValueError(
-                "services.gemini_image.base_url is required when Gemini image is enabled."
-            )
-        if not self.model:
-            raise ValueError(
-                "services.gemini_image.model is required when Gemini image is enabled."
-            )
-        if self.max_output_tokens < 32:
-            raise ValueError(
-                "services.gemini_image.max_output_tokens must be at least 32."
-            )
-        return self
 
 
 class OpenAIConfig(BaseModel):
@@ -130,10 +91,11 @@ class OpenAIConfig(BaseModel):
             return self
         if self.public_key and self.private_key_file:
             return self
-        raise ValueError(
+        message = (
             "Configure either services.openai.api_key or both "
-            "services.openai.public_key and services.openai.private_key_file."
+            + "services.openai.public_key and services.openai.private_key_file."
         )
+        raise ValueError(message)
 
     @model_validator(mode="after")
     def validate_azure_endpoints(self) -> Self:
@@ -227,16 +189,22 @@ class SemanticSearchConfig(BaseModel):
     enabled: bool = True
 
 
-class PresetOptionConfig(BaseModel):
-    label: str
-    prompt_suffix: str | None = None
-    reference_image: str | None = None
+class PydanticAIAgentConfig(BaseModel):
+    model: str
+    system_prompt: str | None = None
+    retries: int = Field(default=1, ge=0)
+    output_mode: Literal["text", "json"] = "json"
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
 
 
-class PresetsConfig(BaseModel):
-    lights: dict[str, PresetOptionConfig] = Field(default_factory=dict)
-    sceneries: dict[str, PresetOptionConfig] = Field(default_factory=dict)
-    styles: dict[str, PresetOptionConfig] = Field(default_factory=dict)
+class PydanticAIConfig(BaseModel):
+    agents: dict[str, PydanticAIAgentConfig] = Field(default_factory=dict)
+
+    def agent(self, name: str) -> PydanticAIAgentConfig:
+        agent_config = self.agents.get(name)
+        if agent_config is None:
+            raise ValueError(f"services.pydantic_ai.agents.{name} is required.")
+        return agent_config
 
 
 class Service(BaseModel):
@@ -244,8 +212,8 @@ class Service(BaseModel):
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
     mistral: MistralConfig = Field(default_factory=MistralConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
-    gemini_image: GeminiImageConfig = Field(default_factory=GeminiImageConfig)
     semantic_search: SemanticSearchConfig = Field(default_factory=SemanticSearchConfig)
+    pydantic_ai: PydanticAIConfig = Field(default_factory=PydanticAIConfig)
 
     @model_validator(mode="after")
     def validate_provider_selection(self) -> Self:
@@ -270,4 +238,3 @@ class Service(BaseModel):
 class RootConfig(BaseModel):
     authentication: Auth
     services: Service
-    presets: PresetsConfig = Field(default_factory=PresetsConfig)

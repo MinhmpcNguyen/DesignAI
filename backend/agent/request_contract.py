@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from typing import Any
@@ -27,6 +28,44 @@ _OBJECT_ALIASES: dict[str, tuple[str, ...]] = {
     "wardrobe": ("wardrobe", "closet", "armoire"),
 }
 _OBJECT_ALIASES.update(all_profile_object_aliases())
+_VIETNAMESE_OBJECT_ALIASES: dict[str, tuple[str, ...]] = {
+    "chair": (
+        "ghe",
+        "ghe tua",
+        "ghe ngoi",
+        "ghe lam viec",
+        "ghe van phong",
+        "ghe trang diem",
+    ),
+    "coffee_table": ("ban tra", "ban cafe", "ban ca phe"),
+    "desk": ("ban", "ban lam viec", "ban hoc", "ban trang diem", "ban go lam viec"),
+    "dining_table": ("ban an",),
+    "nightstand": (
+        "ban dau giuong",
+        "ban canh giuong",
+        "tu dau giuong",
+        "tu canh giuong",
+        "tab dau giuong",
+    ),
+}
+for _object_type, _aliases in _VIETNAMESE_OBJECT_ALIASES.items():
+    _OBJECT_ALIASES[_object_type] = tuple(
+        dict.fromkeys((*_OBJECT_ALIASES.get(_object_type, ()), *_aliases))
+    )
+
+_GENERIC_TABLE_ALIAS = "ban"
+_GENERIC_DESK_TABLE_BLOCKERS = (
+    "ban an",
+    "ban tra",
+    "ban cafe",
+    "ban ca phe",
+    "ban dau giuong",
+    "ban canh giuong",
+    "ban nho",
+    "ban phu",
+    "ban ben",
+)
+_VIETNAMESE_PRONOUN_RE = re.compile(r"\bb\u1ea1n\b", re.IGNORECASE)
 
 _OPTIONAL_ONLY_PATTERNS = (
     "only if",
@@ -72,6 +111,9 @@ _NON_FUNCTIONAL_CONTRACT_TYPES = {
 _HARD_CONTRACT_INTENTS = {"must_keep", "must_try"}
 _TARGET_CONTRACT_INTENTS = {"target_if_viable", "preferred_if_fit"}
 _SOFT_CONTRACT_INTENTS = {*_TARGET_CONTRACT_INTENTS, "optional_if_surplus"}
+_MIN_GROUP_MEMBERS = 2
+_BEDROOM_NIGHTSTAND_CLUSTER_ID = "sleep_core"
+_BEDROOM_DEFAULT_NIGHTSTAND_TYPE = "nightstand"
 _CONTRACT_INTENT_ALIASES = {
     "required": "must_keep",
     "must": "must_keep",
@@ -221,16 +263,128 @@ def attach_request_contract_to_semantic_program(
             brief_text=brief_text,
             available_object_types=available_object_types,
         )
+    out = _protect_default_bedroom_nightstand(out, contract=contract)
     out["request_contract"] = contract
     notes = [str(item) for item in out.get("notes") or [] if str(item).strip()]
     notes.append(
-        (
-            "Request contract attached before tier count so explicit functional objects "
-            "are protected from silent pruning."
-        )
+        "Request contract attached before tier count so explicit functional "
+        "objects are protected from silent pruning."
     )
     out["notes"] = _dedupe_strings(notes)
     return out
+
+
+def _protect_default_bedroom_nightstand(
+    semantic_program: dict[str, Any],
+    *,
+    contract: Mapping[str, Any],
+) -> dict[str, Any]:
+    room_type = str(semantic_program.get("room_type") or "").strip().lower()
+    if "bedroom" not in room_type:
+        return semantic_program
+    contract_item = contract_item_for_object_type(
+        contract,
+        _BEDROOM_DEFAULT_NIGHTSTAND_TYPE,
+    )
+    if contract_intent(contract_item) == "max0":
+        return semantic_program
+
+    clusters = semantic_program.get("active_clusters")
+    if not isinstance(clusters, list):
+        return semantic_program
+    for cluster in clusters:
+        if not isinstance(cluster, dict):
+            continue
+        if str(cluster.get("cluster_id") or "") != _BEDROOM_NIGHTSTAND_CLUSTER_ID:
+            continue
+        _ensure_default_nightstand_bundle(cluster)
+        _ensure_default_nightstand_tier_hint(cluster)
+        degradation = [
+            str(item)
+            for item in cluster.get("degradation_ladder") or []
+            if "nightstand" not in str(item)
+        ]
+        cluster["degradation_ladder"] = degradation
+        break
+
+    notes = [str(item) for item in semantic_program.get("notes") or []]
+    notes.append("Bedroom default nightstand is protected in sleep_core.")
+    semantic_program["notes"] = _dedupe_strings(notes)
+    return semantic_program
+
+
+def _ensure_default_nightstand_bundle(cluster: dict[str, Any]) -> None:
+    bundles = cluster.get("required_bundles")
+    if not isinstance(bundles, list):
+        bundles = []
+        cluster["required_bundles"] = bundles
+    if not bundles:
+        bundles.append({"bundle_id": "sleep_core_bundle", "objects": []})
+    bundle = bundles[0]
+    if not isinstance(bundle, dict):
+        return
+    objects = bundle.get("objects")
+    if not isinstance(objects, list):
+        objects = []
+        bundle["objects"] = objects
+    for obj in objects:
+        if not isinstance(obj, dict):
+            continue
+        if str(obj.get("object_type") or "") != _BEDROOM_DEFAULT_NIGHTSTAND_TYPE:
+            continue
+        obj["required"] = True
+        obj["role"] = "secondary_support"
+        obj["max_keep"] = 1
+        return
+    objects.append(
+        {
+            "object_type": _BEDROOM_DEFAULT_NIGHTSTAND_TYPE,
+            "role": "secondary_support",
+            "required": True,
+            "max_keep": 1,
+        }
+    )
+
+
+def _ensure_default_nightstand_tier_hint(cluster: dict[str, Any]) -> None:
+    hints = cluster.get("tier_count_hints")
+    if not isinstance(hints, dict):
+        hints = {}
+        cluster["tier_count_hints"] = hints
+    hints["bundle_class"] = "indispensable"
+    hints["preserve_level"] = "highest"
+    hints["keep_if_space_surplus"] = True
+    hints["space_surplus_threshold"] = 0.3
+    hints["drop_order_bias"] = "neutral"
+
+    object_hints = hints.get("object_hints")
+    if not isinstance(object_hints, list):
+        object_hints = []
+        hints["object_hints"] = object_hints
+    for row in object_hints:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("object_type") or "") != _BEDROOM_DEFAULT_NIGHTSTAND_TYPE:
+            continue
+        _apply_default_nightstand_hint(row)
+        return
+    row: dict[str, Any] = {"object_type": _BEDROOM_DEFAULT_NIGHTSTAND_TYPE}
+    _apply_default_nightstand_hint(row)
+    object_hints.append(row)
+
+
+def _apply_default_nightstand_hint(row: dict[str, Any]) -> None:
+    row.update(
+        {
+            "min_keep": 1,
+            "max_keep": 1,
+            "keep_if_space_surplus": True,
+            "space_surplus_threshold": 0.3,
+            "drop_order_bias": "drop_last",
+            "preserve_level": "highest",
+            "preferred_size_tier": "S",
+        }
+    )
 
 
 def request_contract_from_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -351,18 +505,24 @@ def missing_non_functional_contract_items(
 
 
 def canonical_object_type(object_type: str) -> str:
-    normalized = str(object_type).strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = _normalize_text(object_type).replace(" ", "_")
     normalized = normalized.rstrip("0123456789").rstrip("_")
     if not normalized:
         return ""
     for canonical, aliases in _OBJECT_ALIASES.items():
-        alias_keys = {canonical, *(alias.replace(" ", "_") for alias in aliases)}
+        alias_keys = {
+            canonical,
+            *(_normalize_text(alias).replace(" ", "_") for alias in aliases),
+        }
         if normalized in alias_keys:
             return canonical
     for canonical, aliases in _OBJECT_ALIASES.items():
         alias_keys = tuple(
             sorted(
-                {canonical, *(alias.replace(" ", "_") for alias in aliases)},
+                {
+                    canonical,
+                    *(_normalize_text(alias).replace(" ", "_") for alias in aliases),
+                },
                 key=len,
                 reverse=True,
             )
@@ -452,15 +612,29 @@ def _find_mentions(text: str, object_type: str) -> list[tuple[int, int]]:
     aliases = _OBJECT_ALIASES.get(object_type, (object_type.replace("_", " "),))
     spans: list[tuple[int, int]] = []
     for alias in aliases:
-        pattern = re.compile(rf"\b{re.escape(alias.lower())}s?\b")
-        spans.extend((match.start(), match.end()) for match in pattern.finditer(text))
+        normalized_alias = _normalize_text(alias)
+        if not normalized_alias:
+            continue
+        pattern = re.compile(rf"\b{re.escape(normalized_alias)}s?\b")
+        for match in pattern.finditer(text):
+            if _blocks_generic_desk_table_match(
+                text,
+                object_type=object_type,
+                alias=normalized_alias,
+                start=match.start(),
+            ):
+                continue
+            spans.append((match.start(), match.end()))
     return spans
 
 
 def _has_direct_negative_intent(window: str, *, object_type: str) -> bool:
     aliases = _OBJECT_ALIASES.get(object_type, (object_type.replace("_", " "),))
     for alias in aliases:
-        alias_pattern = re.escape(alias.lower())
+        normalized_alias = _normalize_text(alias)
+        if not normalized_alias:
+            continue
+        alias_pattern = re.escape(normalized_alias)
         direct_patterns = (
             rf"\b(?:do not include|don't include|avoid|without)\s+"
             rf"(?:a\s+|an\s+|the\s+|any\s+)?{alias_pattern}s?\b",
@@ -611,7 +785,7 @@ def _sanitize_contract_groups(
             in allowed_object_types
         ]
         members = _dedupe_strings(members)
-        if len(members) < 2:
+        if len(members) < _MIN_GROUP_MEMBERS:
             continue
         group_id = str(raw_group.get("group_id") or "_".join(members)).strip()
         if not group_id or group_id in seen_ids:
@@ -677,8 +851,31 @@ def _reason_for_intent(intent: str) -> str:
     return "brief mention"
 
 
+def _blocks_generic_desk_table_match(
+    text: str,
+    *,
+    object_type: str,
+    alias: str,
+    start: int,
+) -> bool:
+    if object_type != "desk" or alias != _GENERIC_TABLE_ALIAS:
+        return False
+    tail = text[start:]
+    return any(tail.startswith(blocker) for blocker in _GENERIC_DESK_TABLE_BLOCKERS)
+
+
+def _ascii_fold(text: str) -> str:
+    normalized_text = str(text or "").replace("\u0111", "d").replace("\u0110", "D")
+    return "".join(
+        char
+        for char in unicodedata.normalize("NFKD", normalized_text)
+        if not unicodedata.combining(char)
+    )
+
+
 def _normalize_text(text: str) -> str:
-    return " ".join(str(text or "").lower().replace("-", " ").split())
+    protected = _VIETNAMESE_PRONOUN_RE.sub(" pronounyou ", str(text or ""))
+    return " ".join(_ascii_fold(protected).lower().replace("-", " ").split())
 
 
 def _alias_matches(normalized: str, alias: str) -> bool:

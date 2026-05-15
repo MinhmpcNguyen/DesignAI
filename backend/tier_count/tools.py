@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import json
 import math
 import re
 from dataclasses import dataclass
 from typing import Any
 
-from db import PostgresAssetRepository, PostgresDesignKnowledgeRepository
-from db.models import AssetFilter, DesignKnowledgeFilter, TenantId
-from db.postgres import create_connection
+from adapters.catalog_api import CatalogApiError, load_catalog_inventory_payloads
 
 # ============================================================
 # Generic helpers
@@ -320,70 +317,20 @@ def _build_size_profiles(
 # ============================================================
 
 
-def _load_inventory_from_db(tenant_id: str) -> list[dict[str, Any]]:
-    repo = PostgresAssetRepository(connection_factory=create_connection)
-    assets = list(
-        repo.list_assets(AssetFilter(tenant_id=TenantId(tenant_id), type="FURNITURE"))
-    )
-
-    items: list[dict[str, Any]] = []
-    for asset in assets:
-        dims = asset.dimensions
-        if dims is None:
-            continue
-        if dims.length_mm is None or dims.width_mm is None or dims.height_mm is None:
-            continue
-        items.append(
-            {
-                "id": str(asset.id),
-                "type": str(asset.type),
-                "attributes": dict(asset.attributes),
-                "length_mm": float(dims.length_mm),
-                "width_mm": float(dims.width_mm),
-                "height_mm": float(dims.height_mm),
-            }
+def _load_inventory_from_catalog_api(categories: list[str]) -> list[dict[str, Any]]:
+    requested_types = [
+        category.strip()
+        for category in categories
+        if isinstance(category, str) and category.strip() and category != "__generic__"
+    ]
+    return [
+        dict(payload)
+        for payload in load_catalog_inventory_payloads(
+            types=requested_types,
+            default_rotation_presence=None,
         )
-    return items
-
-
-def _parse_profiles_payload(content: str) -> dict[str, Any] | None:
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        return None
-
-    if not isinstance(parsed, dict):
-        return None
-
-    if isinstance(parsed.get("size_profiles_by_category"), dict):
-        return parsed["size_profiles_by_category"]
-
-    return parsed
-
-
-def _load_profiles_from_db(tenant_id: str | None) -> dict[str, Any] | None:
-    repo = PostgresDesignKnowledgeRepository(connection_factory=create_connection)
-
-    if tenant_id:
-        knowledge = repo.get_knowledge(f"size_rules:{tenant_id}")
-        if knowledge is not None:
-            payload = _parse_profiles_payload(knowledge.content)
-            if payload is not None:
-                return payload
-
-    knowledge_global = repo.get_knowledge("size_rules:global")
-    if knowledge_global is not None:
-        payload = _parse_profiles_payload(knowledge_global.content)
-        if payload is not None:
-            return payload
-
-    candidates = list(repo.list_knowledge(DesignKnowledgeFilter(category="size_rules")))
-    if candidates:
-        payload = _parse_profiles_payload(candidates[0].content)
-        if payload is not None:
-            return payload
-
-    return None
+        if isinstance(payload, dict)
+    ]
 
 
 def _rep_has_positive_dims(rep: Any) -> bool:
@@ -397,30 +344,6 @@ def _rep_has_positive_dims(rep: Any) -> bool:
         )
     except Exception:
         return False
-
-
-def _sanitize_profiles_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    out = payload if isinstance(payload, dict) else {}
-    for _, prof in list(out.items()):
-        if not isinstance(prof, dict):
-            continue
-        rep_dims = prof.get("rep_dims_m")
-        if not isinstance(rep_dims, dict):
-            continue
-
-        fallbacks = []
-        for t in ("M", "L", "S"):
-            rep = rep_dims.get(t)
-            if _rep_has_positive_dims(rep):
-                fallbacks.append(rep)
-
-        for t in ("S", "M", "L"):
-            rep = rep_dims.get(t)
-            if _rep_has_positive_dims(rep):
-                continue
-            if fallbacks:
-                rep_dims[t] = fallbacks[0]
-    return out
 
 
 def _build_generic_profile_from_profiles(
@@ -504,13 +427,16 @@ def _build_generic_profile_from_profiles(
 def get_size_profiles(
     *, categories: list[str], tenant_id: str | None = None
 ) -> dict[str, Any]:
-    profiles_payload = _load_profiles_from_db(tenant_id)
-    if isinstance(profiles_payload, dict):
-        profiles_payload = _sanitize_profiles_payload(profiles_payload)
-
-    if not isinstance(profiles_payload, dict) or not profiles_payload:
-        inventory = _load_inventory_from_db(tenant_id or "demo_tenant")
-        profiles_payload = _build_size_profiles(inventory)
+    del tenant_id
+    try:
+        inventory = _load_inventory_from_catalog_api(categories)
+    except CatalogApiError as exc:
+        return {
+            "error": f"Catalog API size profile lookup failed: {exc}",
+            "size_profiles_by_category": {},
+            "missing_categories": categories,
+        }
+    profiles_payload = _build_size_profiles(inventory)
 
     profiles_by_category = (
         profiles_payload if isinstance(profiles_payload, dict) else {}

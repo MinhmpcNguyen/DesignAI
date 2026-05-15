@@ -83,18 +83,6 @@ class OllamaClient:
             params["tool_choice"] = tool_choice
         return self._client.chat.completions.create(**params)
 
-    def embeddings(
-        self,
-        inputs: str | Sequence[str],
-        *,
-        model_key: LLMModelKey = "embedding",
-    ) -> object:
-        normalized_inputs = self._normalize_embedding_input(inputs)
-        return self._client.embeddings.create(
-            model=self.get_model_name(model_key),
-            input=normalized_inputs,
-        )
-
     def _build_model_map(self) -> dict[LLMModelKey, OllamaModelConfig]:
         if OllamaConfig.MODELS is None:
             raise ValueError("Missing Ollama models configuration.")
@@ -102,15 +90,7 @@ class OllamaClient:
         return {
             "primary": models.primary,
             "helper": models.helper,
-            "embedding": models.embedding,
         }
-
-    def _normalize_embedding_input(
-        self, inputs: str | Sequence[str]
-    ) -> str | list[str]:
-        if isinstance(inputs, str):
-            return inputs
-        return list(inputs)
 
     def _require_api_key(self) -> str:
         api_key = OllamaConfig.API_KEY

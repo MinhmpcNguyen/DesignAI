@@ -235,8 +235,7 @@ def _candidate_backfill_rank_tuple(
     )
     anchor_is_new = int(
         bool(
-            candidate.anchor_signature
-            and candidate.anchor_signature not in seen_anchor
+            candidate.anchor_signature and candidate.anchor_signature not in seen_anchor
         )
     )
     visual_family_is_new = int(

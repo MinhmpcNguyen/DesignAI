@@ -4,8 +4,8 @@ import logging
 import os
 import re
 import unicodedata
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import urljoin
 
@@ -19,6 +19,8 @@ DEFAULT_ASSET_BASE_URL = "https://storage.mazig.io"
 DEFAULT_PAGE_LIMIT = 500
 DEFAULT_MAX_PAGES = 20
 DEFAULT_TIMEOUT_SECONDS = 15.0
+_SIZE_VECTOR_LENGTH = 3
+_ROTATION_VECTOR_LENGTH = 4
 
 CatalogRotationPresence = Literal["null", "present"]
 
@@ -41,7 +43,15 @@ _SEMANTIC_OBJECT_TYPE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "bookshelf",
-        ("bookshelf", "bookcase", "book_shelf", "shelf", "ke_sach", "tu_sach"),
+        (
+            "bookshelf",
+            "bookcase",
+            "book_shelf",
+            "shelf",
+            "ke_de_do",
+            "ke_sach",
+            "tu_sach",
+        ),
     ),
     (
         "desk",
@@ -133,7 +143,7 @@ class CatalogItem(BaseModel):
     @field_validator("size", mode="before")
     @classmethod
     def _clean_size(cls, value: object) -> tuple[float, float, float] | None:
-        if not isinstance(value, list | tuple) or len(value) != 3:
+        if not isinstance(value, list | tuple) or len(value) != _SIZE_VECTOR_LENGTH:
             return None
         try:
             size = tuple(float(item) for item in value)
@@ -151,7 +161,7 @@ class CatalogItem(BaseModel):
     ) -> tuple[float, float, float, float] | None:
         if value is None:
             return None
-        if not isinstance(value, list | tuple) or len(value) != 4:
+        if not isinstance(value, list | tuple) or len(value) != _ROTATION_VECTOR_LENGTH:
             return None
         try:
             return tuple(float(item) for item in value)
@@ -607,7 +617,7 @@ def infer_catalog_object_type(
     ]
     if not normalized_values:
         return None
-    haystack = " ".join(normalized_values)
+    haystack = "_".join(normalized_values)
     for object_type, tokens in _SEMANTIC_OBJECT_TYPE_PATTERNS:
         if any(_token_in_haystack(token, haystack) for token in tokens):
             return object_type
@@ -643,9 +653,10 @@ def _payload_str(payload: Mapping[str, object], key: str) -> str | None:
 
 
 def _ascii_norm_key(value: str | None) -> str:
+    normalized_value = str(value or "").replace("đ", "d").replace("Đ", "D")
     stripped = "".join(
         char
-        for char in unicodedata.normalize("NFKD", str(value or ""))
+        for char in unicodedata.normalize("NFKD", normalized_value)
         if not unicodedata.combining(char)
     )
     lowered = stripped.lower()
