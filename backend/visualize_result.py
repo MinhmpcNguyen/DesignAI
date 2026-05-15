@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-INPUT_PATH = ROOT / "result2.json"
-CONTEXT_PATH = ROOT / "test2.json"
-OUTPUT_PATH = ROOT / "result_visual2.html"
+INPUT_PATH = ROOT / "result3.json"
+CONTEXT_PATH = ROOT / "test3.json"
+OUTPUT_PATH = ROOT / "result_visual3.html"
 
 
 def main() -> None:
