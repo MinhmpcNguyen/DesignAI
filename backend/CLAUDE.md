@@ -7,3 +7,4 @@
 - Avoid using ".get()" method of dicts, and instead use pydantic models to ensure that all required fields are present and properly typed.
 - Structure the code using dependency-injected service, repository, manager, and domain-model classes with strict separation of concerns, and avoid procedural modules or standalone functions except for small pure utilities.
 - Do not use type "Literal", use enums instead for better readability and maintainability.
+- Do not use `Optional`, `Dict`, `List` type hint from `typing` module, instead use the built-in `list`, `dict`, and `|` operator.
