@@ -1006,7 +1006,7 @@ def normalize_run_pipeline_status(
             400,
             ApiErrorReason.NORMALIZE_RUN_INVALID_JOB_ID,
             "Normalize-run job id contains unsupported characters.",
-            context={"id": job_id},
+            context={"id": job_id, "trace_id": job_id},
         )
     status_response = service.status_response(job_id)
     if status_response is None:
@@ -1014,7 +1014,7 @@ def normalize_run_pipeline_status(
             404,
             ApiErrorReason.NORMALIZE_RUN_JOB_NOT_FOUND,
             "Normalize-run job was not found.",
-            context={"id": job_id},
+            context={"id": job_id, "trace_id": job_id},
         )
     return status_response
 
@@ -1040,7 +1040,7 @@ def normalize_run_pipeline_result(
             400,
             ApiErrorReason.NORMALIZE_RUN_INVALID_JOB_ID,
             "Normalize-run job id contains unsupported characters.",
-            context={"id": job_id},
+            context={"id": job_id, "trace_id": job_id},
         )
     status_payload = service.status_response(job_id)
     if status_payload is None:
@@ -1048,7 +1048,7 @@ def normalize_run_pipeline_result(
             404,
             ApiErrorReason.NORMALIZE_RUN_JOB_NOT_FOUND,
             "Normalize-run job was not found.",
-            context={"id": job_id},
+            context={"id": job_id, "trace_id": job_id},
         )
     if status_payload.status == "error":
         error = status_payload.error or ApiErrorDetail(
@@ -1075,7 +1075,7 @@ def normalize_run_pipeline_result(
             500,
             ApiErrorReason.NORMALIZE_RUN_RESULT_MISSING,
             "Normalize-run job is ready but result payload is missing.",
-            context={"id": job_id},
+            context={"id": job_id, "trace_id": job_id},
         )
     return result
 
@@ -1180,9 +1180,10 @@ def _execute_normalize_run_pipeline(
         except (RuntimeError, ValueError) as exc:
             paths = case_paths(room_case_id)
             logger.exception(
-                "normalize-run pipeline failed: case_id=%s room_id=%s",
+                "normalize-run pipeline failed: case_id=%s room_id=%s error=%s",
                 room_case_id,
                 room_id,
+                exc,
             )
             raise api_exception(
                 502,
@@ -1195,6 +1196,12 @@ def _execute_normalize_run_pipeline(
 
         if result.get("error"):
             paths = case_paths(room_case_id)
+            logger.error(
+                "normalize-run pipeline returned error: case_id=%s room_id=%s error=%s",
+                room_case_id,
+                room_id,
+                result.get("error"),
+            )
             raise_api_error(
                 502,
                 ApiErrorReason.NORMALIZE_RUN_PIPELINE_FAILED,

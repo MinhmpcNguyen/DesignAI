@@ -4,4 +4,5 @@
 - Do not read the .env file and app-config.yaml file directly.
 - Use pydantic AI for agent configuration.
 - Avoid using type 'Any' if possible, except for some library functions that do not have proper type annotations.
+- Avoid using ".get()" method of dicts, and instead use pydantic models to ensure that all required fields are present and properly typed.
 - Structure the code using dependency-injected service, repository, manager, and domain-model classes with strict separation of concerns, and avoid procedural modules or standalone functions except for small pure utilities.

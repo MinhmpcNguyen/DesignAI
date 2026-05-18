@@ -54,8 +54,10 @@ class NormalizeRunPipelineService:
         req: PipelineNormalizeRunRequest,
         job_id: str | None = None,
     ) -> PipelineNormalizeRunResponse:
+        trace_id = self._trace_id(job_id, req)
         logger.debug(
-            "normalize-run execute input: job_id=%s payload=%s",
+            "normalize-run execute input: trace_id=%s job_id=%s payload=%s",
+            trace_id,
             job_id,
             req.model_dump(mode="json", exclude_none=True),
         )
@@ -64,7 +66,8 @@ class NormalizeRunPipelineService:
             job_id=job_id,
         )
         logger.debug(
-            "normalize-run execute output: job_id=%s payload=%s",
+            "normalize-run execute output: trace_id=%s job_id=%s payload=%s",
+            trace_id,
             job_id,
             response.model_dump(mode="json", exclude_none=True),
         )
@@ -80,6 +83,10 @@ class NormalizeRunPipelineService:
                 update={"selectionSummary": selection_summary}
             )
         return response
+
+    @staticmethod
+    def _trace_id(job_id: str | None, req: PipelineNormalizeRunRequest) -> str:
+        return job_id or req.user_id or "normalize_run"
 
     def _selection_summary_note(
         self,

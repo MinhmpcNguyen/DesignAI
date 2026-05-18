@@ -7,14 +7,13 @@ from pathlib import Path
 
 
 def setup_logging(level: str | None = None) -> None:
-    log_level = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
+    log_level = (level or os.getenv("TKNT_LOG_LEVEL", "INFO")).upper()
     _ensure_run_id()
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
         force=True,
     )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
     _setup_console_log()
     _setup_all_log_file()
     _setup_extra_loggers()

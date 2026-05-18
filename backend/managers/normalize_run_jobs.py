@@ -48,7 +48,11 @@ class NormalizeRunJobManager:
     def create_job(self, user_id: str | None) -> PipelineNormalizeRunJobResponse:
         job_id = self._make_job_id(user_id)
         now = self._now_utc_iso()
-        logger.debug("normalize-run job created: job_id=%s user_id=%s", job_id, user_id)
+        logger.debug(
+            "normalize-run job created: trace_id=%s user_id=%s",
+            job_id,
+            user_id,
+        )
         _ = self._repository.create(
             NormalizeRunJobRecord(
                 id=job_id,
@@ -185,7 +189,7 @@ class NormalizeRunJobManager:
     ) -> None:
         try:
             logger.debug(
-                "normalize-run job start: job_id=%s request=%s",
+                "normalize-run job start: trace_id=%s request=%s",
                 job_id,
                 request.model_dump(mode="json", exclude_none=True),
             )
@@ -197,7 +201,7 @@ class NormalizeRunJobManager:
             )
             response = run_pipeline(request, job_id)
             logger.debug(
-                "normalize-run job pipeline output: job_id=%s response=%s",
+                "normalize-run job pipeline output: trace_id=%s response=%s",
                 job_id,
                 response.model_dump(mode="json", exclude_none=True),
             )
@@ -212,7 +216,7 @@ class NormalizeRunJobManager:
         except HTTPException as exc:
             detail = http_exception_detail(exc)
             logger.warning(
-                "normalize-run job failed: job_id=%s status=%s reason=%s detail=%s",
+                "normalize-run job failed: trace_id=%s status=%s reason=%s detail=%s",
                 job_id,
                 exc.status_code,
                 detail.reason,
@@ -227,7 +231,7 @@ class NormalizeRunJobManager:
             )
         except Exception as exc:
             logger.exception(
-                "normalize-run job crashed: job_id=%s error=%s",
+                "normalize-run job crashed: trace_id=%s error=%s",
                 job_id,
                 exc,
             )
