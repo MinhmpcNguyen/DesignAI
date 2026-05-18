@@ -136,8 +136,8 @@ def _openai_model_names(models: OpenAIModelGroupConfig) -> tuple[str, str]:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_allowed_origins(),
-    allow_origin_regex=_cors_allowed_origin_regex(),
+    allow_origins=["*"],
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
