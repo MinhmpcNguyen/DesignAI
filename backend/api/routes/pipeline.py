@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from functools import lru_cache
 from typing import Annotated, Any
@@ -107,6 +108,7 @@ def _enrich_rotation_ccw(
             if isinstance(absolute_object.get("axis_world"), dict)
             else None,
         }
+        _copy_catalog_identity_metadata(orientation, absolute_object)
         by_id[object_id] = orientation
 
         bbox = _mapping(absolute_object.get("bbox"))
@@ -144,6 +146,8 @@ def _enrich_rotation_ccw(
         next_obj["front_world"] = deepcopy((orientation or {}).get("front_world"))
         next_obj["front_side_world"] = (orientation or {}).get("front_side_world")
         next_obj["axis_world"] = deepcopy((orientation or {}).get("axis_world"))
+        if orientation is not None:
+            _copy_catalog_identity_metadata(next_obj, orientation)
         enriched.append(next_obj)
 
     out = dict(stylist_payload)
@@ -172,6 +176,16 @@ def _orientation_for_object(
     except (TypeError, ValueError):
         return None
     return by_bbox.get(bbox_key)
+
+
+def _copy_catalog_identity_metadata(
+    target: dict[str, Any],
+    source: dict[str, Any],
+) -> None:
+    for key in ("catalogItemId", "catalog_id", "inventory_id", "source_id"):
+        value = _string_or_none(source.get(key))
+        if value is not None:
+            target[key] = value
 
 
 def _status_payload(paths: Any) -> dict[str, Any]:
@@ -537,6 +551,11 @@ def _normalize_run_room_objects(
     out: list[dict[str, Any]] = []
     rotations_ccw: list[float] = []
     default_rotations: list[list[float] | None] = []
+    # Build a lookup of instance_id → floor-surface height (mm) so that items
+    # placed "on_top" of furniture can be elevated to the correct Y position.
+    # Furniture (source="existing") comes before accessories in the objects list,
+    # so we can populate this lookup incrementally.
+    support_height_mm: dict[str, float] = {}
     for obj in objects:
         if not isinstance(obj, dict):
             continue
@@ -567,6 +586,27 @@ def _normalize_run_room_objects(
             )
             continue
 
+        # Compute the Y (vertical) base elevation.
+        # For items placed on top of furniture, start at the support's surface.
+        place_on = (
+            obj.get("place_on") if isinstance(obj.get("place_on"), dict) else None
+        )
+        place_on_method = str(place_on.get("method") or "") if place_on else ""
+        place_on_target = (
+            str(place_on.get("target_instance_id") or "") if place_on else ""
+        )
+        collision_layer = str(obj.get("collision_layer") or "floor_solid")
+        if place_on_method == "on_top" and place_on_target:
+            base_y_mm = support_height_mm.get(place_on_target, 0.0)
+        else:
+            base_y_mm = 0.0
+        pos_y_mm = base_y_mm + size_mm[1] / 2.0
+
+        # Record this item's surface height for items that stack on top of it.
+        instance_id = str(obj.get("instance_id") or "")
+        if instance_id:
+            support_height_mm[instance_id] = base_y_mm + size_mm[1]
+
         rotation_ccw = _number(obj.get("rotation_ccw"))
         if rotation_ccw is None:
             rotation_ccw = _number(obj.get("rot")) or 0.0
@@ -578,12 +618,16 @@ def _normalize_run_room_objects(
             "modelUrl": model_url,
             "position": {
                 "x": (bbox["min_x"] + bbox["max_x"]) / 2.0,
-                "y": size_mm[1] / 2.0,
+                "y": pos_y_mm,
                 "z": (bbox["min_y"] + bbox["max_y"]) / 2.0,
             },
             "rotation_ccw": rotation_ccw,
             "objectRole": _catalog_object_role(catalog_payload),
             "catalogItemId": catalog_item_id,
+            # Pass through placement metadata so the renderer can distinguish
+            # floor items from surface items, wall-mounted items, and ceiling items.
+            "collisionLayer": collision_layer,
+            "placeOn": place_on,
         }
         out.append(output_obj)
         rotations_ccw.append(rotation_ccw)
@@ -605,21 +649,26 @@ def _finalize_normalize_run_objects(
         default_rotation = (
             default_rotations[index] if index < len(default_rotations) else None
         )
-        out.append(
-            {
-                "name": restored.get("name"),
-                "size": restored.get("size"),
-                "type": restored.get("type"),
-                "color": restored.get("color"),
-                "modelUrl": restored.get("modelUrl"),
-                "position": restored.get("position"),
-                "rotation": _quaternion_dict(
-                    _combine_yaw_and_default_rotation(rotation_ccw, default_rotation)
-                ),
-                "objectRole": restored.get("objectRole"),
-                "catalogItemId": restored.get("catalogItemId"),
-            }
-        )
+        obj: dict[str, Any] = {
+            "name": restored.get("name"),
+            "size": restored.get("size"),
+            "type": restored.get("type"),
+            "color": restored.get("color"),
+            "modelUrl": restored.get("modelUrl"),
+            "position": restored.get("position"),
+            "rotation": _quaternion_dict(
+                _combine_yaw_and_default_rotation(rotation_ccw, default_rotation)
+            ),
+            "objectRole": restored.get("objectRole"),
+            "catalogItemId": restored.get("catalogItemId"),
+        }
+        # Pass through collision/placement metadata so the renderer can decide
+        # elevation and layer (floor, surface, wall-mounted, ceiling).
+        if restored.get("collisionLayer") is not None:
+            obj["collisionLayer"] = restored["collisionLayer"]
+        if restored.get("placeOn") is not None:
+            obj["placeOn"] = restored["placeOn"]
+        out.append(obj)
     return out
 
 
@@ -1290,10 +1339,20 @@ def _execute_normalize_run_pipeline(
         transform=_mapping(normalized.get("transform")),
         openings=frontend_openings,
     )
-    selected_objects = response_options[0]["objects"] if response_options else []
+    selected_option = next(
+        (
+            option
+            for option in response_options
+            if _response_option_is_applicable(option)
+        ),
+        None,
+    )
+    selected_objects = (
+        selected_option.get("objects", []) if selected_option is not None else []
+    )
     selected_option_id = (
-        _string_or_none(response_options[0].get("optionId"))
-        if response_options
+        _string_or_none(selected_option.get("optionId"))
+        if selected_option is not None
         else None
     )
     return PipelineNormalizeRunResponse(
@@ -1322,28 +1381,44 @@ def _restore_normalize_run_options(
     option_count = max((len(options) for _, options in room_options), default=0)
     response_options: list[dict[str, Any]] = []
     for option_index in range(option_count):
-        option_objects: list[dict[str, Any]] = []
-        option_meta: dict[str, Any] | None = None
+        selected_room_options: list[tuple[str, dict[str, Any]]] = []
         for room_id, options in room_options:
             if not options:
                 continue
             option = options[min(option_index, len(options) - 1)]
-            if option_meta is None:
-                option_meta = option
-            styled_payload = option.get("styled_payload")
-            if not isinstance(styled_payload, dict):
-                continue
-            option_objects.extend(
-                _normalize_run_restored_objects(
-                    coordinate_service=coordinate_service,
-                    styled_payload=styled_payload,
-                    catalog_index=catalog_index,
-                    transform=transform,
-                    room_id=room_id,
-                )
-            )
-        if not option_objects:
+            selected_room_options.append((room_id, option))
+        if not selected_room_options:
             continue
+
+        option_objects: list[dict[str, Any]] = []
+        option_meta = selected_room_options[0][1]
+        publishable = all(
+            _normalize_run_option_is_publishable(option)
+            for _, option in selected_room_options
+        )
+        if publishable:
+            for room_id, option in selected_room_options:
+                styled_payload = option.get("styled_payload")
+                if not isinstance(styled_payload, dict):
+                    continue
+                option_objects.extend(
+                    _normalize_run_restored_objects(
+                        coordinate_service=coordinate_service,
+                        styled_payload=styled_payload,
+                        catalog_index=catalog_index,
+                        transform=transform,
+                        room_id=room_id,
+                    )
+                )
+        disabled_reason = (
+            None
+            if publishable
+            else _normalize_run_option_disabled_reason(
+                [option for _, option in selected_room_options]
+            )
+        )
+        if publishable and not option_objects:
+            disabled_reason = "Không có đồ nội thất hợp lệ để đặt."
 
         option_id = (
             _string_or_none((option_meta or {}).get("option_id"))
@@ -1363,8 +1438,44 @@ def _restore_normalize_run_options(
                 if isinstance((option_meta or {}).get("complete"), bool)
                 else None,
                 "coverageRatio": _number((option_meta or {}).get("coverage_ratio")),
+                "disabledReason": disabled_reason,
                 "objects": option_objects,
                 "openings": deepcopy(openings),
             }
         )
     return response_options
+
+
+def _response_option_is_applicable(option: Mapping[str, Any]) -> bool:
+    objects = option.get("objects")
+    if not isinstance(objects, list) or not objects:
+        return False
+    hard_valid = option.get("hardValid")
+    if isinstance(hard_valid, bool) and not hard_valid:
+        return False
+    complete = option.get("complete")
+    if isinstance(complete, bool) and not complete:
+        return False
+    disabled_reason = _string_or_none(option.get("disabledReason"))
+    return disabled_reason is None
+
+
+def _normalize_run_option_is_publishable(option: Mapping[str, Any]) -> bool:
+    hard_valid = option.get("hard_valid")
+    if isinstance(hard_valid, bool) and not hard_valid:
+        return False
+    complete = option.get("complete")
+    if isinstance(complete, bool):
+        return complete
+    return True
+
+
+def _normalize_run_option_disabled_reason(options: Sequence[Mapping[str, Any]]) -> str:
+    has_hard_invalid = any(option.get("hard_valid") is False for option in options)
+    has_incomplete = any(option.get("complete") is False for option in options)
+    reasons: list[str] = []
+    if has_hard_invalid:
+        reasons.append("Không đạt kiểm tra không chồng lấn và vùng thao tác.")
+    if has_incomplete:
+        reasons.append("Chưa đặt đủ các đồ bắt buộc.")
+    return " ".join(reasons) or "Phương án này không đạt kiểm tra bố cục."

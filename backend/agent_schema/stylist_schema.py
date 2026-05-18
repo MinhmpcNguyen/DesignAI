@@ -68,6 +68,13 @@ class StyledObject(BaseModel):
     color_hex: str
     material: str | None = None
     place_on: PlaceOn | None = None
+    # Rendering layer: "floor_solid" | "floor_underlay" | "surface_child" |
+    # "wall_mounted" | "ceiling".  The renderer uses this to decide elevation
+    # and collision so items placed ON furniture or mounted to walls are not
+    # drawn as if they were on the floor.
+    collision_layer: str | None = None
+    # Nominal height of the object in mm (used by the renderer for extrusion).
+    meta_height_mm: int | None = None
 
     @field_validator("color_hex")
     @classmethod

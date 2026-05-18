@@ -42,14 +42,16 @@ from typing import Any
 
 from layout.grid_policy import GLOBAL_LAYOUT_GRID_MM
 from layout.room_profiles.registry import is_profile_trait_object
-from layout.variant_family import FALLBACK_GENERIC_VARIANT_FAMILY
-from layout.variant_family import GENERIC_VARIANT_FAMILIES
-from layout.variant_family import ROLE_VARIANT_FAMILY_ALLOWLISTS
+from layout.variant_family import (
+    FALLBACK_GENERIC_VARIANT_FAMILY,
+    GENERIC_VARIANT_FAMILIES,
+    ROLE_VARIANT_FAMILY_ALLOWLISTS,
+    SLEEP_VARIANT_FAMILIES,
+    normalize_variant_family,
+)
 from layout.variant_family import (
     SEMANTIC_VARIANT_FAMILIES as CORE_SEMANTIC_VARIANT_FAMILIES,
 )
-from layout.variant_family import SLEEP_VARIANT_FAMILIES
-from layout.variant_family import normalize_variant_family
 
 try:
     from ortools.sat.python import cp_model
@@ -3409,14 +3411,18 @@ def _filter_relation_plan_clusters(
     _filter_list("cluster_affinities", lambda i: _keep_cluster_id(i.get("cluster_id")))
     _filter_list(
         "cluster_orientations",
-        lambda i: _keep_cluster_id(i.get("cluster_id"))
-        and _keep_cluster_id(i.get("target_cluster_id")),
+        lambda i: (
+            _keep_cluster_id(i.get("cluster_id"))
+            and _keep_cluster_id(i.get("target_cluster_id"))
+        ),
     )
     _filter_list(
         "object_orientations",
-        lambda i: _keep_cluster_id(i.get("cluster_id"))
-        and _keep_cluster_id(i.get("target_cluster_id"))
-        and _keep_cluster_id(i.get("target_object_cluster_id")),
+        lambda i: (
+            _keep_cluster_id(i.get("cluster_id"))
+            and _keep_cluster_id(i.get("target_cluster_id"))
+            and _keep_cluster_id(i.get("target_object_cluster_id"))
+        ),
     )
     _filter_list(
         "cluster_relations",
@@ -6525,21 +6531,16 @@ def _generate_anchor_pose_candidates(
                         front_world=front_world,
                         desired_front=desired_front,
                     )
-                    candidates.append(
+                    candidate = _materialize_object_row(
+                        cluster_program,
+                        anchor_id,
+                        x,
+                        y,
+                        int(rot),
+                    )
+                    candidate.update(
                         {
-                            "cluster_id": cluster_id,
-                            "object_id": anchor_id,
-                            "x": x,
-                            "y": y,
-                            "rot": int(rot) % 360,
-                            "w": w_mm,
-                            "h": h_mm,
-                            "rect": rect,
                             "anchor_kind": anchor_kind,
-                            "front_world": {
-                                "dx": front_world[0],
-                                "dy": front_world[1],
-                            },
                             "desired_front_world": None
                             if desired_front is None
                             else {"dx": desired_front[0], "dy": desired_front[1]},
@@ -6562,6 +6563,7 @@ def _generate_anchor_pose_candidates(
                             + score_adjustment,
                         }
                     )
+                    candidates.append(candidate)
 
     add_candidates_for_regions(
         region_bboxes,
@@ -7262,7 +7264,14 @@ def _search_anchor_solutions(
                 del dropped_inventory_by_cluster[cluster_id][-len(drop_records) :]
         for candidate in anchor_candidates_by_cluster.get(cluster_id, []):
             rect = candidate["rect"]
-            if any(_rects_overlap(rect, row["rect"]) for row in chosen):
+            occupied_rects = [row["rect"] for row in chosen]
+            if not _object_rect_is_usable(
+                rect,
+                occupied_rects,
+                world,
+                row=candidate,
+                front_access_rows=chosen,
+            ):
                 continue
             chosen.append(candidate)
             rec(index + 1, chosen, dropped_inventory_by_cluster)
@@ -7936,6 +7945,21 @@ def _object_rect_is_usable(
         room_bbox=world["room_bbox"],
     ):
         return False
+    protected_regions = (
+        world.get("protected_regions")
+        if isinstance(world.get("protected_regions"), Sequence)
+        else []
+    )
+    candidate = dict(row)
+    candidate["rect"] = rect
+    if protected_regions and any(
+        _protected_region_issue_blocks_geometry(issue)
+        for issue in _object_level_protected_region_issues(
+            placed_objects=[candidate],
+            protected_regions=protected_regions,
+        )
+    ):
+        return False
     forbidden_regions = (
         world.get("cluster_forbidden_regions")
         if isinstance(world.get("cluster_forbidden_regions"), Sequence)
@@ -7943,8 +7967,6 @@ def _object_rect_is_usable(
     )
     if not forbidden_regions:
         return True
-    candidate = dict(row)
-    candidate["rect"] = rect
     return not any(
         _forbidden_region_issue_blocks_geometry(issue)
         for issue in _object_level_cluster_forbidden_region_issues(
@@ -7975,7 +7997,25 @@ def _rect_blocks_front_access_rows(
             continue
         if _rect_overlap_ratio(rect, access_zone) > 0.02:
             return True
+    candidate_access_zone = _front_access_zone_for_row(candidate, room_bbox)
+    if candidate_access_zone is None:
+        return False
+    for front_access_row in front_access_rows:
+        front_access_key = _object_repair_key(front_access_row)
+        if candidate_key is not None and front_access_key == candidate_key:
+            continue
+        front_access_rect = _rect_tuple(front_access_row.get("rect"))
+        if front_access_rect is None:
+            continue
+        if _object_allowed_in_front_access_zone(front_access_row):
+            continue
+        if _rect_overlap_ratio(front_access_rect, candidate_access_zone) > 0.02:
+            return True
     return False
+
+
+def _protected_region_issue_blocks_geometry(issue: Mapping[str, Any]) -> bool:
+    return _protected_region_issue_is_blocking(issue)
 
 
 def _forbidden_region_issue_blocks_geometry(issue: Mapping[str, Any]) -> bool:
@@ -8084,9 +8124,9 @@ def _object_repair_order_key(row: Mapping[str, Any]) -> tuple[int, str, str]:
     if priority in {"anchor", "dominant_anchor"} or role == "dominant_anchor":
         rank = 0
     elif has_relative:
-        rank = 2
-    else:
         rank = 1
+    else:
+        rank = 2
     return rank, str(row.get("cluster_id") or ""), str(row.get("object_id") or "")
 
 
@@ -8143,6 +8183,11 @@ def _apply_object_level_geometry_repair_penalty(
 def _droppable_object_ids(object_program: Mapping[str, Any]) -> set[str]:
     members = {str(item) for item in (object_program.get("members") or []) if str(item)}
     protected = {str(item) for item in (object_program.get("protected_ids") or [])}
+    required = {
+        str(item)
+        for item in (object_program.get("required_object_ids") or [])
+        if str(item)
+    }
     optional = {str(item) for item in (object_program.get("optional_object_ids") or [])}
     support_edge_ids = {
         str(row.get("object_id"))
@@ -8154,12 +8199,26 @@ def _droppable_object_ids(object_program: Mapping[str, Any]) -> set[str]:
         if isinstance(object_program.get("object_specs_by_id"), Mapping)
         else {}
     )
+    protected.update(
+        str(object_id)
+        for object_id, spec in object_specs.items()
+        if isinstance(spec, Mapping)
+        and (
+            bool(spec.get("protected"))
+            or (
+                str(object_id) in required
+                and not bool(spec.get("droppable"))
+            )
+        )
+    )
     droppable = {
         str(item)
         for item in (object_program.get("droppable_ids") or [])
-        if str(item) in members
+        if str(item) in members and str(item) not in protected
     }
-    droppable.update(item for item in optional if item in members)
+    droppable.update(
+        item for item in optional if item in members and item not in protected
+    )
     for action in object_program.get("degradation_ladder") or []:
         token = str(action or "").strip()
         if token == "drop_secondary_support":
@@ -8197,9 +8256,9 @@ def _droppable_object_ids(object_program: Mapping[str, Any]) -> set[str]:
             continue
         if token.startswith("drop_"):
             object_id = token.removeprefix("drop_")
-            if object_id and object_id in members:
+            if object_id and object_id in members and object_id not in protected:
                 droppable.add(object_id)
-    return droppable
+    return droppable - protected
 
 
 def _normalized_support_side_options(edge: Mapping[str, Any]) -> list[str]:
@@ -8450,8 +8509,8 @@ def _support_slot_slide_offsets(
     if token in {"bedside_head_left", "bedside_head_right"}:
         span = float(base_h if abs(front[1]) == 1 else base_w)
         return [
-            (front[0] * span * factor, front[1] * span * factor)
-            for factor in (0.35, 0.2, 0.0)
+            (-front[0] * span * factor, -front[1] * span * factor)
+            for factor in (0.42, 0.35, 0.25, 0.15, 0.0)
         ]
     if token in {"left", "right"}:
         span = float(base_h if abs(front[1]) == 1 else base_w)
@@ -8577,6 +8636,9 @@ def _materialize_object_row(
         "cluster_id": str(cluster_program.get("cluster_id") or ""),
         "object_id": object_id,
         "category": str(spec.get("category") or object_id),
+        "source_id": str(spec.get("source_id") or ""),
+        "inventory_id": str(spec.get("source_id") or spec.get("inventory_id") or ""),
+        "catalog_id": str(spec.get("catalog_id") or spec.get("catalogItemId") or ""),
         "x": int(x),
         "y": int(y),
         "rot": int(rot) % 360,
@@ -8600,6 +8662,11 @@ def _materialize_object_row(
         "relative_to": relative_to,
         "role": str(spec.get("role") or ""),
         "priority": str(spec.get("priority") or ""),
+        "protected": bool(spec.get("protected")),
+        "droppable": bool(spec.get("droppable")),
+        "trial_optional": bool(spec.get("trial_optional")),
+        "solver_trial": bool(spec.get("solver_trial")),
+        "budget_trial": bool(spec.get("budget_trial")),
         "requires_front_access": _object_requires_front_access(
             cluster_program, object_id
         ),
@@ -8923,6 +8990,14 @@ def _solution_dropped_solver_trial_cluster(
         return False
     if not _cluster_is_solver_trial_optional(cluster_program):
         return False
+    placed_objects = solution.get("placed_objects")
+    if isinstance(placed_objects, Sequence) and not isinstance(placed_objects, str):
+        if any(
+            isinstance(row, Mapping)
+            and str(row.get("cluster_id") or "") == str(cluster_id)
+            for row in placed_objects
+        ):
+            return False
     dropped = solution.get("dropped_inventory_by_cluster")
     if not isinstance(dropped, Mapping):
         return False
@@ -9115,9 +9190,18 @@ def _object_level_blocking_orientation_issues(
         row = rows_by_key.get(
             (str(issue.get("cluster_id") or ""), str(issue.get("object_id") or ""))
         )
-        if row is not None and _row_requires_front_access_zone(row):
+        if (
+            row is not None
+            and _row_requires_front_access_zone(row)
+            and not _row_allows_soft_wall_contact_orientation(row)
+        ):
             blocking.append(dict(issue))
     return blocking
+
+
+def _row_allows_soft_wall_contact_orientation(row: Mapping[str, Any]) -> bool:
+    tokens = _object_semantic_tokens(row)
+    return bool(tokens & {"bed", "mattress", "headboard", "bunk", "crib"})
 
 
 def _object_level_quality_gate_reasons(
@@ -9216,7 +9300,7 @@ def _object_level_functional_geometry_issues(
                     "cluster_id": cluster_id,
                     "object_id": str(row.get("object_id") or ""),
                     "reason": "view_corridor_blocked",
-                    "violation_severity": "blocking",
+                    "violation_severity": "advisory",
                     "overlap_ratio": round(ratio, 3),
                     "overlap_area_mm2": int(
                         round(_rect_overlap_area(rect, corridor_rect))
@@ -9251,6 +9335,8 @@ def _front_access_zone_for_row(
 
 
 def _row_requires_front_access_zone(row: Mapping[str, Any]) -> bool:
+    if _row_has_soft_access_priority(row):
+        return False
     if bool(row.get("requires_front_access")):
         return True
     if not _is_cluster_anchor_row(row):
@@ -9276,6 +9362,18 @@ def _row_requires_front_access_zone(row: Mapping[str, Any]) -> bool:
             "cabinet",
         }
     )
+
+
+def _row_has_soft_access_priority(row: Mapping[str, Any]) -> bool:
+    if bool(row.get("protected")):
+        return False
+    if any(
+        bool(row.get(key))
+        for key in ("droppable", "trial_optional", "solver_trial", "budget_trial")
+    ):
+        return True
+    priority = str(row.get("priority") or "").strip().lower()
+    return priority in {"optional", "secondary"}
 
 
 def _object_allowed_in_front_access_zone(row: Mapping[str, Any]) -> bool:
@@ -9500,7 +9598,14 @@ def _object_level_required_face_pairs(
         pair = _normalized_cluster_pair(primary, secondary)
         if focus_mode == "viewing" and pair is not None:
             alternatives = relations_by_pair.get(pair, {"face_each_other"})
-            if alternatives <= {"face_each_other"}:
+            if alternatives <= {"face_each_other"} and (
+                _relation_plan_has_explicit_face_pair_contract(
+                    relation_plan=relation_plan,
+                    primary=primary,
+                    secondary=secondary,
+                )
+                or _pair_tokens_include_media(primary, secondary)
+            ):
                 required.add(pair)
         if (
             focus_mode in {"viewing", "mixed"}
@@ -9518,12 +9623,7 @@ def _object_level_required_face_pairs(
         required_contracts = _normalized_text_set(
             requirements.get("required_pair_contracts")
         )
-        if required_contracts & {
-            "face_each_other",
-            "buffered_support",
-            "legible_primary_pair",
-            "focal_face_axis",
-        }:
+        if required_contracts & {"face_each_other", "focal_face_axis"}:
             primary = _extract_layout_primary_cluster_id(
                 dict(relation_plan) if isinstance(relation_plan, dict) else None
             )
@@ -9533,9 +9633,50 @@ def _object_level_required_face_pairs(
             pair = _normalized_cluster_pair(primary or "", secondary or "")
             if pair is not None:
                 alternatives = relations_by_pair.get(pair, {"face_each_other"})
-                if alternatives <= {"face_each_other"}:
+                if alternatives <= {"face_each_other"} and (
+                    _relation_plan_has_explicit_face_pair_contract(
+                        relation_plan=relation_plan,
+                        primary=primary or "",
+                        secondary=secondary or "",
+                    )
+                    or _pair_tokens_include_media(primary or "", secondary or "")
+                ):
                     required.add(pair)
     return required
+
+
+def _relation_plan_has_explicit_face_pair_contract(
+    *,
+    relation_plan: Mapping[str, Any],
+    primary: str,
+    secondary: str,
+) -> bool:
+    pair = _normalized_cluster_pair(primary, secondary)
+    if pair is None:
+        return False
+    concept = _concept_from_relation_plan(relation_plan)
+    contract_sources = [
+        relation_plan.get("anchor_pair_contracts"),
+        relation_plan.get("primary_pair_contracts"),
+        concept.get("anchor_pair_contracts") if isinstance(concept, Mapping) else [],
+        concept.get("primary_pair_contracts") if isinstance(concept, Mapping) else [],
+    ]
+    for rows in contract_sources:
+        if not isinstance(rows, Sequence) or isinstance(rows, str):
+            continue
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            candidate_pair = _normalized_cluster_pair(
+                str(row.get("cluster_a") or ""),
+                str(row.get("cluster_b") or ""),
+            )
+            if candidate_pair != pair:
+                continue
+            pair_type = str(row.get("pair_type") or "").strip().lower()
+            if pair_type in {"face_each_other", "ring_around_anchor"}:
+                return True
+    return False
 
 
 def _relation_plan_requires_legible_primary_pair(
@@ -9546,13 +9687,7 @@ def _relation_plan_requires_legible_primary_pair(
 ) -> bool:
     if not primary or not secondary:
         return False
-    if _pair_has_mutual_face_cluster_orientation(
-        relation_plan=relation_plan,
-        primary=primary,
-        secondary=secondary,
-    ):
-        return True
-    if _pair_has_high_priority_alignment_preference(
+    if _relation_plan_has_explicit_face_pair_contract(
         relation_plan=relation_plan,
         primary=primary,
         secondary=secondary,
@@ -9563,77 +9698,16 @@ def _relation_plan_requires_legible_primary_pair(
         required_contracts = _normalized_text_set(
             requirements.get("required_pair_contracts")
         )
-        if required_contracts & {
-            "buffered_support",
-            "legible_primary_pair",
-            "focal_face_axis",
-        }:
+        if "face_each_other" in required_contracts and (
+            _relation_plan_has_explicit_face_pair_contract(
+                relation_plan=relation_plan,
+                primary=primary,
+                secondary=secondary,
+            )
+            or _pair_tokens_include_media(primary, secondary)
+        ):
             return True
     return _pair_tokens_include_media(primary, secondary)
-
-
-def _pair_has_mutual_face_cluster_orientation(
-    *,
-    relation_plan: Mapping[str, Any],
-    primary: str,
-    secondary: str,
-) -> bool:
-    forward = False
-    backward = False
-    for row in relation_plan.get("cluster_orientations") or []:
-        if not isinstance(row, Mapping):
-            continue
-        cluster_id = str(row.get("cluster_id") or "").strip()
-        target_cluster_id = str(row.get("target_cluster_id") or "").strip()
-        intents = _normalized_text_set(row.get("intents"))
-        priority = str(row.get("priority") or "").strip().lower()
-        if "face_cluster" not in intents or priority not in {"high", "critical"}:
-            continue
-        if cluster_id == primary and target_cluster_id == secondary:
-            forward = True
-        if cluster_id == secondary and target_cluster_id == primary:
-            backward = True
-    return forward and backward
-
-
-def _pair_has_high_priority_alignment_preference(
-    *,
-    relation_plan: Mapping[str, Any],
-    primary: str,
-    secondary: str,
-) -> bool:
-    concept = _concept_from_relation_plan(relation_plan)
-    macro_constraints = (
-        concept.get("macro_constraints") if isinstance(concept, Mapping) else {}
-    )
-    alignment_rows = []
-    if isinstance(macro_constraints, Mapping):
-        rows = macro_constraints.get("cluster_alignment_preferences")
-        if isinstance(rows, Sequence) and not isinstance(rows, str):
-            alignment_rows.extend(rows)
-    rows = relation_plan.get("cluster_alignment_preferences")
-    if isinstance(rows, Sequence) and not isinstance(rows, str):
-        alignment_rows.extend(rows)
-    pair = _normalized_cluster_pair(primary, secondary)
-    if pair is None:
-        return False
-    for row in alignment_rows:
-        if not isinstance(row, Mapping):
-            continue
-        candidate_pair = _normalized_cluster_pair(
-            str(row.get("a") or ""),
-            str(row.get("b") or ""),
-        )
-        if candidate_pair != pair:
-            continue
-        preference = str(row.get("preference") or "").strip().lower()
-        priority = str(row.get("priority") or "").strip().lower()
-        if priority in {"high", "critical"} and preference in {
-            "legible_primary_pair",
-            "focal_face_axis",
-        }:
-            return True
-    return False
 
 
 def _pair_tokens_include_media(primary: str, secondary: str) -> bool:

@@ -21,6 +21,30 @@ DEFAULT_MAX_PAGES = 20
 DEFAULT_TIMEOUT_SECONDS = 15.0
 _SIZE_VECTOR_LENGTH = 3
 _ROTATION_VECTOR_LENGTH = 4
+_QUARTER_TURN_THRESHOLD = 0.15  # tolerance for 1/√2 ≈ 0.7071
+
+
+def _is_quarter_turn_y(
+    q: tuple[float, float, float, float] | None,
+) -> bool:
+    """Return True when *q* represents a 90° or 270° rotation around the Y-axis.
+
+    In Three.js / GLB convention the quaternion is stored as (x, y, z, w).
+    A ±90° Y-rotation satisfies: |qy| ≈ |qw| ≈ 1/√2, |qx| ≈ 0, |qz| ≈ 0.
+    When this is True, the model's local-X and local-Z plan-footprint axes are
+    swapped in world space, so L (size[0]) and W (size[2]) must be exchanged
+    before being fed to the 2-D furniture-placement solver.
+    """
+    if q is None:
+        return False
+    qx, qy, qz, qw = q
+    _HALF_SQRT2 = 0.7071067811865476
+    return (
+        abs(qx) < _QUARTER_TURN_THRESHOLD
+        and abs(qz) < _QUARTER_TURN_THRESHOLD
+        and abs(abs(qy) - _HALF_SQRT2) < _QUARTER_TURN_THRESHOLD
+        and abs(abs(qw) - _HALF_SQRT2) < _QUARTER_TURN_THRESHOLD
+    )
 
 CatalogRotationPresence = Literal["null", "present"]
 
@@ -172,10 +196,19 @@ class CatalogItem(BaseModel):
         if self.size is None:
             return {"length_mm": None, "width_mm": None, "height_mm": None}
         x_m, y_m, z_m = self.size
+        length_mm = x_m * 1000.0
+        width_mm = z_m * 1000.0
+        height_mm = y_m * 1000.0
+        # When default_rotation is a 90° or 270° Y-axis rotation the model's
+        # local-X and local-Z axes are swapped in world space, so the 2D plan
+        # footprint dimensions must be swapped accordingly so that the solver
+        # allocates the correct depth perpendicular to each wall.
+        if _is_quarter_turn_y(self.default_rotation):
+            length_mm, width_mm = width_mm, length_mm
         return {
-            "length_mm": x_m * 1000.0,
-            "width_mm": z_m * 1000.0,
-            "height_mm": y_m * 1000.0,
+            "length_mm": length_mm,
+            "width_mm": width_mm,
+            "height_mm": height_mm,
         }
 
     def inventory_type(self, *, category_slug: str | None) -> str:

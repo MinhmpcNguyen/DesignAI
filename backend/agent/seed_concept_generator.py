@@ -2808,6 +2808,21 @@ def _anchor_layout_hints_by_cluster(
     return out
 
 
+def _primary_secondary_from_pair_contracts(
+    pair_contracts: Sequence[Mapping[str, object]],
+) -> tuple[str, str] | None:
+    ranked_contracts = sorted(
+        pair_contracts,
+        key=lambda row: 0 if bool(row.get("required")) else 1,
+    )
+    for contract in ranked_contracts:
+        cluster_a = _clean_str(contract.get("cluster_a"))
+        cluster_b = _clean_str(contract.get("cluster_b"))
+        if cluster_a is not None and cluster_b is not None and cluster_a != cluster_b:
+            return cluster_a, cluster_b
+    return None
+
+
 def _anchor_pair_contracts_for_concept(
     *,
     primary_pair_contracts: Sequence[Mapping[str, object]],
@@ -3212,6 +3227,9 @@ def _concept_to_solver_plan(
         for row in _sequence_or_empty(concept.get("primary_pair_contracts"))
         if isinstance(row, Mapping)
     ]
+    pair_cluster_ids = _primary_secondary_from_pair_contracts(pair_contracts)
+    if pair_cluster_ids is not None:
+        primary_cluster_id, secondary_cluster_id = pair_cluster_ids
     if not pair_contracts and primary_cluster_id and secondary_cluster_id:
         pair_contracts = [
             {

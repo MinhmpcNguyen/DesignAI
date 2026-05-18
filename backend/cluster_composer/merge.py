@@ -210,6 +210,9 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
             facing_row = facing.get(object_id) or facing.get(base_object_id) or {}
             if not isinstance(facing_row, dict):
                 facing_row = {}
+            source_id = str(rep_dims.get("source_id") or "")
+            if source_id.startswith("__"):
+                source_id = ""
             object_specs_by_id[object_id] = {
                 "object_id": object_id,
                 "base_object_id": base_object_id,
@@ -225,7 +228,7 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
                     "W": width_mm,
                     "H": height_mm,
                 },
-                "source_id": str(rep_dims.get("source_id") or ""),
+                "source_id": source_id,
                 "protected": bool(decision.get("protected")) and required,
                 "droppable": droppable,
                 "budget_trial": bool(decision.get("budget_trial")),
@@ -292,7 +295,27 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
                 }
             )
 
-    protected_ids = _string_list(anchor_first_policy.get("protected_ids"))
+    policy_protected_ids = _expand_id_list(
+        _string_list(anchor_first_policy.get("protected_ids")),
+        expanded_ids_by_base,
+    )
+    spec_protected_ids = _stable_unique(
+        [
+            object_id
+            for object_id, spec in object_specs_by_id.items()
+            if bool(spec.get("protected")) or object_id in required_ids
+        ]
+    )
+    protected_ids = _stable_unique(
+        [
+            *spec_protected_ids,
+            *[
+                object_id
+                for object_id in policy_protected_ids
+                if object_id in spec_protected_ids
+            ],
+        ]
+    )
     droppable_ids = _stable_unique(
         [
             *_string_list(anchor_first_policy.get("droppable_ids")),
@@ -329,15 +352,11 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
         ),
         "placement_order": [item for item in placement_order if item in member_set],
         "support_edges": support_edges,
-        "protected_ids": [
-            item
-            for item in _expand_id_list(protected_ids, expanded_ids_by_base)
-            if item in member_set
-        ],
+        "protected_ids": [item for item in protected_ids if item in member_set],
         "droppable_ids": [
             item
             for item in _expand_id_list(droppable_ids, expanded_ids_by_base)
-            if item in member_set
+            if item in member_set and item not in set(protected_ids)
         ],
         "degradation_ladder": _expand_degradation_ladder(
             _string_list(rules.get("degradation_ladder")),

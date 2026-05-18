@@ -451,6 +451,9 @@ def _normalize_openings_for_kind(
         return []
     normalized: list[NormalizedOpening] = []
     existing_ids: set[str] = set()
+    # Track (wall_id, t_start_mm, t_end_mm) to deduplicate openings whose
+    # frontend source sent the same door/window twice with different IDs.
+    seen_wall_segments: set[tuple[str, int, int]] = set()
     for index, item in enumerate(value, start=1):
         opening = _normalize_single_opening(
             item,
@@ -461,6 +464,19 @@ def _normalize_openings_for_kind(
         )
         if opening is None:
             continue
+        # Deduplicate by wall position: same wall + same snapped t_start/t_end.
+        wall_sig: tuple[str, int, int] = (
+            str(opening["wall_id"]),
+            int(round(float(opening["wall_t_start_mm"]))),
+            int(round(float(opening["wall_t_end_mm"]))),
+        )
+        if wall_sig in seen_wall_segments:
+            conflicts.append(
+                f"Opening '{opening['id']}' is a duplicate of an earlier opening "
+                f"on wall '{opening['wall_id']}' at t=[{wall_sig[1]}, {wall_sig[2]}]mm; skipped."
+            )
+            continue
+        seen_wall_segments.add(wall_sig)
         opening_id = _ensure_unique_identifier(opening["id"], existing_ids)
         opening["id"] = opening_id
         existing_ids.add(opening_id)
