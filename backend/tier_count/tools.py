@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
-from adapters.catalog_api import CatalogApiError, load_catalog_inventory_payloads
+from adapters.catalog_api import (
+    CatalogApiError,
+    _is_quarter_turn_y,
+    load_catalog_inventory_payloads,
+)
 
 # ============================================================
 # Generic helpers
@@ -95,6 +100,48 @@ def _get_category(item: dict[str, Any]) -> str:
     return str(attrs.get("category") or item.get("type") or "unknown")
 
 
+_CATEGORY_NEGATIVE_TEXT_TOKENS: dict[str, tuple[str, ...]] = {
+    # The catalog currently contains a desk-lamp asset typed as "desk".
+    # Its tiny footprint makes the solver reserve lamp space for a real desk.
+    "desk": ("den", "lamp", "light", "table_lamp", "desk_lamp"),
+    # Rug/bed-mat assets are decorative surfaces, not sleep anchors.
+    "bed": ("tham", "rug", "carpet", "mat", "plane001"),
+    # Sofa assets are seating, but they are not valid one-seat chair reps.
+    "chair": ("sofa", "sectional", "loveseat"),
+}
+
+
+def _normalize_catalog_text(value: object) -> str:
+    raw = str(value or "").strip().lower().replace("đ", "d")
+    normalized = unicodedata.normalize("NFKD", raw)
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+
+def _catalog_identity_text(item: dict[str, Any]) -> str:
+    attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+    values = [
+        item.get("name"),
+        item.get("nameVn"),
+        item.get("slug"),
+        item.get("skuSlug"),
+        item.get("modelUrl"),
+        attrs.get("name"),
+        attrs.get("nameVn"),
+        attrs.get("slug"),
+        attrs.get("skuSlug"),
+        attrs.get("modelUrl"),
+    ]
+    return " ".join(_normalize_catalog_text(value) for value in values)
+
+
+def _catalog_item_allowed_for_category(category: str, item: dict[str, Any]) -> bool:
+    negative_tokens = _CATEGORY_NEGATIVE_TEXT_TOKENS.get(_norm_key(category), ())
+    if not negative_tokens:
+        return True
+    identity_text = _catalog_identity_text(item)
+    return not any(token in identity_text for token in negative_tokens)
+
+
 def _normalize_item(item: dict[str, Any]) -> _NormItem | None:
     try:
         inv_id = str(item.get("id", "")).strip()
@@ -102,6 +149,8 @@ def _normalize_item(item: dict[str, Any]) -> _NormItem | None:
             return None
 
         cat = _get_category(item)
+        if not _catalog_item_allowed_for_category(cat, item):
+            return None
 
         length_mm = float(item["length_mm"])
         width_mm = float(item["width_mm"])
@@ -112,8 +161,29 @@ def _normalize_item(item: dict[str, Any]) -> _NormItem | None:
         L = length_mm / 1000.0
         W = width_mm / 1000.0
         H = height_mm / 1000.0
-        if W > L:
-            L, W = W, L
+        # For items whose default_rotation is a 90°/270° Y-axis rotation,
+        # catalog_api.py already swapped L↔W so that:
+        #   L = wall-parallel span  (the smaller dimension for most beds)
+        #   W = depth toward wall   (the larger dimension for most beds)
+        # Applying the generic "ensure L≥W" normalization below would undo that
+        # swap, causing the solver to allocate the wrong depth and produce
+        # furniture that visually penetrates the wall.  Skip the swap for such items.
+        attrs = item.get("attributes") or {}
+        raw_dr = attrs.get("default_rotation") or attrs.get("defaultRotation")
+        _parsed_dr: tuple[float, float, float, float] | None = None
+        if isinstance(raw_dr, (list, tuple)) and len(raw_dr) == 4:
+            try:
+                _parsed_dr = (
+                    float(raw_dr[0]),
+                    float(raw_dr[1]),
+                    float(raw_dr[2]),
+                    float(raw_dr[3]),
+                )
+            except (TypeError, ValueError):
+                pass
+        if not _is_quarter_turn_y(_parsed_dr):
+            if W > L:
+                L, W = W, L
 
         A = L * W
         R = L / W if W > 0 else float("inf")
@@ -219,6 +289,14 @@ def _rep_dict(rep: _NormItem | None) -> dict[str, Any] | None:
     }
 
 
+def _generic_rep_dict(rep: _NormItem | None) -> dict[str, Any] | None:
+    out = _rep_dict(rep)
+    if out is None:
+        return None
+    out["source_id"] = "__generic__"
+    return out
+
+
 def _build_size_profiles(
     inventory: list[dict[str, Any]],
     *,
@@ -293,7 +371,7 @@ def _build_size_profiles(
         if rep is None:
             rep = generic_s
             generic_backfilled[t] = True
-        generic_rep_dims[t] = _rep_dict(rep)
+        generic_rep_dims[t] = _generic_rep_dict(rep)
 
     profiles["__generic__"] = {
         "metric": "footprint_area_m2",

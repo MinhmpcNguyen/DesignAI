@@ -1176,6 +1176,9 @@ def _place_opening_items(
     profile = _profile_for_type(item_type, inventory_profiles)
     _, plan_height = profile.wall_projection()
     rows: list[dict[str, Any]] = []
+    # Guard against duplicate openings (same segment sent twice by the frontend)
+    # so we don't produce two curtains stacked at exactly the same position.
+    seen_seg_keys: set[tuple[int, int, int, int]] = set()
     for opening in target_openings:
         segment = opening.get("segment_mm") if isinstance(opening, dict) else None
         opening_id = opening.get("id") if isinstance(opening, dict) else None
@@ -1187,6 +1190,12 @@ def _place_opening_items(
         p2 = _point_tuple(segment[1])
         if p1 is None or p2 is None:
             continue
+        # Skip if we already placed a curtain at this segment position.
+        seg_key = (int(round(p1[0])), int(round(p1[1])), int(round(p2[0])), int(round(p2[1])))
+        seg_key_rev = (int(round(p2[0])), int(round(p2[1])), int(round(p1[0])), int(round(p1[1])))
+        if seg_key in seen_seg_keys or seg_key_rev in seen_seg_keys:
+            continue
+        seen_seg_keys.add(seg_key)
         seg_length = max(1, int(round(_segment_length(p1, p2))))
         width = max(profile.wall_projection()[0], seg_length + 200)
         center_x = int(round((p1[0] + p2[0]) / 2.0))
@@ -1431,6 +1440,9 @@ def _validate_styled_objects(
     kept: list[dict[str, Any]] = []
     dropped: list[dict[str, str]] = []
     floor_solids: list[tuple[str, _Rect, str]] = []
+    # Tracks placed wall/opening-mounted items to deduplicate curtains/blinds
+    # that land on the same opening (e.g. when the frontend sends duplicate doors).
+    wall_mounted_solids: list[tuple[str, _Rect, str]] = []
 
     for row in objects:
         if not isinstance(row, dict):
@@ -1452,6 +1464,18 @@ def _validate_styled_objects(
                 min_y=room_rect.min_y,
                 max_y=room_rect.max_y,
             )
+            # Clip rug away from adjacent solid furniture so it doesn't visually
+            # intrude into wardrobes, desks, etc. that happen to be near the bed.
+            place_on = row.get("place_on")
+            support_id = (
+                str(place_on.get("target_instance_id") or "")
+                if isinstance(place_on, dict)
+                else ""
+            )
+            for solid_id, solid_rect, _ in floor_solids:
+                if solid_id == support_id:
+                    continue  # the furniture the rug belongs to — don't clip
+                fitted = _clip_underlay_away_from_solid(fitted, solid_rect)
             next_row = dict(row)
             next_row["bbox"] = fitted.to_bbox()
             next_row["polygon_ccw"] = fitted.to_polygon()
@@ -1485,6 +1509,21 @@ def _validate_styled_objects(
                     }
                 )
                 continue
+            # Deduplicate curtains/blinds that fall on the same opening segment
+            # (can happen when the frontend sends duplicate door/window entries).
+            if source == "inventory" and any(
+                _rect_overlap_ratio_local(rect, other_rect) > 0.5
+                for _, other_rect, ot in wall_mounted_solids
+                if ot == object_type
+            ):
+                dropped.append(
+                    {
+                        "instance_id": instance_id,
+                        "reason": "duplicate_opening_mount",
+                    }
+                )
+                continue
+            wall_mounted_solids.append((instance_id, rect, object_type))
 
         kept.append(row)
 
@@ -1501,6 +1540,40 @@ def _rects_overlap_local(left: _Rect, right: _Rect) -> bool:
         and left.min_y < right.max_y
         and left.max_y > right.min_y
     )
+
+
+def _clip_underlay_away_from_solid(underlay: _Rect, solid: _Rect) -> _Rect:
+    """Shrink *underlay* on the least-intrusion side so it no longer overlaps *solid*.
+
+    Finds which of the four edges requires the smallest move to resolve the
+    overlap, then clips that single edge.  Called repeatedly for each
+    conflicting solid neighbour so the rug is trimmed incrementally.
+    """
+    if not _rects_overlap_local(underlay, solid):
+        return underlay
+    # How far the underlay protrudes into the solid on each of the four sides.
+    intrude_max_x = underlay.max_x - solid.min_x  # underlay right edge into solid
+    intrude_min_x = solid.max_x - underlay.min_x  # underlay left edge into solid
+    intrude_max_y = underlay.max_y - solid.min_y  # underlay bottom edge into solid
+    intrude_min_y = solid.max_y - underlay.min_y  # underlay top edge into solid
+    candidates = [
+        (intrude_max_x, "max_x", solid.min_x),
+        (intrude_min_x, "min_x", solid.max_x),
+        (intrude_max_y, "max_y", solid.min_y),
+        (intrude_min_y, "min_y", solid.max_y),
+    ]
+    positive = [(v, edge, val) for v, edge, val in candidates if v > 0]
+    if not positive:
+        return underlay
+    _, clip_edge, clip_val = min(positive, key=lambda t: t[0])
+    if clip_edge == "max_x":
+        return _Rect(underlay.min_x, underlay.min_y, clip_val, underlay.max_y)
+    if clip_edge == "min_x":
+        return _Rect(clip_val, underlay.min_y, underlay.max_x, underlay.max_y)
+    if clip_edge == "max_y":
+        return _Rect(underlay.min_x, underlay.min_y, underlay.max_x, clip_val)
+    # min_y
+    return _Rect(underlay.min_x, clip_val, underlay.max_x, underlay.max_y)
 
 
 def _rect_overlap_ratio_local(left: _Rect, right: _Rect) -> float:

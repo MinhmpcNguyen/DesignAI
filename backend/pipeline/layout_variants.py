@@ -26,7 +26,7 @@ class _VariantCandidate:
     state_signature: str = ""
 
 
-_BackfillRank = tuple[int, int, int, int, int, int, int, float, int, int]
+_BackfillRank = tuple[int, int, int, int, int, int, int, int, float, int, int]
 
 
 def select_distinct_final_gallery_candidates(
@@ -262,9 +262,13 @@ def _candidate_backfill_rank_tuple(
         )
     else:
         distance = 0
-    gallery_eligible, complete, coverage_ratio, layout_score = _candidate_rank_tuple(
-        candidate
-    )
+    (
+        gallery_eligible,
+        hard_valid,
+        complete,
+        coverage_ratio,
+        layout_score,
+    ) = _candidate_rank_tuple(candidate)
     return (
         concept_is_new,
         anchor_is_new,
@@ -272,6 +276,7 @@ def _candidate_backfill_rank_tuple(
         visual_family_is_new,
         distance,
         gallery_eligible,
+        hard_valid,
         complete,
         coverage_ratio,
         layout_score,
@@ -539,9 +544,12 @@ def _coerce_candidate(raw: dict[str, Any]) -> _VariantCandidate | None:
     )
 
 
-def _candidate_rank_tuple(candidate: _VariantCandidate) -> tuple[int, int, float, int]:
+def _candidate_rank_tuple(
+    candidate: _VariantCandidate,
+) -> tuple[int, int, int, float, int]:
     return (
         1 if candidate.gallery_eligible else 0,
+        1 if candidate.hard_valid else 0,
         1 if candidate.complete else 0,
         float(candidate.coverage_ratio),
         int(candidate.layout_score),

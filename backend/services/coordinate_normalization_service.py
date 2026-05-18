@@ -563,13 +563,16 @@ class CoordinateNormalizationService:
         resolved_user_id = user_id or "coordinate_normalizer_preview"
         resolved_style = style or self._string_or_none(payload.get("style")) or "modern"
         default_height_mm = self._payload_height_mm(payload)
+        wall_inset_mm = self._wall_inset_mm(payload)
 
         for room_view in room_views:
             room_id = self._string_or_none(room_view.get("room_id"))
             if room_id is None:
                 continue
             local_payload = self._mapping(room_view.get("local_payload"))
-            shape_points = self._shape_points_from_room_payload(local_payload)
+            shape_points = self._shape_points_from_room_payload(
+                local_payload, wall_inset_mm=wall_inset_mm
+            )
             if len(shape_points) < 3:
                 continue
             room_name = self._string_or_none(room_view.get("name")) or room_id
@@ -946,9 +949,14 @@ class CoordinateNormalizationService:
         return math.hypot(point.x - px, point.y - py)
 
     def _shape_points_from_room_payload(
-        self, room_payload: Mapping[str, Any]
+        self,
+        room_payload: Mapping[str, Any],
+        *,
+        wall_inset_mm: float = 0.0,
     ) -> list[JsonObject]:
         points = self._room_points(room_payload)
+        if wall_inset_mm > 0:
+            points = self._inset_polygon_points(points, wall_inset_mm)
         return [
             {
                 "x": _clean_float(point.x),
@@ -956,6 +964,78 @@ class CoordinateNormalizationService:
             }
             for point in points
         ]
+
+    def _wall_inset_mm(self, payload: Mapping[str, Any]) -> float:
+        """Return half the typical wall thickness (mm) to offset polygon centerlines
+        to the actual inner (room-facing) wall edge.
+
+        Frontend polygon points sit at the wall **centerline**.  The usable room
+        area starts at the inner edge, i.e. centerline − thickness/2.
+
+        NOTE: The room interpreter snaps polygon coordinates to a 50 mm grid
+        (GRID_MM = 50).  To survive that snap without being rounded *down*,
+        the inset must be a multiple of 50 mm.  The default assumes 200 mm
+        exterior walls (100 mm inset), which is typical for Vietnamese RC
+        apartment construction and stays on the 50 mm grid.
+        """
+        _DEFAULT_WALL_THICKNESS_MM = 200.0
+        walls = payload.get("walls")
+        if not isinstance(walls, list) or not walls:
+            return _DEFAULT_WALL_THICKNESS_MM / 2.0
+        thicknesses: list[float] = []
+        for wall in walls:
+            if not isinstance(wall, Mapping):
+                continue
+            raw = wall.get("thickness") or wall.get("thickness_mm")
+            t = self._number(raw)
+            # Sanity-check: accept 50 mm (5 cm) … 500 mm (50 cm)
+            if t is not None and 50.0 <= t <= 500.0:
+                thicknesses.append(t)
+        if not thicknesses:
+            return _DEFAULT_WALL_THICKNESS_MM / 2.0
+        # Median — robust against one very thick partition wall skewing the result
+        thicknesses.sort()
+        mid = len(thicknesses) // 2
+        median_t = (
+            thicknesses[mid]
+            if len(thicknesses) % 2
+            else (thicknesses[mid - 1] + thicknesses[mid]) / 2.0
+        )
+        raw_inset = median_t / 2.0
+        # Round up to the nearest 50 mm so the inset survives the room interpreter's
+        # 50 mm grid snap without being rounded *down* to a smaller value.
+        _GRID_MM = 50.0
+        return math.ceil(raw_inset / _GRID_MM) * _GRID_MM
+
+    def _inset_polygon_points(
+        self,
+        points: list[PlanarPoint],
+        inset_mm: float,
+    ) -> list[PlanarPoint]:
+        """Shrink a polygon inward by *inset_mm* using Shapely's buffer.
+
+        Returns the original points unchanged if the inset would collapse the
+        polygon or Shapely raises an error.
+        """
+        if inset_mm <= 0 or len(points) < 3:
+            return points
+        coords = [(p.x, p.y) for p in points]
+        try:
+            poly = Polygon(coords)
+            if not poly.is_valid:
+                poly = poly.buffer(0)
+            result = poly.buffer(-inset_mm, join_style=2, cap_style=2)
+            if result.is_empty:
+                return points
+            if isinstance(result, MultiPolygon):
+                result = max(result.geoms, key=lambda g: g.area)
+            if not isinstance(result, Polygon) or result.is_empty:
+                return points
+            ext_coords = list(result.exterior.coords)
+            # Shapely closes the ring (last coord == first); drop the duplicate
+            return [PlanarPoint(x=x, y=y) for x, y in ext_coords[:-1]]
+        except Exception:  # noqa: BLE001
+            return points
 
     def _polygon_area(self, points: list[JsonObject]) -> float:
         if len(points) < 3:

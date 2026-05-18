@@ -162,6 +162,17 @@ class PipelineNormalizeRunObject(BaseModel):
     rotation: PipelineNormalizeRunRotation
     objectRole: str | None = None
     catalogItemId: str | None = None
+    # Rendering layer used by the frontend to decide how to display the object.
+    # Values: "floor_solid" | "floor_underlay" | "surface_child" |
+    #         "wall_mounted" | "ceiling"
+    # "surface_child" items (desk lamps, throw blankets, etc.) should be
+    # rendered at an elevated Y position (on top of their support furniture)
+    # and hidden in the 2D floor-plan view.
+    collisionLayer: str | None = None
+    # Placement relationship: which furniture the item is attached to and how.
+    # {"target_instance_id": "nightstand", "method": "on_top"} means the item
+    # sits on top of the nightstand.
+    placeOn: JsonObject | None = None
 
 
 class PipelineNormalizeRunOption(BaseModel):
@@ -171,6 +182,7 @@ class PipelineNormalizeRunOption(BaseModel):
     hardValid: bool | None = None
     complete: bool | None = None
     coverageRatio: float | None = None
+    disabledReason: str | None = None
     objects: list[PipelineNormalizeRunObject] = Field(default_factory=list)
     openings: list[FrontendOpeningPayload] = Field(default_factory=list)
 
