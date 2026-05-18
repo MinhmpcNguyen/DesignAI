@@ -124,6 +124,9 @@ OBJECT_LEVEL_BLOCKING_PROTECTED_SEVERITIES = frozenset({"blocking", "critical"})
 OBJECT_LEVEL_LOW_HEIGHT_DAYLIGHT_SOFT_MAX_MM = 1400
 OBJECT_LEVEL_LOW_HEIGHT_DAYLIGHT_MAX_OVERLAP_RATIO = 0.35
 OBJECT_LEVEL_HARD_SOFT_ANCHOR_REJECT_RATIO = 0.16
+OBJECT_LEVEL_BEDSIDE_HEAD_WALL_MAX_GAP_MM = 350
+OBJECT_LEVEL_BEDSIDE_HEAD_MIN_PROJECTION_RATIO = 0.1
+OBJECT_LEVEL_BEDSIDE_HEAD_MAX_SIDE_GAP_MM = 260
 OBJECT_LEVEL_COMPACT_BEDROOM_MAX_AREA_M2 = 12.0
 OBJECT_LEVEL_COMPACT_BEDROOM_ROOM_TYPES = frozenset(
     {"bedroom", "guest_bedroom", "primary_bedroom"}
@@ -5203,6 +5206,10 @@ def solve_object_level_layout(
                 candidate_solution
             )
             solution_pool.append(candidate_solution)
+            if len(solution_pool) >= OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS:
+                break
+        if len(solution_pool) >= OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS:
+            break
 
     ranked_pool = _rank_object_level_solution_pool(solution_pool)[
         :OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS
@@ -6540,6 +6547,35 @@ def _object_spec(
     return row if isinstance(row, Mapping) else None
 
 
+def _spec_object_key(spec: Mapping[str, Any], object_id: str) -> str:
+    return " ".join(
+        str(value or "").strip().lower()
+        for value in (object_id, spec.get("category"), spec.get("base_object_id"))
+    )
+
+
+def _spec_is_bed_like(spec: Mapping[str, Any], object_id: str) -> bool:
+    return "bed" in _spec_object_key(spec, object_id)
+
+
+def _functional_front_token_for_spec(spec: Mapping[str, Any], object_id: str) -> str:
+    token = spec.get("front") if isinstance(spec.get("front"), str) else "top"
+    front_token = str(token or "top").strip().lower()
+    # Bed plans often mark local "top" as the headboard; access/front is the foot.
+    if _spec_is_bed_like(spec, object_id) and front_token == "top":
+        return "bottom"
+    return front_token
+
+
+def _requires_strict_anchor_front_alignment(
+    *,
+    spec: Mapping[str, Any],
+    object_id: str,
+    desired_front: tuple[float, float] | None,
+) -> bool:
+    return desired_front is not None and _spec_is_bed_like(spec, object_id)
+
+
 def _rotate_dims_for_rot(length_mm: int, width_mm: int, rot: int) -> tuple[int, int]:
     return (length_mm, width_mm) if int(rot) % 180 == 0 else (width_mm, length_mm)
 
@@ -6721,11 +6757,7 @@ def _generate_anchor_pose_candidates(
                     if key in seen:
                         continue
                     seen.add(key)
-                    front_token = (
-                        spec.get("front")
-                        if isinstance(spec.get("front"), str)
-                        else "top"
-                    )
+                    front_token = _functional_front_token_for_spec(spec, anchor_id)
                     front_world = _front_vector_from_rotation(front_token, int(rot))
                     desired_front = _desired_anchor_front_vector(
                         cluster_id=cluster_id,
@@ -6736,6 +6768,15 @@ def _generate_anchor_pose_candidates(
                         anchor_kind=anchor_kind,
                         placement_behavior=placement_behavior,
                     )
+                    if _requires_strict_anchor_front_alignment(
+                        spec=spec,
+                        object_id=anchor_id,
+                        desired_front=desired_front,
+                    ) and not _front_matches_required_direction(
+                        front_world=front_world,
+                        desired_front=desired_front,
+                    ):
+                        continue
                     orientation_score = _front_alignment_score(
                         front_world=front_world,
                         desired_front=desired_front,
@@ -7820,6 +7861,7 @@ def _place_support_objects_for_solution(
             base_row=base_row,
             edge=edge,
             grid_mm=grid_mm,
+            room_bbox=world["room_bbox"],
         )
         viable_slots: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
         for slot in slots:
@@ -7827,6 +7869,23 @@ def _place_support_objects_for_solution(
             if not _rect_inside_room(rect, world["room_bbox"]):
                 continue
             if any(_rects_overlap(rect, occ) for occ in occupied):
+                continue
+            bedside_metrics = _bedside_head_slot_metrics(
+                side_option=str(slot.get("side_option") or ""),
+                rect=rect,
+                base_row=base_row,
+                base_front=_front_vector_from_rotation(
+                    base_row.get("front_token"),
+                    int(base_row.get("rot") or 0),
+                ),
+                room_bbox=world["room_bbox"],
+                gap_max_mm=int(
+                    edge.get("gap_max_mm")
+                    or edge.get("gap_max")
+                    or OBJECT_LEVEL_BEDSIDE_HEAD_MAX_SIDE_GAP_MM
+                ),
+            )
+            if bedside_metrics is not None and not bedside_metrics["contract_ok"]:
                 continue
             materialized = _materialize_object_row(
                 cluster_program,
@@ -7836,6 +7895,17 @@ def _place_support_objects_for_solution(
                 slot["rot"],
                 relative_to=base_id,
             )
+            materialized["support_side_option"] = slot.get("side_option")
+            materialized["bedside_head_projection_mm"] = slot.get(
+                "bedside_head_projection_mm"
+            )
+            materialized["bedside_side_gap_mm"] = slot.get("bedside_side_gap_mm")
+            if _support_candidate_has_blocking_region_issue(
+                candidate=materialized,
+                protected_regions=protected_regions,
+                world=world,
+            ):
+                continue
             relax_penalty = _support_slot_relaxation_penalty(
                 candidate=materialized,
                 placed_objects=placed_objects,
@@ -7848,6 +7918,9 @@ def _place_support_objects_for_solution(
             key=lambda item: (
                 item[0],
                 -float(item[1].get("orientation_score") or 0.0),
+                -float(item[1].get("semantic_alignment_score") or 0.0),
+                -float(item[1].get("bedside_head_projection_mm") or 0.0),
+                float(item[1].get("bedside_side_gap_mm") or 0.0),
                 item[1]["y"],
                 item[1]["x"],
                 item[1]["rot"],
@@ -7863,6 +7936,7 @@ def _place_support_objects_for_solution(
                 index + 1,
                 support_score
                 + float(slot.get("orientation_score") or 0.0)
+                + (float(slot.get("semantic_alignment_score") or 0.0) * 0.1)
                 - relax_penalty,
             )
             occupied.pop()
@@ -7934,6 +8008,38 @@ def _support_slot_relaxation_penalty(
         + _object_level_protected_region_penalty(forbidden_issues)
         + 1400.0 * len(blocking_functional)
         + 180.0 * max(0, len(functional_issues) - len(blocking_functional))
+    )
+
+
+def _support_candidate_has_blocking_region_issue(
+    *,
+    candidate: Mapping[str, Any],
+    protected_regions: Sequence[Mapping[str, Any]],
+    world: Mapping[str, Any],
+) -> bool:
+    if protected_regions and any(
+        _protected_region_issue_blocks_geometry(issue)
+        for issue in _object_level_protected_region_issues(
+            placed_objects=[candidate],
+            protected_regions=protected_regions,
+        )
+    ):
+        return True
+
+    forbidden_regions = (
+        world.get("cluster_forbidden_regions")
+        if isinstance(world.get("cluster_forbidden_regions"), Sequence)
+        else []
+    )
+    return bool(
+        forbidden_regions
+        and any(
+            _forbidden_region_issue_blocks_geometry(issue)
+            for issue in _object_level_cluster_forbidden_region_issues(
+                placed_objects=[candidate],
+                forbidden_regions=forbidden_regions,
+            )
+        )
     )
 
 
@@ -8043,6 +8149,12 @@ def _best_object_geometry_repair_rect(
         front_access_rows=front_access_rows,
     ):
         return original_rect
+    if _row_requires_strict_bedside_head_repair_contract(
+        row=row,
+        original_rows_by_key=original_rows_by_key,
+        repaired_by_key=repaired_by_key,
+    ):
+        return None
 
     room_bbox = world["room_bbox"]
     width = original_rect[2] - original_rect[0]
@@ -8339,6 +8451,41 @@ def _object_repair_order_key(row: Mapping[str, Any]) -> tuple[int, str, str]:
     return rank, str(row.get("cluster_id") or ""), str(row.get("object_id") or "")
 
 
+def _row_requires_strict_bedside_head_repair_contract(
+    *,
+    row: Mapping[str, Any],
+    original_rows_by_key: Mapping[tuple[str, str], Mapping[str, Any]],
+    repaired_by_key: Mapping[tuple[str, str], Mapping[str, Any]],
+) -> bool:
+    side_option = str(
+        row.get("support_side_option") or row.get("side_option") or ""
+    ).strip()
+    if _is_bedside_head_slot_option(side_option):
+        return True
+
+    cluster_id = str(row.get("cluster_id") or "").strip()
+    relative_to = str(row.get("relative_to") or "").strip()
+    if not cluster_id or not relative_to:
+        return False
+    support_key = " ".join(
+        str(row.get(key) or "").strip().lower() for key in ("object_id", "category")
+    )
+    if not any(
+        marker in support_key
+        for marker in ("nightstand", "bedside", "sidebed", "side_bed")
+    ):
+        return False
+
+    base_key = (cluster_id, relative_to)
+    base_row = repaired_by_key.get(base_key) or original_rows_by_key.get(base_key)
+    if base_row is None:
+        return False
+    base_token = str(
+        base_row.get("category") or base_row.get("object_id") or ""
+    ).lower()
+    return "bed" in base_token
+
+
 def _object_repair_key(row: Mapping[str, Any]) -> tuple[str, str] | None:
     cluster_id = str(row.get("cluster_id") or "").strip()
     object_id = str(row.get("object_id") or "").strip()
@@ -8557,6 +8704,7 @@ def _support_slot_candidates(
     base_row: Mapping[str, Any],
     edge: Mapping[str, Any],
     grid_mm: int,
+    room_bbox: tuple[int, int, int, int] | None = None,
 ) -> list[dict[str, Any]]:
     spec = _object_spec(cluster_program, object_id)
     if spec is None:
@@ -8576,7 +8724,9 @@ def _support_slot_candidates(
     gap_max = int(
         edge.get("gap_max_mm") or edge.get("gap_max") or max(gap_min + 50, 180)
     )
-    base_rect = base_row["rect"]
+    base_rect = _rect_tuple(base_row.get("rect"))
+    if base_rect is None:
+        return []
     base_center = (
         (base_rect[0] + base_rect[2]) / 2.0,
         (base_rect[1] + base_rect[3]) / 2.0,
@@ -8586,7 +8736,6 @@ def _support_slot_candidates(
     base_front = _front_vector_from_rotation(
         base_row.get("front_token"), int(base_row.get("rot") or 0)
     )
-    side_vec = (-base_front[1], base_front[0])
     orientation = str(edge.get("orientation") or "").strip().lower()
     out: list[dict[str, Any]] = []
     seen: set[tuple[int, int, int]] = set()
@@ -8596,6 +8745,12 @@ def _support_slot_candidates(
             object_id=object_id,
             object_category=str(spec.get("category") or ""),
             base_row=base_row,
+        )
+        support_front, support_side = _support_slot_basis(
+            side_option=slot_side_option,
+            base_front=base_front,
+            base_row=base_row,
+            room_bbox=room_bbox,
         )
         for gap in _support_gap_samples(gap_min=gap_min, gap_max=gap_max):
             for rot in allowed_rotations:
@@ -8610,15 +8765,15 @@ def _support_slot_candidates(
                     base_h=base_h,
                     obj_w=w_mm,
                     obj_h=h_mm,
-                    front=base_front,
-                    side=side_vec,
+                    front=support_front,
+                    side=support_side,
                 )
                 for slide in _support_slot_slide_offsets(
                     side_option=slot_side_option,
                     base_w=base_w,
                     base_h=base_h,
-                    front=base_front,
-                    side=side_vec,
+                    front=support_front,
+                    side=support_side,
                 ):
                     x = _snap_to_grid(
                         int(
@@ -8636,20 +8791,44 @@ def _support_slot_candidates(
                         ),
                         grid_mm,
                     )
+                    if room_bbox is not None:
+                        x, y = _snap_origin_inside_room(
+                            x=x,
+                            y=y,
+                            w_mm=w_mm,
+                            h_mm=h_mm,
+                            room_bbox=room_bbox,
+                            grid_mm=grid_mm,
+                        )
                     key = (x, y, final_rot)
                     if key in seen:
                         continue
                     seen.add(key)
                     rect = (x, y, x + w_mm, y + h_mm)
+                    if room_bbox is not None and not _rect_inside_room(rect, room_bbox):
+                        continue
+                    if _rects_overlap(rect, base_rect):
+                        continue
+                    bedside_metrics = _bedside_head_slot_metrics(
+                        side_option=slot_side_option,
+                        rect=rect,
+                        base_row=base_row,
+                        base_front=base_front,
+                        room_bbox=room_bbox,
+                        gap_max_mm=gap_max,
+                    )
+                    if (
+                        bedside_metrics is not None
+                        and not bedside_metrics["contract_ok"]
+                    ):
+                        continue
                     desired_front = _desired_support_front_vector(
                         orientation=orientation,
                         rect=rect,
                         base_row=base_row,
                     )
                     front_world = _front_vector_from_rotation(
-                        spec.get("front")
-                        if isinstance(spec.get("front"), str)
-                        else "top",
+                        _functional_front_token_for_spec(spec, object_id),
                         final_rot,
                     )
                     out.append(
@@ -8660,6 +8839,17 @@ def _support_slot_candidates(
                             "w": w_mm,
                             "h": h_mm,
                             "rect": rect,
+                            "side_option": slot_side_option,
+                            "bedside_head_projection_mm": (
+                                0.0
+                                if bedside_metrics is None
+                                else bedside_metrics["head_projection_mm"]
+                            ),
+                            "bedside_side_gap_mm": (
+                                0.0
+                                if bedside_metrics is None
+                                else bedside_metrics["side_gap_mm"]
+                            ),
                             "orientation_score": _front_alignment_score(
                                 front_world=front_world,
                                 desired_front=desired_front,
@@ -8668,7 +8858,7 @@ def _support_slot_candidates(
                                 _support_slot_semantic_alignment_score(
                                     side_option=slot_side_option,
                                     slide=slide,
-                                    front=base_front,
+                                    front=support_front,
                                 )
                             ),
                         }
@@ -8677,6 +8867,8 @@ def _support_slot_candidates(
         key=lambda item: (
             -float(item.get("orientation_score") or 0.0),
             -float(item.get("semantic_alignment_score") or 0.0),
+            -float(item.get("bedside_head_projection_mm") or 0.0),
+            float(item.get("bedside_side_gap_mm") or 0.0),
             item["y"],
             item["x"],
             item["rot"],
@@ -8712,6 +8904,130 @@ def _bedside_nightstand_slot_option(
         return side_option
 
     return "bedside_head_left" if token in left_tokens else "bedside_head_right"
+
+
+def _support_slot_basis(
+    *,
+    side_option: str,
+    base_front: tuple[int, int],
+    base_row: Mapping[str, Any],
+    room_bbox: tuple[int, int, int, int] | None,
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    default_side = (-base_front[1], base_front[0])
+    if str(side_option).strip().lower() not in {
+        "bedside_head_left",
+        "bedside_head_right",
+    }:
+        return base_front, default_side
+
+    head_vector = _wall_backed_bed_head_vector(
+        base_row=base_row,
+        room_bbox=room_bbox,
+    )
+    if head_vector is None:
+        return base_front, default_side
+
+    foot_vector = (-head_vector[0], -head_vector[1])
+    return foot_vector, (-foot_vector[1], foot_vector[0])
+
+
+def _is_bedside_head_slot_option(side_option: str) -> bool:
+    return str(side_option).strip().lower() in {
+        "bedside_head_left",
+        "bedside_head_right",
+    }
+
+
+def _wall_backed_bed_head_vector(
+    *,
+    base_row: Mapping[str, Any],
+    room_bbox: tuple[int, int, int, int] | None,
+) -> tuple[int, int] | None:
+    base_key = str(base_row.get("category") or base_row.get("object_id") or "").lower()
+    if "bed" not in base_key or room_bbox is None:
+        return None
+    rect = _rect_tuple(base_row.get("rect"))
+    if rect is None:
+        return None
+
+    contacts = [
+        (abs(rect[0] - room_bbox[0]), (1, 0)),
+        (abs(room_bbox[2] - rect[2]), (-1, 0)),
+        (abs(rect[1] - room_bbox[1]), (0, 1)),
+        (abs(room_bbox[3] - rect[3]), (0, -1)),
+    ]
+    distance, inward = min(contacts, key=lambda item: item[0])
+    if distance > OBJECT_LEVEL_BEDSIDE_HEAD_WALL_MAX_GAP_MM:
+        return None
+    return (-inward[0], -inward[1])
+
+
+def _bedside_head_slot_metrics(
+    *,
+    side_option: str,
+    rect: tuple[int, int, int, int],
+    base_row: Mapping[str, Any],
+    base_front: tuple[int, int],
+    room_bbox: tuple[int, int, int, int] | None,
+    gap_max_mm: int,
+) -> dict[str, float | bool] | None:
+    if not _is_bedside_head_slot_option(side_option):
+        return None
+
+    base_key = str(base_row.get("category") or base_row.get("object_id") or "").lower()
+    if "bed" not in base_key:
+        return None
+    base_rect = _rect_tuple(base_row.get("rect"))
+    if base_rect is None:
+        return None
+
+    head_vector = _wall_backed_bed_head_vector(
+        base_row=base_row,
+        room_bbox=room_bbox,
+    ) or (-base_front[0], -base_front[1])
+    candidate_center = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+    base_center = (
+        (base_rect[0] + base_rect[2]) / 2.0,
+        (base_rect[1] + base_rect[3]) / 2.0,
+    )
+    delta = (candidate_center[0] - base_center[0], candidate_center[1] - base_center[1])
+    head_projection = delta[0] * head_vector[0] + delta[1] * head_vector[1]
+    head_span = (
+        base_rect[2] - base_rect[0]
+        if abs(head_vector[0]) == 1
+        else base_rect[3] - base_rect[1]
+    )
+    min_head_projection = max(
+        0.0,
+        float(head_span) * OBJECT_LEVEL_BEDSIDE_HEAD_MIN_PROJECTION_RATIO,
+    )
+    side_gap = (
+        _rect_axis_gap(rect, base_rect, axis="y")
+        if abs(head_vector[0]) == 1
+        else _rect_axis_gap(rect, base_rect, axis="x")
+    )
+    max_side_gap = max(
+        float(OBJECT_LEVEL_BEDSIDE_HEAD_MAX_SIDE_GAP_MM),
+        float(gap_max_mm) + 160.0,
+    )
+    return {
+        "head_projection_mm": float(head_projection),
+        "side_gap_mm": float(side_gap),
+        "contract_ok": bool(
+            head_projection >= min_head_projection and side_gap <= max_side_gap
+        ),
+    }
+
+
+def _rect_axis_gap(
+    left: tuple[int, int, int, int],
+    right: tuple[int, int, int, int],
+    *,
+    axis: str,
+) -> int:
+    if axis == "x":
+        return max(right[0] - left[2], left[0] - right[2], 0)
+    return max(right[1] - left[3], left[1] - right[3], 0)
 
 
 def _support_slot_semantic_alignment_score(
@@ -8862,7 +9178,7 @@ def _materialize_object_row(
     width_mm = max(160, int(dims.get("W") or 0))
     w_mm, h_mm = _rotate_dims_for_rot(length_mm, width_mm, rot)
     rect = (int(x), int(y), int(x) + w_mm, int(y) + h_mm)
-    front_token = spec.get("front") if isinstance(spec.get("front"), str) else "top"
+    front_token = _functional_front_token_for_spec(spec, object_id)
     front_world = _front_vector_from_rotation(front_token, rot)
     front_side_world = {
         (0, 1): "top",
@@ -9451,7 +9767,7 @@ def _object_level_blocking_orientation_issues(
 
 def _row_allows_soft_wall_contact_orientation(row: Mapping[str, Any]) -> bool:
     tokens = _object_semantic_tokens(row)
-    return bool(tokens & {"bed", "mattress", "headboard", "bunk", "crib"})
+    return bool(tokens & {"headboard"})
 
 
 def _object_level_quality_gate_reasons(
