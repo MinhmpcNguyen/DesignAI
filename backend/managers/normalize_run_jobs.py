@@ -48,6 +48,7 @@ class NormalizeRunJobManager:
     def create_job(self, user_id: str | None) -> PipelineNormalizeRunJobResponse:
         job_id = self._make_job_id(user_id)
         now = self._now_utc_iso()
+        logger.debug("normalize-run job created: job_id=%s user_id=%s", job_id, user_id)
         _ = self._repository.create(
             NormalizeRunJobRecord(
                 id=job_id,
@@ -183,6 +184,11 @@ class NormalizeRunJobManager:
         run_pipeline: PipelineRunCallable,
     ) -> None:
         try:
+            logger.debug(
+                "normalize-run job start: job_id=%s request=%s",
+                job_id,
+                request.model_dump(mode="json", exclude_none=True),
+            )
             self.update(
                 job_id,
                 status="running",
@@ -190,6 +196,11 @@ class NormalizeRunJobManager:
                 message="Normalizing frontend room payload.",
             )
             response = run_pipeline(request, job_id)
+            logger.debug(
+                "normalize-run job pipeline output: job_id=%s response=%s",
+                job_id,
+                response.model_dump(mode="json", exclude_none=True),
+            )
             result_path = self._repository.write_result(job_id, response)
             self.update(
                 job_id,
@@ -201,9 +212,11 @@ class NormalizeRunJobManager:
         except HTTPException as exc:
             detail = http_exception_detail(exc)
             logger.warning(
-                "normalize-run job failed: job_id=%s reason=%s",
+                "normalize-run job failed: job_id=%s status=%s reason=%s detail=%s",
                 job_id,
+                exc.status_code,
                 detail.reason,
+                detail.model_dump(mode="json", exclude_none=True),
             )
             self.update(
                 job_id,
@@ -213,7 +226,11 @@ class NormalizeRunJobManager:
                 error=detail,
             )
         except Exception as exc:
-            logger.exception("normalize-run job crashed: job_id=%s", job_id)
+            logger.exception(
+                "normalize-run job crashed: job_id=%s error=%s",
+                job_id,
+                exc,
+            )
             self.update(
                 job_id,
                 status="error",

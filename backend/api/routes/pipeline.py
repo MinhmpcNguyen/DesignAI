@@ -8,6 +8,7 @@ import json
 import logging
 import math
 from copy import deepcopy
+from functools import lru_cache
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -39,6 +40,10 @@ from pipeline.orchestrator import (
 )
 from repositories.normalize_run_jobs import NormalizeRunJobRepository
 from services.coordinate_normalization_service import CoordinateNormalizationService
+from services.normalize_run_pipeline_service import (
+    NormalizeRunPipelineService,
+    build_normalize_run_pipeline_service,
+)
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 logger = logging.getLogger(__name__)
@@ -50,6 +55,15 @@ _SIZE_VECTOR_LENGTH = 3
 _QUATERNION_LENGTH = 4
 _MIN_QUATERNION_NORM = 1e-12
 _CATALOG_TYPE_FALLBACKS: dict[str, tuple[str, ...]] = {}
+
+
+@lru_cache(maxsize=1)
+def _normalize_run_pipeline_service() -> NormalizeRunPipelineService:
+    return build_normalize_run_pipeline_service(
+        job_manager=_NORMALIZE_RUN_JOB_MANAGER,
+        coordinate_service=CoordinateNormalizationService(),
+        pipeline_executor=_execute_normalize_run_pipeline,
+    )
 
 
 def _enrich_rotation_ccw(
@@ -943,21 +957,19 @@ def get_normalize_run_job_manager() -> NormalizeRunJobManager:
     return _NORMALIZE_RUN_JOB_MANAGER
 
 
+def get_normalize_run_pipeline_service() -> NormalizeRunPipelineService:
+    return _normalize_run_pipeline_service()
+
+
 NormalizeRunJobManagerDep = Annotated[
     NormalizeRunJobManager,
     Depends(get_normalize_run_job_manager),
 ]
 
-
-def _run_pipeline_for_job(
-    req: PipelineNormalizeRunRequest,
-    job_id: str | None,
-) -> PipelineNormalizeRunResponse:
-    return _execute_normalize_run_pipeline(
-        req,
-        job_id=job_id,
-        job_manager=_NORMALIZE_RUN_JOB_MANAGER,
-    )
+NormalizeRunPipelineServiceDep = Annotated[
+    NormalizeRunPipelineService,
+    Depends(get_normalize_run_pipeline_service),
+]
 
 
 @router.post(
@@ -969,10 +981,10 @@ def _run_pipeline_for_job(
 def normalize_run_pipeline(
     req: PipelineNormalizeRunRequest,
     background_tasks: BackgroundTasks,
-    manager: NormalizeRunJobManagerDep,
+    service: NormalizeRunPipelineServiceDep,
 ) -> PipelineNormalizeRunJobResponse:
-    job = manager.create_job(req.user_id)
-    background_tasks.add_task(manager.run_job, job.id, req, _run_pipeline_for_job)
+    job = service.create_job(req.user_id)
+    background_tasks.add_task(service.run_job, job.id, req)
     return job
 
 
@@ -987,16 +999,16 @@ def normalize_run_pipeline(
 )
 def normalize_run_pipeline_status(
     job_id: str,
-    manager: NormalizeRunJobManagerDep,
+    service: NormalizeRunPipelineServiceDep,
 ) -> PipelineNormalizeRunStatusResponse:
-    if not manager.is_valid_job_id(job_id):
+    if not service.is_valid_job_id(job_id):
         raise_api_error(
             400,
             ApiErrorReason.NORMALIZE_RUN_INVALID_JOB_ID,
             "Normalize-run job id contains unsupported characters.",
             context={"id": job_id},
         )
-    status_response = manager.status_response(job_id)
+    status_response = service.status_response(job_id)
     if status_response is None:
         raise_api_error(
             404,
@@ -1021,16 +1033,16 @@ def normalize_run_pipeline_status(
 )
 def normalize_run_pipeline_result(
     job_id: str,
-    manager: NormalizeRunJobManagerDep,
+    service: NormalizeRunPipelineServiceDep,
 ) -> PipelineNormalizeRunResponse:
-    if not manager.is_valid_job_id(job_id):
+    if not service.is_valid_job_id(job_id):
         raise_api_error(
             400,
             ApiErrorReason.NORMALIZE_RUN_INVALID_JOB_ID,
             "Normalize-run job id contains unsupported characters.",
             context={"id": job_id},
         )
-    status_payload = manager.status_response(job_id)
+    status_payload = service.status_response(job_id)
     if status_payload is None:
         raise_api_error(
             404,
@@ -1057,7 +1069,7 @@ def normalize_run_pipeline_result(
             },
         )
 
-    result = manager.read_result(job_id)
+    result = service.read_result(job_id)
     if result is None:
         raise_api_error(
             500,
@@ -1073,8 +1085,9 @@ def _execute_normalize_run_pipeline(
     *,
     job_id: str | None = None,
     job_manager: NormalizeRunJobManager | None = None,
+    coordinate_service: CoordinateNormalizationService | None = None,
 ) -> PipelineNormalizeRunResponse:
-    coordinate_service = CoordinateNormalizationService()
+    coordinate_service = coordinate_service or CoordinateNormalizationService()
     floorplan_payload = _normalize_run_floorplan_payload(req)
     single_room_payload = isinstance(floorplan_payload.get("room"), dict) or (
         not isinstance(floorplan_payload.get("rooms"), list)
