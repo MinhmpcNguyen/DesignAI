@@ -246,6 +246,7 @@ class MacroClusterSolver:
             cluster_constraints=cluster_constraints_json,
             grid_mm=grid_mm,
             max_rounds=self.max_rounds,
+            time_limit_s=self.time_limit_s,
         )
 
 
@@ -5065,7 +5066,9 @@ def solve_object_level_layout(
     cluster_constraints: dict[str, Any] | None = None,
     grid_mm: int = GLOBAL_LAYOUT_GRID_MM,
     max_rounds: int = 3,
+    time_limit_s: float = DEFAULT_SOLVER_TIME_LIMIT_SEC_PER_CONCEPT,
 ) -> dict[str, Any]:
+    deadline_ts = perf_counter() + max(0.0, float(time_limit_s))
     room_bbox = _object_solver_room_bbox(room_model)
     if room_bbox[2] <= room_bbox[0] or room_bbox[3] <= room_bbox[1]:
         return {
@@ -5094,6 +5097,19 @@ def solve_object_level_layout(
         )
         for cluster_id in anchor_order
     }
+    if _object_level_time_limit_reached(deadline_ts):
+        return {
+            "status": "UNSAT",
+            "solver_kind": "object_level_anchor_first",
+            "notes": [
+                "Object-level solver stopped after reaching its time limit before anchor search completed."
+            ],
+            "solver_debug": {
+                "anchor_candidate_counts": {
+                    k: len(v) for k, v in anchor_candidates_by_cluster.items()
+                }
+            },
+        }
     if any(
         not rows
         for cluster_id, rows in anchor_candidates_by_cluster.items()
@@ -5129,6 +5145,7 @@ def solve_object_level_layout(
             room_model=room_model,
             relation_plan=relation_plan,
             max_solutions=max(8, int(max_rounds) * 4),
+            deadline_ts=deadline_ts,
         )
     )
     if not anchor_solutions:
@@ -5149,6 +5166,8 @@ def solve_object_level_layout(
 
     solution_pool: list[dict[str, Any]] = []
     for solution in anchor_solutions:
+        if _object_level_time_limit_reached(deadline_ts):
+            break
         support_results = _place_support_objects_for_solution(
             solution=solution,
             world=world,
@@ -5156,15 +5175,19 @@ def solve_object_level_layout(
             relation_plan=relation_plan,
             grid_mm=grid_mm,
             max_solutions=OBJECT_LEVEL_MAX_SUPPORT_SOLUTIONS_PER_ANCHOR,
+            deadline_ts=deadline_ts,
         )
         if not support_results:
             continue
         for support_result in support_results:
+            if _object_level_time_limit_reached(deadline_ts):
+                break
             candidate_solution = {**solution, **support_result}
             repair_summary = _repair_object_level_solution_geometry(
                 solution=candidate_solution,
                 world=world,
                 grid_mm=grid_mm,
+                deadline_ts=deadline_ts,
             )
             if repair_summary is None:
                 continue
@@ -7198,6 +7221,7 @@ def _search_anchor_solutions(
     room_model: Mapping[str, Any],
     relation_plan: Mapping[str, Any] | None,
     max_solutions: int,
+    deadline_ts: float | None = None,
 ) -> Sequence[dict[str, Any]]:
     solutions: list[dict[str, Any]] = []
     visited_leaf_count = 0
@@ -7219,6 +7243,8 @@ def _search_anchor_solutions(
         dropped_inventory_by_cluster: dict[str, list[dict[str, Any]]],
     ) -> None:
         nonlocal visited_leaf_count
+        if _object_level_time_limit_reached(deadline_ts):
+            return
         if visited_leaf_count >= max_leaf_count:
             return
         if index >= len(anchor_order):
@@ -7263,6 +7289,8 @@ def _search_anchor_solutions(
             if drop_records:
                 del dropped_inventory_by_cluster[cluster_id][-len(drop_records) :]
         for candidate in anchor_candidates_by_cluster.get(cluster_id, []):
+            if _object_level_time_limit_reached(deadline_ts):
+                return
             rect = candidate["rect"]
             occupied_rects = [row["rect"] for row in chosen]
             if not _object_rect_is_usable(
@@ -7498,6 +7526,7 @@ def _place_support_objects_for_solution(
     relation_plan: Mapping[str, Any] | None,
     grid_mm: int,
     max_solutions: int,
+    deadline_ts: float | None = None,
 ) -> list[dict[str, Any]]:
     placed_objects: list[dict[str, Any]] = []
     dropped_inventory_by_cluster: dict[str, list[dict[str, Any]]] = {
@@ -7564,6 +7593,8 @@ def _place_support_objects_for_solution(
             tasks.append((cluster_id, object_id, edge, base_id))
 
     def search(index: int, support_score: float) -> None:
+        if _object_level_time_limit_reached(deadline_ts):
+            return
         if len(results) >= max(1, int(max_solutions)):
             return
         if index >= len(tasks):
@@ -7614,6 +7645,8 @@ def _place_support_objects_for_solution(
         )
         viable_slots: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
         for slot in slots:
+            if _object_level_time_limit_reached(deadline_ts):
+                return
             rect = slot["rect"]
             if not _rect_inside_room(rect, world["room_bbox"]):
                 continue
@@ -7733,6 +7766,7 @@ def _repair_object_level_solution_geometry(
     solution: Mapping[str, Any],
     world: Mapping[str, Any],
     grid_mm: int,
+    deadline_ts: float | None = None,
 ) -> dict[str, Any] | None:
     rows = [
         deepcopy(row)
@@ -7763,6 +7797,8 @@ def _repair_object_level_solution_geometry(
     for index, row in sorted(
         enumerate(rows), key=lambda item: _object_repair_order_key(item[1])
     ):
+        if _object_level_time_limit_reached(deadline_ts):
+            return None
         rect = _rect_tuple(row.get("rect"))
         if rect is None:
             return None
@@ -7813,6 +7849,10 @@ def _repair_object_level_solution_geometry(
             "penalty": penalty,
         },
     }
+
+
+def _object_level_time_limit_reached(deadline_ts: float | None) -> bool:
+    return deadline_ts is not None and perf_counter() >= deadline_ts
 
 
 def _best_object_geometry_repair_rect(
