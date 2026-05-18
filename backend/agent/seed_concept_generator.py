@@ -3230,16 +3230,13 @@ def _concept_to_solver_plan(
     pair_cluster_ids = _primary_secondary_from_pair_contracts(pair_contracts)
     if pair_cluster_ids is not None:
         primary_cluster_id, secondary_cluster_id = pair_cluster_ids
-    if not pair_contracts and primary_cluster_id and secondary_cluster_id:
-        pair_contracts = [
-            {
-                "pair_type": "face_each_other",
-                "cluster_a": primary_cluster_id,
-                "cluster_b": secondary_cluster_id,
-                "strength": "high",
-                "required": True,
-            }
-        ]
+    if not pair_contracts:
+        pair_contracts = _fallback_pair_contracts_for_solver_plan(
+            concept_family=family,
+            cluster_zone_plan=cluster_zone_plan,
+            primary_cluster_id=primary_cluster_id,
+            secondary_cluster_id=secondary_cluster_id,
+        )
 
     affinities = [
         _solver_affinity_for_assignment(row, policy) for row in cluster_zone_plan
@@ -3464,6 +3461,82 @@ def _solver_relations_from_pair_contracts(
             }
         )
     return relations
+
+
+def _fallback_pair_contracts_for_solver_plan(
+    *,
+    concept_family: str,
+    cluster_zone_plan: Sequence[Mapping[str, object]],
+    primary_cluster_id: str | None,
+    secondary_cluster_id: str | None,
+) -> list[dict[str, object]]:
+    if primary_cluster_id is None or secondary_cluster_id is None:
+        return []
+
+    primary_row = _cluster_zone_row(cluster_zone_plan, primary_cluster_id)
+    secondary_row = _cluster_zone_row(cluster_zone_plan, secondary_cluster_id)
+    pair_type = _fallback_pair_type_for_solver_plan(
+        concept_family=concept_family,
+        primary_cluster_id=primary_cluster_id,
+        secondary_cluster_id=secondary_cluster_id,
+        primary_row=primary_row,
+        secondary_row=secondary_row,
+    )
+    if pair_type is None:
+        return []
+
+    required = pair_type == "face_each_other"
+    return [
+        {
+            "pair_type": pair_type,
+            "cluster_a": primary_cluster_id,
+            "cluster_b": secondary_cluster_id,
+            "strength": "high" if required else "medium",
+            "required": required,
+        }
+    ]
+
+
+def _fallback_pair_type_for_solver_plan(
+    *,
+    concept_family: str,
+    primary_cluster_id: str,
+    secondary_cluster_id: str,
+    primary_row: Mapping[str, object],
+    secondary_row: Mapping[str, object],
+) -> str | None:
+    if _cluster_pair_has_media(primary_cluster_id, secondary_cluster_id) or (
+        _zone_row_has_focal_claim(primary_row)
+        or _zone_row_has_focal_claim(secondary_row)
+    ):
+        return "face_each_other"
+    if concept_family in {"focal_axis", "daylight_oriented"}:
+        return "supports_use_axis"
+    return None
+
+
+def _cluster_zone_row(
+    cluster_zone_plan: Sequence[Mapping[str, object]],
+    cluster_id: str,
+) -> Mapping[str, object]:
+    for row in cluster_zone_plan:
+        if _clean_str(row.get("cluster_id")) == cluster_id:
+            return row
+    return {}
+
+
+def _zone_row_has_focal_claim(row: Mapping[str, object]) -> bool:
+    return str(row.get("zone_complement_role") or "").strip() == "focal_claim"
+
+
+def _cluster_pair_has_media(primary_cluster_id: str, secondary_cluster_id: str) -> bool:
+    tokens = {
+        token
+        for cluster_id in (primary_cluster_id, secondary_cluster_id)
+        for token in cluster_id.replace("-", "_").lower().split("_")
+        if token
+    }
+    return bool(tokens & {"media", "tv", "television", "console"})
 
 
 def _solver_directional_relations_from_pair_contracts(

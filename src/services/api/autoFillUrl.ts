@@ -15,6 +15,13 @@ class ApiResponseError extends Error {
   }
 }
 
+const DEFAULT_NORMALIZE_RUN_TIMEOUT_MS = 30 * 60 * 1_000;
+
+function formatTimeoutMinutes(timeoutMs: number): string {
+  const minutes = Math.max(1, Math.round(timeoutMs / 60_000));
+  return `${minutes} phút`;
+}
+
 async function checkResponse(res: Response): Promise<void> {
   if (!res.ok) {
     let msg = `Lỗi ${res.status}: ${res.statusText}`;
@@ -65,12 +72,12 @@ export async function getNormalizeRunResult(
   return res.json() as Promise<AutoFillResult>;
 }
 
-/** Poll status until ready/error, then fetch result. Timeout = 10 phút. */
+/** Poll status until ready/error, then fetch result. */
 export async function pollNormalizeRunUntilReady(
   jobId: string,
   onProgress: (status: NormalizeRunStatusResponse) => void,
   intervalMs = 2_000,
-  timeoutMs = 10 * 60 * 1_000,
+  timeoutMs = DEFAULT_NORMALIZE_RUN_TIMEOUT_MS,
 ): Promise<AutoFillResult> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -96,5 +103,5 @@ export async function pollNormalizeRunUntilReady(
     }
     await new Promise<void>((r) => setTimeout(r, intervalMs));
   }
-  throw new Error("Timeout sau 10 phút chờ pipeline.");
+  throw new Error(`Timeout sau ${formatTimeoutMinutes(timeoutMs)} chờ pipeline.`);
 }

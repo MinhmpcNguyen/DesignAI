@@ -124,6 +124,17 @@ OBJECT_LEVEL_BLOCKING_PROTECTED_SEVERITIES = frozenset({"blocking", "critical"})
 OBJECT_LEVEL_LOW_HEIGHT_DAYLIGHT_SOFT_MAX_MM = 1400
 OBJECT_LEVEL_LOW_HEIGHT_DAYLIGHT_MAX_OVERLAP_RATIO = 0.35
 OBJECT_LEVEL_HARD_SOFT_ANCHOR_REJECT_RATIO = 0.16
+OBJECT_LEVEL_COMPACT_BEDROOM_MAX_AREA_M2 = 12.0
+OBJECT_LEVEL_COMPACT_BEDROOM_ROOM_TYPES = frozenset(
+    {"bedroom", "guest_bedroom", "primary_bedroom"}
+)
+OBJECT_LEVEL_COMPACT_SOFT_PROTECTED_ZONE_TYPES = frozenset(
+    {"center_openness_core", "primary_circulation_corridor"}
+)
+OBJECT_LEVEL_COMPACT_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE = {
+    "center_openness_core": 0.28,
+    "primary_circulation_corridor": 0.24,
+}
 
 QUALITY_WEIGHTS = {
     "functionality": 0.32,
@@ -5117,7 +5128,8 @@ def solve_object_level_layout(
             "solver_debug": {
                 "anchor_candidate_counts": {
                     k: len(v) for k, v in anchor_candidates_by_cluster.items()
-                }
+                },
+                "compact_bedroom_policy": _object_solver_compact_policy_debug(world),
             },
         }
 
@@ -5137,13 +5149,15 @@ def solve_object_level_layout(
             "solver_kind": "object_level_anchor_first",
             "offending_clusters": list(anchor_order),
             "notes": [
-                "Anchor candidates were generated, but no compatible non-overlapping anchor set could be assembled."
+                "Anchor candidates were generated, but no compatible non-overlapping anchor set could be assembled.",
+                *_object_solver_compact_policy_notes(world),
             ],
             "solver_debug": {
                 "anchor_candidate_counts": {
                     k: len(v) for k, v in anchor_candidates_by_cluster.items()
                 },
                 "anchor_order": list(anchor_order),
+                "compact_bedroom_policy": _object_solver_compact_policy_debug(world),
             },
         }
 
@@ -5207,6 +5221,7 @@ def solve_object_level_layout(
                     k: len(v) for k, v in anchor_candidates_by_cluster.items()
                 },
                 "candidate_solution_count": len(solution_pool),
+                "compact_bedroom_policy": _object_solver_compact_policy_debug(world),
             },
         }
 
@@ -5255,10 +5270,12 @@ def solve_object_level_layout(
             "object_count": len(best_solution.get("placed_objects") or []),
             "candidate_solution_count": len(solution_pool),
             "ranked_solution_count": len(ranked_solutions),
+            "compact_bedroom_policy": _object_solver_compact_policy_debug(world),
         },
         "notes": [
             "Solved directly at object level with anchor-first placement.",
             "Local support placement now enumerates multiple non-overlapping arrangements before ranking them.",
+            *_object_solver_compact_policy_notes(world),
         ],
     }
 
@@ -5399,9 +5416,19 @@ def _build_object_solver_world(
 
     anchor_order = _object_level_anchor_cluster_order(clusters_by_id, relation_plan)
     region_index = _index_room_regions(room_model)
+    compact_bedroom_policy = _compact_bedroom_solver_policy(room_model)
     protected_regions = _collect_protected_regions(
         room_model, relation_plan, region_index
     )
+    protected_regions, compact_relaxations = (
+        _relax_protected_regions_for_compact_bedroom(
+            protected_regions=protected_regions,
+            compact_bedroom_policy=compact_bedroom_policy,
+        )
+    )
+    if compact_relaxations:
+        compact_bedroom_policy = dict(compact_bedroom_policy)
+        compact_bedroom_policy["protected_region_relaxations"] = compact_relaxations
     return {
         "clusters_by_id": clusters_by_id,
         "anchor_cluster_order": anchor_order,
@@ -5410,10 +5437,180 @@ def _build_object_solver_world(
         "room_bbox": _object_solver_room_bbox(room_model),
         "room_polygon": _object_solver_room_polygon(room_model),
         "protected_regions": protected_regions,
+        "compact_bedroom_policy": compact_bedroom_policy,
         "cluster_forbidden_regions": _collect_cluster_forbidden_regions(
-            clusters_by_id, room_model, relation_plan, region_index
+            clusters_by_id,
+            room_model,
+            relation_plan,
+            region_index,
+            protected_regions=protected_regions,
         ),
     }
+
+
+def _compact_bedroom_solver_policy(room_model: Mapping[str, Any]) -> dict[str, Any]:
+    room_type = _room_type(room_model).strip().lower()
+    room_area_m2 = _object_solver_room_area_m2(room_model)
+    available_area_m2 = _object_solver_available_area_m2(room_model)
+    compact_area_m2 = available_area_m2 if available_area_m2 > 0.0 else room_area_m2
+    enabled = (
+        room_type in OBJECT_LEVEL_COMPACT_BEDROOM_ROOM_TYPES
+        and compact_area_m2 > 0.0
+        and compact_area_m2 <= OBJECT_LEVEL_COMPACT_BEDROOM_MAX_AREA_M2
+    )
+    return {
+        "enabled": enabled,
+        "room_type": room_type,
+        "area_threshold_m2": OBJECT_LEVEL_COMPACT_BEDROOM_MAX_AREA_M2,
+        "room_area_m2": round(room_area_m2, 3),
+        "available_area_m2": round(available_area_m2, 3),
+        "degradation_order": [
+            "drop non-core requested furniture first",
+            "drop extra decor and extra storage next",
+            "shrink bed and wardrobe to smallest viable tiers",
+            "try one nightstand as late droppable support",
+            "soften circulation, center, and non-media face-pair checks last",
+        ],
+    }
+
+
+def _object_solver_room_area_m2(room_model: Mapping[str, Any]) -> float:
+    room = room_model.get("room") if isinstance(room_model.get("room"), Mapping) else {}
+    for source in (room, room_model):
+        if not isinstance(source, Mapping):
+            continue
+        area_m2 = source.get("area_m2")
+        if isinstance(area_m2, (int, float)) and area_m2 > 0:
+            return float(area_m2)
+        area_mm2 = source.get("area_mm2")
+        if isinstance(area_mm2, (int, float)) and area_mm2 > 0:
+            return float(area_mm2) / 1_000_000.0
+    return _object_solver_polygon_area_m2(_object_solver_room_polygon(room_model))
+
+
+def _object_solver_available_area_m2(room_model: Mapping[str, Any]) -> float:
+    room_area_m2 = _object_solver_room_area_m2(room_model)
+    if room_area_m2 <= 0.0:
+        return 0.0
+    obstacle_area_m2 = 0.0
+    hard_obstacles = room_model.get("hard_obstacles")
+    obstacles = room_model.get("obstacles")
+    section = (
+        hard_obstacles
+        if isinstance(hard_obstacles, Sequence)
+        and not isinstance(hard_obstacles, str)
+        and len(hard_obstacles) > 0
+        else obstacles
+    )
+    if not isinstance(section, Sequence) or isinstance(section, str):
+        return room_area_m2
+    for obstacle in section:
+        if not isinstance(obstacle, Mapping):
+            continue
+        if obstacle.get("hard", True) is False:
+            continue
+        obstacle_area_m2 += _object_solver_polygon_area_m2(obstacle.get("polygon_ccw"))
+    return max(0.0, room_area_m2 - obstacle_area_m2)
+
+
+def _object_solver_polygon_area_m2(points: Any) -> float:
+    parsed: list[tuple[float, float]] = []
+    if isinstance(points, Sequence) and not isinstance(points, str):
+        for point in points:
+            if isinstance(point, Mapping):
+                try:
+                    parsed.append((float(point.get("x")), float(point.get("y"))))
+                except (TypeError, ValueError):
+                    continue
+            elif isinstance(point, Sequence) and not isinstance(point, str):
+                if len(point) < 2:
+                    continue
+                try:
+                    parsed.append((float(point[0]), float(point[1])))
+                except (TypeError, ValueError):
+                    continue
+    if len(parsed) < 3:
+        return 0.0
+    total = 0.0
+    for index, point in enumerate(parsed):
+        next_point = parsed[(index + 1) % len(parsed)]
+        total += point[0] * next_point[1] - next_point[0] * point[1]
+    return abs(total) / 2.0 / 1_000_000.0
+
+
+def _relax_protected_regions_for_compact_bedroom(
+    *,
+    protected_regions: Sequence[Mapping[str, Any]],
+    compact_bedroom_policy: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not bool(compact_bedroom_policy.get("enabled")):
+        return [dict(row) for row in protected_regions], []
+
+    out: list[dict[str, Any]] = []
+    relaxations: list[dict[str, Any]] = []
+    for row in protected_regions:
+        next_row = dict(row)
+        zone_type = str(next_row.get("zone_type") or "").strip().lower()
+        enforcement = str(next_row.get("enforcement") or "").strip().lower()
+        if (
+            zone_type in OBJECT_LEVEL_COMPACT_SOFT_PROTECTED_ZONE_TYPES
+            and enforcement == "hard_soft"
+        ):
+            original_max_overlap = float(next_row.get("max_overlap_ratio") or 0.0)
+            max_overlap = max(
+                original_max_overlap,
+                OBJECT_LEVEL_COMPACT_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE.get(
+                    zone_type, original_max_overlap
+                ),
+            )
+            next_row["max_overlap_ratio"] = max_overlap
+            next_row["original_enforcement"] = enforcement
+            next_row["enforcement"] = "soft"
+            next_row["violation_severity"] = "advisory"
+            next_row["compact_bedroom_relaxed"] = True
+            relaxations.append(
+                {
+                    "region_id": str(next_row.get("region_id") or ""),
+                    "zone_type": zone_type,
+                    "from_enforcement": enforcement,
+                    "to_enforcement": "soft",
+                    "from_max_overlap_ratio": round(original_max_overlap, 3),
+                    "to_max_overlap_ratio": round(max_overlap, 3),
+                }
+            )
+        out.append(next_row)
+    return out, relaxations
+
+
+def _object_solver_compact_policy_debug(world: Mapping[str, Any]) -> dict[str, Any]:
+    policy = world.get("compact_bedroom_policy")
+    if not isinstance(policy, Mapping) or not bool(policy.get("enabled")):
+        return {}
+    return deepcopy(dict(policy))
+
+
+def _object_solver_compact_policy_notes(world: Mapping[str, Any]) -> list[str]:
+    policy = world.get("compact_bedroom_policy")
+    if not isinstance(policy, Mapping) or not bool(policy.get("enabled")):
+        return []
+    if not policy.get("protected_region_relaxations"):
+        return [
+            " ".join(
+                [
+                    "Compact bedroom policy was active; core sleep/storage objects",
+                    "remained hard protected.",
+                ]
+            )
+        ]
+    return [
+        " ".join(
+            [
+                "Compact bedroom policy softened circulation, center-openness, and",
+                "non-media face-pair quality checks after item degradation, while",
+                "entry/door clearances stayed hard.",
+            ]
+        )
+    ]
 
 
 def _object_level_anchor_cluster_order(
@@ -5694,13 +5891,19 @@ def _protected_region_policy_indexes(
     room_model: Mapping[str, Any],
     relation_plan: Mapping[str, Any] | None,
     region_index: Mapping[str, tuple[int, int, int, int]],
+    protected_regions: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[
     dict[tuple[str, tuple[int, int, int, int]], dict[str, Any]],
     dict[tuple[int, int, int, int], dict[str, Any]],
 ]:
     policy_by_ref: dict[tuple[str, tuple[int, int, int, int]], dict[str, Any]] = {}
     policy_by_bbox: dict[tuple[int, int, int, int], dict[str, Any]] = {}
-    for row in _collect_protected_regions(room_model, relation_plan, region_index):
+    source_rows = (
+        protected_regions
+        if protected_regions is not None
+        else _collect_protected_regions(room_model, relation_plan, region_index)
+    )
+    for row in source_rows:
         region_id = str(row.get("region_id") or "").strip()
         bbox = row.get("bbox")
         if not isinstance(bbox, tuple) or len(bbox) != 4:
@@ -5898,11 +6101,17 @@ def _collect_cluster_forbidden_regions(
     room_model: Mapping[str, Any],
     relation_plan: Mapping[str, Any] | None,
     region_index: Mapping[str, tuple[int, int, int, int]],
+    protected_regions: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     hint_rows = _cluster_forbidden_hint_rows(relation_plan)
     protected_policy_by_ref, protected_policy_by_bbox = (
-        _protected_region_policy_indexes(room_model, relation_plan, region_index)
+        _protected_region_policy_indexes(
+            room_model,
+            relation_plan,
+            region_index,
+            protected_regions=protected_regions,
+        )
     )
     seen: set[tuple[str, str, tuple[int, int, int, int]]] = set()
     for cluster_id, cluster_program in clusters_by_id.items():
@@ -8205,10 +8414,7 @@ def _droppable_object_ids(object_program: Mapping[str, Any]) -> set[str]:
         if isinstance(spec, Mapping)
         and (
             bool(spec.get("protected"))
-            or (
-                str(object_id) in required
-                and not bool(spec.get("droppable"))
-            )
+            or (str(object_id) in required and not bool(spec.get("droppable")))
         )
     )
     droppable = {
@@ -8388,6 +8594,7 @@ def _support_slot_candidates(
         slot_side_option = _bedside_nightstand_slot_option(
             side_option=side_option,
             object_id=object_id,
+            object_category=str(spec.get("category") or ""),
             base_row=base_row,
         )
         for gap in _support_gap_samples(gap_min=gap_min, gap_max=gap_max):
@@ -8457,11 +8664,19 @@ def _support_slot_candidates(
                                 front_world=front_world,
                                 desired_front=desired_front,
                             ),
+                            "semantic_alignment_score": (
+                                _support_slot_semantic_alignment_score(
+                                    side_option=slot_side_option,
+                                    slide=slide,
+                                    front=base_front,
+                                )
+                            ),
                         }
                     )
     out.sort(
         key=lambda item: (
             -float(item.get("orientation_score") or 0.0),
+            -float(item.get("semantic_alignment_score") or 0.0),
             item["y"],
             item["x"],
             item["rot"],
@@ -8474,18 +8689,41 @@ def _bedside_nightstand_slot_option(
     *,
     side_option: str,
     object_id: str,
+    object_category: str,
     base_row: Mapping[str, Any],
 ) -> str:
     token = str(side_option).strip().lower()
-    if token not in {"head_left", "head_right"}:
+    left_tokens = {"left", "head_left", "front_left", "foot_left", "back_left"}
+    right_tokens = {"right", "head_right", "front_right", "foot_right", "back_right"}
+    if token not in left_tokens | right_tokens:
         return side_option
 
     object_key = object_id.strip().lower()
+    category_key = object_category.strip().lower()
     base_key = str(base_row.get("category") or base_row.get("object_id") or "").lower()
-    if "nightstand" not in object_key or "bed" not in base_key:
+    support_key = f"{object_key} {category_key}"
+    if (
+        not any(
+            marker in support_key
+            for marker in ("nightstand", "bedside", "sidebed", "side_bed")
+        )
+        or "bed" not in base_key
+    ):
         return side_option
 
-    return f"bedside_{token}"
+    return "bedside_head_left" if token in left_tokens else "bedside_head_right"
+
+
+def _support_slot_semantic_alignment_score(
+    *,
+    side_option: str,
+    slide: tuple[float, float],
+    front: tuple[int, int],
+) -> float:
+    token = str(side_option).strip().lower()
+    if token not in {"bedside_head_left", "bedside_head_right"}:
+        return 0.0
+    return max(0.0, -(slide[0] * front[0] + slide[1] * front[1]))
 
 
 def _support_gap_samples(*, gap_min: int, gap_max: int) -> list[int]:
@@ -8813,6 +9051,16 @@ def _verify_object_level_solution(
         placed_objects=placed_objects,
         relation_plan=relation_plan,
     )
+    softened_face_pair_issues: list[dict[str, Any]] = []
+    if face_pair_issues and _compact_bedroom_relaxes_face_pair_issues(
+        world=world,
+        face_pair_issues=face_pair_issues,
+    ):
+        softened_face_pair_issues = [
+            {**issue, "blocking": False, "compact_bedroom_relaxed": True}
+            for issue in face_pair_issues
+        ]
+        face_pair_issues = []
     if face_pair_issues:
         hard_valid = False
         for item in face_pair_issues:
@@ -8914,6 +9162,7 @@ def _verify_object_level_solution(
         - len(blocking_protected_region_issues)
         + len(forbidden_region_issues)
         - len(blocking_forbidden_region_issues)
+        + len(softened_face_pair_issues)
         + len(functional_geometry_issues)
         - len(blocking_functional_geometry_issues)
     )
@@ -8949,6 +9198,7 @@ def _verify_object_level_solution(
         "functional_geometry_issues": functional_geometry_issues,
         "blocking_functional_geometry_issues": blocking_functional_geometry_issues,
         "face_pair_issues": face_pair_issues,
+        "softened_face_pair_issues": softened_face_pair_issues,
         "critical_issue_count": critical_issue_count,
         "blocking_issue_count": blocking_issue_count,
         "view_corridor_ok": view_corridor_ok,
@@ -9718,6 +9968,22 @@ def _pair_tokens_include_media(primary: str, secondary: str) -> bool:
         if part
     }
     return bool(tokens & {"media", "tv", "television", "console"})
+
+
+def _compact_bedroom_relaxes_face_pair_issues(
+    *,
+    world: Mapping[str, Any],
+    face_pair_issues: Sequence[Mapping[str, Any]],
+) -> bool:
+    policy = world.get("compact_bedroom_policy")
+    if not isinstance(policy, Mapping) or not bool(policy.get("enabled")):
+        return False
+    for issue in face_pair_issues:
+        left_cluster_id = str(issue.get("a") or "")
+        right_cluster_id = str(issue.get("b") or "")
+        if _pair_tokens_include_media(left_cluster_id, right_cluster_id):
+            return False
+    return True
 
 
 def _object_level_face_pair_issues(

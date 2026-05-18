@@ -611,6 +611,41 @@ def _backoff_cluster_decisions(
     if not active:
         return False, None
 
+    compact_drop_candidates = sorted(
+        (
+            row
+            for row in active
+            if bool(row.get("compact_bedroom_relaxed"))
+            and int(row.get("quantity") or 0) > 0
+        ),
+        key=lambda row: _backoff_sort_key(row, anchors=anchors),
+    )
+    if compact_drop_candidates:
+        target = compact_drop_candidates[0]
+        current_quantity = int(target.get("quantity") or 0)
+        target["quantity"] = max(0, current_quantity - 1)
+        rationale = " ".join(
+            [
+                "Layout feedback dropped compact-bedroom relaxed furniture before",
+                "shrinking core objects.",
+            ]
+        )
+        _append_backoff_rationale(
+            target,
+            rationale,
+        )
+        object_type = str(target.get("object_type") or target.get("category") or "")
+        detail = " ".join(
+            [
+                "Layout feedback backoff reduced compact-bedroom relaxed",
+                f"{cluster_id}.{object_type} quantity to {target['quantity']}.",
+            ]
+        )
+        return (
+            True,
+            detail,
+        )
+
     shrink_candidates = sorted(
         (row for row in active if _tier_rank(row.get("size_tier")) > 0),
         key=_shrink_sort_key,
