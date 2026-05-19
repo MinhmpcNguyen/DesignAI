@@ -260,7 +260,6 @@ class MacroClusterSolver:
             cluster_constraints=cluster_constraints_json,
             grid_mm=grid_mm,
             max_rounds=self.max_rounds,
-            time_limit_s=self.time_limit_s,
         )
 
 
@@ -5080,9 +5079,7 @@ def solve_object_level_layout(
     cluster_constraints: dict[str, Any] | None = None,
     grid_mm: int = GLOBAL_LAYOUT_GRID_MM,
     max_rounds: int = 3,
-    time_limit_s: float = DEFAULT_SOLVER_TIME_LIMIT_SEC_PER_CONCEPT,
 ) -> dict[str, Any]:
-    deadline_ts = perf_counter() + max(0.0, float(time_limit_s))
     room_bbox = _object_solver_room_bbox(room_model)
     if room_bbox[2] <= room_bbox[0] or room_bbox[3] <= room_bbox[1]:
         return {
@@ -5214,32 +5211,18 @@ def solve_object_level_layout(
         if len(solution_pool) >= OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS:
             break
 
-    ranked_attempts = [
-        item
-        for item in attempt_results
-        if isinstance(item, dict) and item.get("status") in {"OK", "PARTIAL"}
+    ranked_pool = _rank_object_level_solution_pool(solution_pool)[
+        :OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS
     ]
-    if ranked_attempts:
-        best_attempt = ranked_attempts[0]
+    best_solution = ranked_pool[0] if ranked_pool else None
+    if best_solution is None:
         return {
-            "status": best_attempt["status"],
+            "status": "UNSAT",
             "solver_kind": "object_level_anchor_first",
-            "selected_concept_id": best_attempt.get("selected_concept_id"),
-            "absolute_layout": best_attempt.get("absolute_layout"),
-            "solutions": best_attempt.get("solutions") or [],
-            "hard_valid": bool(best_attempt.get("hard_valid")),
-            "geometry_valid": bool(best_attempt.get("geometry_valid")),
-            "acceptable_valid": bool(best_attempt.get("acceptable_valid")),
-            "complete": bool(best_attempt.get("complete")),
-            "gallery_eligible": bool(best_attempt.get("gallery_eligible")),
-            "coverage_ratio": float(best_attempt.get("coverage_ratio") or 0.0),
-            "offending_clusters": list(best_attempt.get("offending_clusters") or []),
-            "dropped_inventory_by_cluster": deepcopy(
-                best_attempt.get("dropped_inventory_by_cluster") or {}
-            ),
-            "cluster_transforms": [],
-            "selected_variants": [],
-            "verify_summary": deepcopy(best_attempt.get("verify_summary") or {}),
+            "offending_clusters": list(anchor_order),
+            "notes": [
+                "Anchor placement succeeded, but no geometry-valid support-object arrangement could be assembled."
+            ],
             "solver_debug": {
                 "anchor_candidate_counts": {
                     k: len(v) for k, v in anchor_candidates_by_cluster.items()
@@ -5247,11 +5230,26 @@ def solve_object_level_layout(
                 "candidate_solution_count": len(solution_pool),
                 "compact_bedroom_policy": _object_solver_compact_policy_debug(world),
             },
-            "notes": best_attempt.get("notes") or [],
         }
 
+    absolute_layout = _build_absolute_layout_from_object_solution(
+        solution=best_solution,
+        world=world,
+        room_model=room_model,
+        relation_plan=relation_plan,
+    )
+    ranked_solutions = [
+        _build_object_level_solution_payload(
+            solution=item,
+            world=world,
+            room_model=room_model,
+            relation_plan=relation_plan,
+            solution_index=index,
+        )
+        for index, item in enumerate(ranked_pool, start=1)
+    ]
     return {
-        "status": "UNSAT",
+        "status": "OK" if best_solution["verify"].get("hard_valid") else "PARTIAL",
         "solver_kind": "object_level_anchor_first",
         "selected_concept_id": _concept_id_from_relation_plan(relation_plan),
         "absolute_layout": absolute_layout,
@@ -5286,9 +5284,6 @@ def solve_object_level_layout(
             "Local support placement now enumerates multiple non-overlapping arrangements before ranking them.",
             *_object_solver_compact_policy_notes(world),
         ],
-        "solver_debug": {
-            "attempts": attempt_results,
-        },
     }
 
 
@@ -7453,7 +7448,6 @@ def _search_anchor_solutions(
     room_model: Mapping[str, Any],
     relation_plan: Mapping[str, Any] | None,
     max_solutions: int,
-    deadline_ts: float | None = None,
 ) -> Sequence[dict[str, Any]]:
     solutions: list[dict[str, Any]] = []
     visited_leaf_count = 0
@@ -7475,8 +7469,6 @@ def _search_anchor_solutions(
         dropped_inventory_by_cluster: dict[str, list[dict[str, Any]]],
     ) -> None:
         nonlocal visited_leaf_count
-        if _object_level_time_limit_reached(deadline_ts):
-            return
         if visited_leaf_count >= max_leaf_count:
             return
         if index >= len(anchor_order):
@@ -7521,8 +7513,6 @@ def _search_anchor_solutions(
             if drop_records:
                 del dropped_inventory_by_cluster[cluster_id][-len(drop_records) :]
         for candidate in anchor_candidates_by_cluster.get(cluster_id, []):
-            if _object_level_time_limit_reached(deadline_ts):
-                return
             rect = candidate["rect"]
             occupied_rects = [row["rect"] for row in chosen]
             if not _object_rect_is_usable(
@@ -7758,7 +7748,6 @@ def _place_support_objects_for_solution(
     relation_plan: Mapping[str, Any] | None,
     grid_mm: int,
     max_solutions: int,
-    deadline_ts: float | None = None,
 ) -> list[dict[str, Any]]:
     placed_objects: list[dict[str, Any]] = []
     dropped_inventory_by_cluster: dict[str, list[dict[str, Any]]] = {
@@ -7825,8 +7814,6 @@ def _place_support_objects_for_solution(
             tasks.append((cluster_id, object_id, edge, base_id))
 
     def search(index: int, support_score: float) -> None:
-        if _object_level_time_limit_reached(deadline_ts):
-            return
         if len(results) >= max(1, int(max_solutions)):
             return
         if index >= len(tasks):
@@ -7878,8 +7865,6 @@ def _place_support_objects_for_solution(
         )
         viable_slots: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
         for slot in slots:
-            if _object_level_time_limit_reached(deadline_ts):
-                return
             rect = slot["rect"]
             if not _rect_inside_room(rect, world["room_bbox"]):
                 continue
@@ -8063,7 +8048,6 @@ def _repair_object_level_solution_geometry(
     solution: Mapping[str, Any],
     world: Mapping[str, Any],
     grid_mm: int,
-    deadline_ts: float | None = None,
 ) -> dict[str, Any] | None:
     rows = [
         deepcopy(row)
@@ -8094,8 +8078,6 @@ def _repair_object_level_solution_geometry(
     for index, row in sorted(
         enumerate(rows), key=lambda item: _object_repair_order_key(item[1])
     ):
-        if _object_level_time_limit_reached(deadline_ts):
-            return None
         rect = _rect_tuple(row.get("rect"))
         if rect is None:
             return None
@@ -8145,183 +8127,6 @@ def _repair_object_level_solution_geometry(
             "total_shift_mm": round(total_shift, 3),
             "penalty": penalty,
         },
-    }
-
-
-def _object_level_time_limit_reached(deadline_ts: float | None) -> bool:
-    return deadline_ts is not None and perf_counter() >= deadline_ts
-
-
-def _solve_object_level_layout_attempt(
-    *,
-    room_model: dict[str, Any],
-    merged_clusters: dict[str, Any],
-    relation_plan: dict[str, Any] | None,
-    cluster_constraints: dict[str, Any] | None,
-    grid_mm: int,
-    max_rounds: int,
-    deadline_ts: float,
-) -> dict[str, Any] | None:
-    world = _build_object_solver_world(
-        room_model=room_model,
-        merged_clusters=merged_clusters,
-        relation_plan=relation_plan,
-        cluster_constraints=cluster_constraints,
-        grid_mm=grid_mm,
-    )
-    anchor_order = world["anchor_cluster_order"]
-    anchor_candidates_by_cluster = {
-        cluster_id: _generate_anchor_pose_candidates(
-            cluster_program=world["clusters_by_id"][cluster_id],
-            room_model=room_model,
-            relation_plan=relation_plan,
-            world=world,
-            grid_mm=grid_mm,
-        )
-        for cluster_id in anchor_order
-    }
-    if _object_level_time_limit_reached(deadline_ts):
-        return None
-    if any(
-        not rows
-        for cluster_id, rows in anchor_candidates_by_cluster.items()
-        if not _cluster_is_solver_trial_optional(world["clusters_by_id"][cluster_id])
-    ):
-        return None
-
-    anchor_solutions = list(
-        _search_anchor_solutions(
-            anchor_order=anchor_order,
-            anchor_candidates_by_cluster=anchor_candidates_by_cluster,
-            world=world,
-            room_model=room_model,
-            relation_plan=relation_plan,
-            max_solutions=max(8, int(max_rounds) * 4),
-            deadline_ts=deadline_ts,
-        )
-    )
-    if not anchor_solutions:
-        return None
-
-    solution_pool: list[dict[str, Any]] = []
-    for solution in anchor_solutions:
-        if _object_level_time_limit_reached(deadline_ts):
-            break
-        support_results = _place_support_objects_for_solution(
-            solution=solution,
-            world=world,
-            room_model=room_model,
-            relation_plan=relation_plan,
-            grid_mm=grid_mm,
-            max_solutions=OBJECT_LEVEL_MAX_SUPPORT_SOLUTIONS_PER_ANCHOR,
-            deadline_ts=deadline_ts,
-        )
-        if not support_results:
-            continue
-        for support_result in support_results:
-            if _object_level_time_limit_reached(deadline_ts):
-                break
-            candidate_solution = {**solution, **support_result}
-            repair_summary = _repair_object_level_solution_geometry(
-                solution=candidate_solution,
-                world=world,
-                grid_mm=grid_mm,
-                deadline_ts=deadline_ts,
-            )
-            if repair_summary is None:
-                continue
-            candidate_solution["placed_objects"] = repair_summary["placed_objects"]
-            candidate_solution["geometry_repair"] = repair_summary["summary"]
-            verify = _verify_object_level_solution(
-                solution=candidate_solution,
-                world=world,
-                room_model=room_model,
-                relation_plan=relation_plan,
-            )
-            _apply_object_level_geometry_repair_penalty(
-                verify, candidate_solution["geometry_repair"]
-            )
-            if not bool(verify.get("geometry_valid")):
-                continue
-            candidate_solution["verify"] = verify
-            candidate_solution["score"] = _object_solution_score(
-                candidate_solution, relation_plan
-            )
-            candidate_solution["signature"] = _object_level_solution_signature(
-                candidate_solution
-            )
-            solution_pool.append(candidate_solution)
-
-    ranked_pool = _rank_object_level_solution_pool(solution_pool)[
-        :OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS
-    ]
-    best_solution = ranked_pool[0] if ranked_pool else None
-    if best_solution is None:
-        return {
-            "status": "UNSAT",
-            "solver_kind": "object_level_anchor_first",
-            "offending_clusters": list(anchor_order),
-            "notes": [
-                "Anchor placement succeeded, but no geometry-valid support-object arrangement could be assembled."
-            ],
-            "solver_debug": {
-                "anchor_candidate_counts": {
-                    k: len(v) for k, v in anchor_candidates_by_cluster.items()
-                },
-                "candidate_solution_count": len(solution_pool),
-            },
-        }
-
-    absolute_layout = _build_absolute_layout_from_object_solution(
-        solution=best_solution,
-        world=world,
-        room_model=room_model,
-        relation_plan=relation_plan,
-    )
-    ranked_solutions = [
-        _build_object_level_solution_payload(
-            solution=item,
-            world=world,
-            room_model=room_model,
-            relation_plan=relation_plan,
-            solution_index=index,
-        )
-        for index, item in enumerate(ranked_pool, start=1)
-    ]
-    return {
-        "status": "OK" if best_solution["verify"].get("hard_valid") else "PARTIAL",
-        "solver_kind": "object_level_anchor_first",
-        "selected_concept_id": _concept_id_from_relation_plan(relation_plan),
-        "absolute_layout": absolute_layout,
-        "solutions": ranked_solutions,
-        "hard_valid": bool(best_solution["verify"].get("hard_valid")),
-        "geometry_valid": bool(best_solution["verify"].get("geometry_valid")),
-        "acceptable_valid": bool(best_solution["verify"].get("gallery_eligible")),
-        "complete": bool(best_solution["verify"].get("complete")),
-        "gallery_eligible": bool(best_solution["verify"].get("gallery_eligible")),
-        "coverage_ratio": float(best_solution["verify"].get("coverage_ratio") or 0.0),
-        "offending_clusters": list(
-            best_solution["verify"].get("offending_clusters") or []
-        ),
-        "dropped_inventory_by_cluster": deepcopy(
-            best_solution.get("dropped_inventory_by_cluster") or {}
-        ),
-        "cluster_transforms": [],
-        "selected_variants": [],
-        "verify_summary": deepcopy(best_solution["verify"]),
-        "solver_debug": {
-            "anchor_candidate_counts": {
-                k: len(v) for k, v in anchor_candidates_by_cluster.items()
-            },
-            "anchor_order": anchor_order,
-            "object_count": len(best_solution.get("placed_objects") or []),
-            "candidate_solution_count": len(solution_pool),
-            "ranked_solution_count": len(ranked_solutions),
-        },
-        "notes": [
-            "Solved directly at object level with anchor-first placement.",
-            "Local support placement now enumerates multiple non-overlapping arrangements before ranking them.",
-        ],
     }
 
 
