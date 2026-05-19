@@ -218,6 +218,18 @@ GENEROUS_NOTE_TOKENS = (
     "full",
     "comfortable",
     "layered",
+    "as many",
+    "bàn ghế",
+    "ban ghe",
+    "càng nhiều",
+    "cang nhieu",
+    "đầy đủ đồ",
+    "day du do",
+    "more furniture",
+    "nhiều đồ",
+    "nhieu do",
+    "nhiều nội thất",
+    "nhieu noi that",
 )
 
 EXCLUSIVE_OBJECT_FAMILIES: tuple[tuple[str, frozenset[str]], ...] = (
@@ -530,7 +542,7 @@ def _compute_capacity_model(
     center_signal = len(center_regions) if center_regions else 1.0
     circulation_signal = len(corridors) if corridors else 1.0
 
-    density_ratio = {"minimal": 0.30, "neutral": 0.38, "generous": 0.44}.get(
+    density_ratio = {"minimal": 0.30, "neutral": 0.38, "generous": 0.54}.get(
         furnishing_mode,
         0.38,
     )
@@ -538,7 +550,7 @@ def _compute_capacity_model(
         density_ratio -= 0.04
     elif room_scale == "large":
         density_ratio += 0.04
-    density_ratio = max(0.24, min(0.50, density_ratio))
+    density_ratio = max(0.24, min(0.62, density_ratio))
 
     wall_capacity_m2 = max(room_area_m2 * 0.18, wall_signal * 0.75)
     floating_capacity_m2 = max(room_area_m2 * 0.16, floating_signal * 1.15)
@@ -555,6 +567,7 @@ def _compute_capacity_model(
         "center_openness_budget_m2": center_openness_budget_m2,
         "circulation_budget_m2": circulation_budget_m2,
         "clutter_budget_m2": clutter_budget_m2,
+        "max_budget_overflow_ratio": 1.35 if furnishing_mode == "generous" else 1.15,
         "entry_conflict_sensitivity": "high" if entry_zones else "moderate",
         "center_openness_weight": "high",
         "circulation_penalty_weight": "high",
@@ -590,7 +603,7 @@ def _apply_style_policy_to_capacity_model(
         density_ratio = min(density_ratio, 0.32)
     if _style_level(layout_policy.get("clutter_tolerance")) >= 3:
         density_ratio = max(density_ratio, 0.40)
-    density_ratio = max(0.22, min(0.52, density_ratio))
+    density_ratio = max(0.22, min(0.64, density_ratio))
     room_area = max(0.1, float(out.get("available_area_m2") or 0.1))
     out["target_density"] = _style_target_density(style_policy)
     out["density_ratio"] = density_ratio
@@ -2694,11 +2707,11 @@ def _clutter_penalty(
 ) -> float:
     budget = max(0.1, float(capacity_model.get("clutter_budget_m2") or 0.1))
     after_ratio = (used_footprint_m2 + footprint_m2) / budget
-    if after_ratio <= 0.72:
+    if after_ratio <= 0.82:
         return 0.15
-    if after_ratio <= 1.0:
-        return 0.8 + after_ratio * 0.5
-    return 1.8 + (after_ratio - 1.0) * 4.0
+    if after_ratio <= 1.18:
+        return 0.55 + after_ratio * 0.35
+    return 1.35 + (after_ratio - 1.0) * 2.4
 
 
 def _circulation_penalty(
@@ -2835,7 +2848,8 @@ def _select_quantity(
         )
         clutter_budget = max(0.1, float(capacity_model.get("clutter_budget_m2") or 0.1))
         overflow_ratio = (used_footprint_m2 + forced_footprint) / clutter_budget
-        if overflow_ratio <= 1.08 or surplus_keep:
+        forced_overflow_limit = 1.2 if furnishing_mode == "generous" else 1.08
+        if overflow_ratio <= forced_overflow_limit or surplus_keep:
             if total >= keep_threshold - 1.2:
                 return _expand_quantity_toward_target(
                     obj=obj,
@@ -2861,8 +2875,9 @@ def _select_quantity(
         size_profiles_by_category=size_profiles_by_category,
     )
     clutter_budget = max(0.1, float(capacity_model.get("clutter_budget_m2") or 0.1))
+    budget_limit = 1.22 if furnishing_mode == "generous" else 1.04
     if (
-        used_footprint_m2 + footprint_m2 > clutter_budget * 1.04
+        used_footprint_m2 + footprint_m2 > clutter_budget * budget_limit
         and total < keep_threshold + 1.1
         and not surplus_keep
         and min_keep <= 0
@@ -3590,7 +3605,8 @@ def _decision_status(
     if not core_kept:
         return "UNSAT"
     budget = max(0.1, float(capacity_model.get("clutter_budget_m2") or 0.1))
-    if used_footprint_m2 > budget * 1.15:
+    overflow_limit = float(capacity_model.get("max_budget_overflow_ratio") or 1.15)
+    if used_footprint_m2 > budget * overflow_limit:
         return "NEEDS_REVIEW"
     return "OK"
 

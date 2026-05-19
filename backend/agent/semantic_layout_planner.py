@@ -310,6 +310,18 @@ _READING_TOKENS = ("read", "reading", "lounge", "relax", "armchair")
 _PET_TOKENS = ("pet", "dog", "cat")
 _ENTRY_TOKENS = ("entry", "shoe", "foyer", "landing")
 _LAUNDRY_TOKENS = ("laundry", "hamper", "daily storage", "basket")
+_FULL_FURNISHING_TOKENS = (
+    "as many",
+    "ban ghe",
+    "cang nhieu",
+    "day du do",
+    "day do",
+    "full furniture",
+    "fully furnished",
+    "more furniture",
+    "nhieu do",
+    "nhieu noi that",
+)
 _LAYOUT_ROLES = {"primary", "secondary", "support", "optional"}
 _VIETNAMESE_PRONOUN_RE = re.compile(r"\bb\u1ea1n\b", re.IGNORECASE)
 
@@ -1497,6 +1509,7 @@ def _build_single_candidate(
     priority = _priority(cluster_rule.get("priority"))
     if not cluster_id:
         return None
+    full_furnishing_requested = _brief_requests_full_furnishing(brief_text)
     object_program = _merged_object_program_for_brief(cluster_rule, brief_text)
     if isinstance(llm_candidate_override, Mapping):
         override_program = _sanitize_object_program(
@@ -1514,6 +1527,11 @@ def _build_single_candidate(
             llm_candidate_override.get("useful")
             if isinstance(llm_candidate_override, Mapping)
             else False
+        )
+        or (
+            full_furnishing_requested
+            and priority == "support"
+            and _brief_support_score(cluster_id, [], brief_text) >= 0.35
         ),
     )
     activation = (
@@ -1527,7 +1545,9 @@ def _build_single_candidate(
             llm_candidate_override.get("brief_support"),
             default=0.35,
         )
-        useful = bool(llm_candidate_override.get("useful"))
+        useful = bool(llm_candidate_override.get("useful")) or (
+            full_furnishing_requested and priority == "support" and bool(objects)
+        )
     else:
         active_by_rule = bool(activation.get("always_consider")) or priority == "core"
         brief_support = _brief_support_score(cluster_id, objects, brief_text)
@@ -1536,6 +1556,7 @@ def _build_single_candidate(
             active_by_rule
             or brief_support >= 0.45
             or (priority == "support" and room_area >= 12.0 and objects)
+            or (full_furnishing_requested and priority == "support" and bool(objects))
         )
     tier_count_hint_source = (
         llm_candidate_override.get("tier_count_hints")
@@ -3423,7 +3444,16 @@ def _brief_support_score(
         score += 0.3
     if _contains_any(text, _MEDIA_TOKENS) and ("media" in tokens or "tv" in tokens):
         score += 0.35
+    if _brief_requests_full_furnishing(text) and (
+        tokens & {"work", "study", "lounge", "reading", "desk", "chair", "armchair"}
+    ):
+        score += 0.25
     return min(score, 1.0)
+
+
+def _brief_requests_full_furnishing(brief_text: str) -> bool:
+    text = _semantic_text(brief_text)
+    return _contains_any(text, _FULL_FURNISHING_TOKENS)
 
 
 def _max_keep_for_object(

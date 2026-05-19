@@ -4063,16 +4063,16 @@ def _primary_cluster_id(clusters: Sequence[ClusterProgram]) -> str | None:
     )
     if explicit:
         return explicit[0].cluster_id
-    if any(cluster.layout_role for cluster in clusters):
-        return None
     ranked = sorted(
         clusters,
         key=lambda cluster: (
             0
-            if cluster.role_kind == "social_anchor"
+            if cluster.role_kind == "sleep"
             else 1
+            if cluster.role_kind == "social_anchor"
+            else 2
             if cluster.priority == "core"
-            else 2,
+            else 3,
             cluster.cluster_id,
         ),
     )
@@ -4101,8 +4101,6 @@ def _secondary_cluster_id(
     )
     if explicit:
         return explicit[0].cluster_id
-    if any(cluster.layout_role for cluster in clusters):
-        return None
     ranked = sorted(
         (cluster for cluster in clusters if cluster.cluster_id != primary_cluster_id),
         key=lambda cluster: (
@@ -4660,6 +4658,14 @@ def _secondary_from_concept(
         if (
             cluster_id
             and cluster_id != primary_cluster_id
+            and _row_is_media_or_focal(row)
+        ):
+            return cluster_id
+    for row in cluster_zone_plan:
+        cluster_id = _clean_str(row.get("cluster_id"))
+        if (
+            cluster_id
+            and cluster_id != primary_cluster_id
             and row.get("wall_claim") == "strong"
         ):
             return cluster_id
@@ -4668,6 +4674,14 @@ def _secondary_from_concept(
         if cluster_id and cluster_id != primary_cluster_id:
             return cluster_id
     return None
+
+
+def _row_is_media_or_focal(row: Mapping[str, object]) -> bool:
+    role_kind = str(row.get("role_kind") or "").strip().lower()
+    if role_kind in {"media", "focal"}:
+        return True
+    cluster_id = str(row.get("cluster_id") or "").strip().lower()
+    return any(token in cluster_id for token in ("media", "tv", "television"))
 
 
 def _main_paths(

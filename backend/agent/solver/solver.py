@@ -116,7 +116,7 @@ OBJECT_LEVEL_REQUIRED_FACE_PAIR_MIN_DOT = 0.8
 OBJECT_LEVEL_SUPPORT_ALIGNMENT_FACTORS = (-0.35, 0.0, 0.35)
 OBJECT_LEVEL_WALL_CONTACT_TOLERANCE_MM = 1
 OBJECT_LEVEL_FRONT_ALIGNMENT_MIN_DOT = 0.45
-OBJECT_LEVEL_FRONT_ACCESS_DEPTH_MM = 750
+OBJECT_LEVEL_FRONT_ACCESS_DEPTH_MM = 300
 OBJECT_LEVEL_VIEW_CORRIDOR_WIDTH_MM = 900
 OBJECT_LEVEL_BLOCKING_PROTECTED_PRIORITIES = frozenset({"critical", "high"})
 OBJECT_LEVEL_BLOCKING_PROTECTED_ENFORCEMENT = frozenset({"hard", "hard_soft"})
@@ -137,6 +137,10 @@ OBJECT_LEVEL_COMPACT_SOFT_PROTECTED_ZONE_TYPES = frozenset(
 OBJECT_LEVEL_COMPACT_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE = {
     "center_openness_core": 0.28,
     "primary_circulation_corridor": 0.24,
+}
+OBJECT_LEVEL_FACE_PAIR_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE = {
+    "center_openness_core": 0.32,
+    "primary_circulation_corridor": 0.32,
 }
 
 QUALITY_WEIGHTS = {
@@ -5433,9 +5437,20 @@ def _build_object_solver_world(
             compact_bedroom_policy=compact_bedroom_policy,
         )
     )
+    protected_regions, face_pair_relaxations = (
+        _relax_protected_regions_for_required_face_pair(
+            protected_regions=protected_regions,
+            relation_plan=relation_plan,
+        )
+    )
     if compact_relaxations:
         compact_bedroom_policy = dict(compact_bedroom_policy)
         compact_bedroom_policy["protected_region_relaxations"] = compact_relaxations
+    if face_pair_relaxations:
+        compact_bedroom_policy = dict(compact_bedroom_policy)
+        compact_bedroom_policy["face_pair_protected_region_relaxations"] = (
+            face_pair_relaxations
+        )
     return {
         "clusters_by_id": clusters_by_id,
         "anchor_cluster_order": anchor_order,
@@ -5575,6 +5590,50 @@ def _relax_protected_regions_for_compact_bedroom(
             next_row["enforcement"] = "soft"
             next_row["violation_severity"] = "advisory"
             next_row["compact_bedroom_relaxed"] = True
+            relaxations.append(
+                {
+                    "region_id": str(next_row.get("region_id") or ""),
+                    "zone_type": zone_type,
+                    "from_enforcement": enforcement,
+                    "to_enforcement": "soft",
+                    "from_max_overlap_ratio": round(original_max_overlap, 3),
+                    "to_max_overlap_ratio": round(max_overlap, 3),
+                }
+            )
+        out.append(next_row)
+    return out, relaxations
+
+
+def _relax_protected_regions_for_required_face_pair(
+    *,
+    protected_regions: Sequence[Mapping[str, Any]],
+    relation_plan: Mapping[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not _object_level_required_face_pairs(relation_plan):
+        return [dict(row) for row in protected_regions], []
+
+    out: list[dict[str, Any]] = []
+    relaxations: list[dict[str, Any]] = []
+    for row in protected_regions:
+        next_row = dict(row)
+        zone_type = str(next_row.get("zone_type") or "").strip().lower()
+        enforcement = str(next_row.get("enforcement") or "").strip().lower()
+        if (
+            zone_type in OBJECT_LEVEL_FACE_PAIR_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE
+            and enforcement == "hard_soft"
+        ):
+            original_max_overlap = float(next_row.get("max_overlap_ratio") or 0.0)
+            max_overlap = max(
+                original_max_overlap,
+                OBJECT_LEVEL_FACE_PAIR_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE.get(
+                    zone_type, original_max_overlap
+                ),
+            )
+            next_row["max_overlap_ratio"] = max_overlap
+            next_row.setdefault("original_enforcement", enforcement)
+            next_row["enforcement"] = "soft"
+            next_row["violation_severity"] = "advisory"
+            next_row["required_face_pair_relaxed"] = True
             relaxations.append(
                 {
                     "region_id": str(next_row.get("region_id") or ""),
@@ -7753,7 +7812,43 @@ def _anchor_pair_orientation_score(
             score -= miss_penalty + ((min_dot - dot) * dot_weight)
         else:
             score += dot * dot_weight
+    if strict_face_pair:
+        score += _anchor_pair_axis_alignment_score(
+            left_anchor=left_anchor,
+            right_anchor=right_anchor,
+            min_dot=min_dot,
+        )
     return score
+
+
+def _anchor_pair_axis_alignment_score(
+    *,
+    left_anchor: Mapping[str, Any],
+    right_anchor: Mapping[str, Any],
+    min_dot: float,
+) -> float:
+    left_front = _front_tuple(left_anchor.get("front_world"))
+    right_front = _front_tuple(right_anchor.get("front_world"))
+    left_rect = _rect_tuple(left_anchor.get("rect"))
+    right_rect = _rect_tuple(right_anchor.get("rect"))
+    if (
+        left_front is None
+        or right_front is None
+        or left_rect is None
+        or right_rect is None
+    ):
+        return 0.0
+    left_to_right = _vector_between_rect_centers(left_rect, right_rect)
+    right_to_left = _vector_between_rect_centers(right_rect, left_rect)
+    if left_to_right is None or right_to_left is None:
+        return 0.0
+    left_dot = _dot_normalized(left_front, left_to_right)
+    right_dot = _dot_normalized(right_front, right_to_left)
+    if left_dot < min_dot or right_dot < min_dot:
+        return -6500.0 * (
+            (max(0.0, min_dot - left_dot)) + max(0.0, min_dot - right_dot)
+        )
+    return 5200.0 * ((left_dot + right_dot) / 2.0)
 
 
 def _place_support_objects_for_solution(

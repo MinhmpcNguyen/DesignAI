@@ -4,7 +4,10 @@ from __future__ import annotations
 import unittest
 from collections.abc import Mapping
 
-from agent.solver.solver import _anchor_pair_orientation_score
+from agent.solver.solver import (
+    _anchor_pair_orientation_score,
+    _relax_protected_regions_for_required_face_pair,
+)
 
 
 def _relation_plan() -> dict[str, object]:
@@ -90,6 +93,40 @@ class ObjectSolverFacePairPriorityTest(unittest.TestCase):
 
         self.assertLess(bad_score, 0.0)
         self.assertGreater(good_score, bad_score + 10000.0)
+
+    def test_required_face_pair_softens_corridor_but_not_entry_landing(
+        self,
+    ) -> None:
+        protected_regions: list[dict[str, object]] = [
+            {
+                "region_id": "door_entry_clearance",
+                "bbox": (0, 0, 900, 900),
+                "max_overlap_ratio": 0.0,
+                "priority": "high",
+                "enforcement": "hard",
+                "violation_severity": "blocking",
+                "zone_type": "entry_landing",
+            },
+            {
+                "region_id": "door_to_center_corridor",
+                "bbox": (0, 0, 1200, 2500),
+                "max_overlap_ratio": 0.05,
+                "priority": "high",
+                "enforcement": "hard_soft",
+                "violation_severity": "blocking",
+                "zone_type": "primary_circulation_corridor",
+            },
+        ]
+
+        rows, relaxations = _relax_protected_regions_for_required_face_pair(
+            protected_regions=protected_regions,
+            relation_plan=_relation_plan(),
+        )
+
+        self.assertEqual(rows[0]["enforcement"], "hard")
+        self.assertEqual(rows[1]["enforcement"], "soft")
+        self.assertEqual(rows[1]["violation_severity"], "advisory")
+        self.assertEqual(relaxations[0]["to_max_overlap_ratio"], 0.32)
 
 
 if __name__ == "__main__":

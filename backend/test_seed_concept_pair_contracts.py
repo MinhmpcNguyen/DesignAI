@@ -228,6 +228,44 @@ class SeedConceptPairContractTest(unittest.TestCase):
         self.assertIn("face_each_other", relations)
         self.assertNotIn("access_faces_other", relations)
 
+    def test_media_secondary_wins_over_utility_for_bedroom_viewing_axis(self) -> None:
+        plan = _concept_to_solver_plan(
+            concept={
+                "concept_family": "focal_axis",
+                "cluster_zone_plan": [
+                    {
+                        "cluster_id": "media_optional",
+                        "priority": "optional",
+                        "role_kind": "media",
+                        "wall_claim": "strong",
+                    },
+                    {
+                        "cluster_id": "sleep_core",
+                        "priority": "core",
+                        "role_kind": "sleep",
+                        "wall_claim": "strong",
+                    },
+                    {
+                        "cluster_id": "utility_optional",
+                        "priority": "optional",
+                        "role_kind": "support",
+                        "wall_claim": "strong",
+                    },
+                ],
+                "topology_policy": {},
+                "macro_constraints": {},
+            },
+            room_model=_room_model(),
+            room_type="bedroom",
+        )
+
+        layout_intent = plan.get("layout_intent_profile")
+        self.assertIsInstance(layout_intent, Mapping)
+        assert isinstance(layout_intent, Mapping)
+        self.assertEqual(layout_intent.get("primary_cluster_id"), "sleep_core")
+        self.assertEqual(layout_intent.get("secondary_cluster_id"), "media_optional")
+        self.assertIn("face_each_other", _directional_relations(plan))
+
 
 if __name__ == "__main__":
     _ = unittest.main()
