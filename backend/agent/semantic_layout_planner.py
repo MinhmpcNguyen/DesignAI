@@ -188,6 +188,8 @@ _ADAPTIVE_STAGE_SPECS: dict[str, _AdaptiveStageSpec] = {
             "Keep existing cluster ids when possible. "
             "Add a new cluster only when the brief, affordance, and inventory clearly require it. "
             "Prefer the smallest object program that still covers the room's likely use. "
+            "Model optional feature groups as `required_if_kept` inside an optional cluster; "
+            "do not encode brief keyword predicates as hard activation toggles when a later adaptive stage can judge usefulness. "
             "Set `tier_count_hints` as an executable keep/drop policy for downstream quantity selection, not as abstract commentary."
         ),
         output_contract=(
@@ -225,6 +227,8 @@ _ADAPTIVE_STAGE_SPECS: dict[str, _AdaptiveStageSpec] = {
         task_prompt=(
             "For every cluster, decide the executable object program and the tier-count recommendation for this exact room. "
             "Treat `useful` as whether the cluster should realistically survive deterministic filtering. "
+            "This is the stage that activates or suppresses optional clusters such as a bedroom media group; "
+            "when you mark a cluster with `required_if_kept` objects as `useful: true`, those objects will be bundled together downstream. "
             "Use `tier_count_hints` to say what should be kept longer, what can drop earlier, and what should survive when the room still has real surplus. "
             "Base this on the actual room area, affordance headroom, brief priorities, and inventory mix. "
             "Avoid over-pruning small support items when the room still has comfortable surplus."
@@ -1506,6 +1510,11 @@ def _build_single_candidate(
         inventory_catalog=inventory_catalog,
         priority=priority,
         brief_text=brief_text,
+        force_required_if_kept=bool(
+            llm_candidate_override.get("useful")
+            if isinstance(llm_candidate_override, Mapping)
+            else False
+        ),
     )
     activation = (
         cluster_rule.get("activation")
@@ -1824,6 +1833,7 @@ def _candidate_objects(
     inventory_catalog: Mapping[str, Mapping[str, Any]],
     priority: str,
     brief_text: str,
+    force_required_if_kept: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     objects: list[dict[str, Any]] = []
     missing: list[str] = []
@@ -1871,7 +1881,8 @@ def _candidate_objects(
         else:
             add_object(selected, role="dominant_anchor", required=True)
     kept_required_if = (
-        priority == "core"
+        force_required_if_kept
+        or priority == "core"
         or _brief_support_score(
             str(cluster_rule.get("cluster_id") or ""), [], brief_text
         )
@@ -3563,6 +3574,12 @@ def _is_work_anchor_surface_like(object_type: str) -> bool:
     return is_work_surface_like(object_type)
 
 
+def _is_bare_tv_display(object_type: str) -> bool:
+    """True for plain TV/screen displays that are wall-mounted, not floor-console furniture."""
+    key = object_type.lower()
+    return "tv_console" not in key and (key == "tv" or key == "television")
+
+
 def _is_storage_like(object_type: str) -> bool:
     key = object_type.lower()
     if is_profile_storage_object(key):
@@ -3581,7 +3598,10 @@ def _needs_front_access(object_type: str) -> bool:
         or is_profile_wall_backed_object(object_type)
         or is_profile_floating_object(object_type)
         or is_profile_workflow_object(object_type)
-        or _contains_any(object_type, _MEDIA_TOKENS)
+        or (
+            _contains_any(object_type, _MEDIA_TOKENS)
+            and not _is_bare_tv_display(object_type)
+        )
         or is_bed_like(object_type)
     )
 

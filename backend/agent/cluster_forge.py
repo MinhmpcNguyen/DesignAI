@@ -885,6 +885,20 @@ def _finalize_object_level_solver_contract(
         or (anchors[0] if anchors else "")
         or (dominant_anchor_candidates[0] if dominant_anchor_candidates else "")
     ).strip()
+
+    # Correct role inversion: tv_console is floor furniture and the correct anchor;
+    # a bare 'tv' is a wall display that must be placed relative to the console.
+    corrected = _promote_tv_console_anchor(
+        [dominant_anchor_id] if dominant_anchor_id else [], members
+    )
+    if corrected and corrected[0] != dominant_anchor_id:
+        dominant_anchor_id = corrected[0]
+        anchors = [dominant_anchor_id]
+        cluster["anchors"] = anchors
+        dominant_anchor_candidates = [dominant_anchor_id] + [
+            c for c in dominant_anchor_candidates if c != dominant_anchor_id
+        ]
+
     if dominant_anchor_id and dominant_anchor_id in members:
         anchor_policy["dominant_anchor_id"] = dominant_anchor_id
 
@@ -1301,6 +1315,7 @@ def _sanitize_cluster_anchors(
             anchor for anchor in kept if anchor not in candidate_set
         ]
         kept = [anchor for anchor in kept if anchor in candidate_set]
+        kept = _promote_tv_console_anchor(kept, valid_anchor_candidates)
         if invalid_semantic_anchors:
             _append_payload_note(
                 payload,
@@ -1382,6 +1397,8 @@ def _anchor_priority_score(*, cluster_tag: str, member: str) -> int:
             score += 850
         elif is_seat_like(member):
             score += 700
+        elif "tv_console" in key:
+            score += 600
     elif cluster_tag == "dining":
         if "dining_table" in key or "table" in key:
             score += 1_000
@@ -1465,6 +1482,31 @@ def _is_media_display_like(member: str) -> bool:
 def _is_media_side_support_like(member: str) -> bool:
     key = member.lower()
     return any(token in key for token in ("media_shelf", "bookshelf", "speaker"))
+
+
+def _is_bare_tv_display(member: str) -> bool:
+    """True for plain TV screen objects that are not console/stand furniture."""
+    key = member.lower()
+    return "tv_console" not in key and (key == "tv" or key == "television")
+
+
+def _promote_tv_console_anchor(
+    kept: list[str],
+    valid_anchor_candidates: list[str],
+) -> list[str]:
+    """Replace bare-tv anchor with tv_console when tv_console is a valid candidate.
+
+    tv_console is floor furniture and the correct dominant anchor for a media cluster.
+    A bare 'tv' is a wall display that should be placed relative to the console, not
+    used as the spatial anchor that everything else orbits.
+    """
+    console_candidates = [c for c in valid_anchor_candidates if "tv_console" in c.lower()]
+    if not console_candidates:
+        return kept
+    if not any(_is_bare_tv_display(k) for k in kept):
+        return kept
+    corrected = [k for k in kept if not _is_bare_tv_display(k)]
+    return corrected if corrected else [console_candidates[0]]
 
 
 def _is_low_center_surface_like(member: str) -> bool:

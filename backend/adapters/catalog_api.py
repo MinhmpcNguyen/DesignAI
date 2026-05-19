@@ -22,6 +22,12 @@ DEFAULT_TIMEOUT_SECONDS = 15.0
 _SIZE_VECTOR_LENGTH = 3
 _ROTATION_VECTOR_LENGTH = 4
 _QUARTER_TURN_THRESHOLD = 0.15  # tolerance for 1/√2 ≈ 0.7071
+_TV_UPRIGHT_DEFAULT_ROTATION: tuple[float, float, float, float] = (
+    -0.707106781187,
+    0.0,
+    0.0,
+    0.707106781187,
+)
 
 
 def _is_quarter_turn_y(
@@ -45,6 +51,7 @@ def _is_quarter_turn_y(
         and abs(abs(qy) - _HALF_SQRT2) < _QUARTER_TURN_THRESHOLD
         and abs(abs(qw) - _HALF_SQRT2) < _QUARTER_TURN_THRESHOLD
     )
+
 
 CatalogRotationPresence = Literal["null", "present"]
 
@@ -103,7 +110,22 @@ _SEMANTIC_OBJECT_TYPE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "tv_console",
-        ("tv_console", "media_console", "tv_stand", "ke_tivi", "tu_tivi"),
+        (
+            "tv_console",
+            "media_console",
+            "tv_stand",
+            "tv_cabinet",
+            "ke_tv",
+            "ke_ti_vi",
+            "ke_tivi",
+            "tu_tv",
+            "tu_ti_vi",
+            "tu_tivi",
+        ),
+    ),
+    (
+        "tv",
+        ("tv", "tivi", "ti_vi", "television", "smart_tv"),
     ),
     (
         "dresser",
@@ -170,12 +192,12 @@ class CatalogItem(BaseModel):
         if not isinstance(value, list | tuple) or len(value) != _SIZE_VECTOR_LENGTH:
             return None
         try:
-            size = tuple(float(item) for item in value)
+            size = [float(item) for item in value]
         except (TypeError, ValueError):
             return None
         if any(item <= 0 for item in size):
             return None
-        return size
+        return (size[0], size[1], size[2])
 
     @field_validator("default_rotation", mode="before")
     @classmethod
@@ -188,17 +210,22 @@ class CatalogItem(BaseModel):
         if not isinstance(value, list | tuple) or len(value) != _ROTATION_VECTOR_LENGTH:
             return None
         try:
-            return tuple(float(item) for item in value)
+            rotation = [float(item) for item in value]
         except (TypeError, ValueError):
             return None
+        return (rotation[0], rotation[1], rotation[2], rotation[3])
 
     def dimensions_mm(self) -> dict[str, float | None]:
         if self.size is None:
             return {"length_mm": None, "width_mm": None, "height_mm": None}
         x_m, y_m, z_m = self.size
         length_mm = x_m * 1000.0
-        width_mm = z_m * 1000.0
-        height_mm = y_m * 1000.0
+        if self._is_bare_tv_display():
+            width_mm = y_m * 1000.0
+            height_mm = z_m * 1000.0
+        else:
+            width_mm = z_m * 1000.0
+            height_mm = y_m * 1000.0
         # When default_rotation is a 90° or 270° Y-axis rotation the model's
         # local-X and local-Z axes are swapped in world space, so the 2D plan
         # footprint dimensions must be swapped accordingly so that the solver
@@ -210,6 +237,18 @@ class CatalogItem(BaseModel):
             "width_mm": width_mm,
             "height_mm": height_mm,
         }
+
+    def _is_bare_tv_display(self) -> bool:
+        return (
+            infer_catalog_object_type(
+                name=self.name,
+                name_vn=self.name_vn,
+                slug=self.slug,
+                sku_slug=self.sku_slug,
+                model_url=self.model_url,
+            )
+            == "tv"
+        )
 
     def inventory_type(self, *, category_slug: str | None) -> str:
         if isinstance(self.object_role, str) and self.object_role.strip():
@@ -291,6 +330,8 @@ class CatalogItem(BaseModel):
             list(self.default_rotation) if self.default_rotation is not None else None
         )
         size_m = list(self.size) if self.size is not None else None
+        if default_rotation is None and inventory_type == "tv":
+            default_rotation = list(_TV_UPRIGHT_DEFAULT_ROTATION)
 
         files: list[dict[str, object]] = []
         if model_url is not None:

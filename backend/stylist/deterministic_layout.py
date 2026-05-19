@@ -14,6 +14,11 @@ MOUNT_INSET_MM = 20
 OPENING_HANG_HEIGHT_MM = 1800
 CEILING_FOOTPRINT_MM = 450
 UTILITY_GAP_MM = 80
+TV_SURFACE_MIN_DEPTH_MM = 40
+MIN_POLYGON_POINTS = 3
+SEGMENT_POINT_COUNT = 2
+OPENING_MOUNT_SOLID_OVERLAP_THRESHOLD = 0.15
+DUPLICATE_OPENING_MOUNT_OVERLAP_THRESHOLD = 0.5
 
 DEFAULT_SURFACES = {
     "wall_color_hex": "#F3EEE6",
@@ -81,7 +86,7 @@ ANCHOR_PRIORITY: dict[str, tuple[str, ...]] = {
         "printer",
         "desktop_pc",
     ),
-    "tv_console": ("speaker", "smart_speaker"),
+    "tv_console": ("tv", "speaker", "smart_speaker"),
     "dresser": ("mirror", "decor"),
     "side_table": ("table_lamp", "plant", "decor", "vase", "smart_speaker", "speaker"),
     "console_table": ("mirror", "decor", "table_lamp", "plant", "vase"),
@@ -238,7 +243,8 @@ def build_deterministic_stylist_payload(
     *,
     tenant_id: str | None = None,
 ) -> dict[str, Any]:
-    room = layout_json.get("room") if isinstance(layout_json.get("room"), dict) else {}
+    raw_room = layout_json.get("room")
+    room: dict[str, Any] = raw_room if isinstance(raw_room, dict) else {}
     room_polygon = _normalize_polygon(room.get("polygon_ccw"))
     room_rect = (
         _rect_from_polygon(room_polygon)
@@ -279,7 +285,7 @@ def build_deterministic_stylist_payload(
 
     missing: list[str] = []
     status = "OK"
-    if len(room_polygon) < 3:
+    if len(room_polygon) < MIN_POLYGON_POINTS:
         status = "NEED_INFO"
         missing.append("room.polygon_ccw")
 
@@ -305,7 +311,8 @@ def build_deterministic_stylist_payload(
         "objects": objects,
         "validation": validation,
         "notes": [
-            "Accessory placement used deterministic support rules and fixed 50 mm spacing."
+            "Accessory placement used deterministic support rules "
+            "and fixed 50 mm spacing."
         ],
         "missing": missing,
     }
@@ -395,14 +402,73 @@ def _profile_from_inventory_row(row: dict[str, Any]) -> _Profile | None:
         length = _to_positive_int(dims.get("length_mm"))
         width = _to_positive_int(dims.get("width_mm"))
         height = _to_non_negative_int(dims.get("height_mm"))
-        if length and width:
-            return _Profile(length_mm=length, width_mm=width, height_mm=height)
+        profile = _profile_from_dimensions(
+            row=row,
+            length_mm=length,
+            width_mm=width,
+            height_mm=height,
+        )
+        if profile is not None:
+            return profile
     length = _to_positive_int(row.get("length_mm"))
     width = _to_positive_int(row.get("width_mm"))
     height = _to_non_negative_int(row.get("height_mm"))
-    if length and width:
-        return _Profile(length_mm=length, width_mm=width, height_mm=height)
+    profile = _profile_from_dimensions(
+        row=row,
+        length_mm=length,
+        width_mm=width,
+        height_mm=height,
+    )
+    if profile is not None:
+        return profile
     return None
+
+
+def _profile_from_dimensions(
+    *,
+    row: dict[str, Any],
+    length_mm: int | None,
+    width_mm: int | None,
+    height_mm: int | None,
+) -> _Profile | None:
+    if not length_mm or not width_mm:
+        return None
+    resolved_height = height_mm or 0
+    if (
+        _is_bare_tv_inventory_row(row)
+        and resolved_height > 0
+        and width_mm > max(300, resolved_height * 2)
+    ):
+        return _Profile(
+            length_mm=length_mm,
+            width_mm=max(TV_SURFACE_MIN_DEPTH_MM, resolved_height),
+            height_mm=width_mm,
+        )
+    return _Profile(length_mm=length_mm, width_mm=width_mm, height_mm=resolved_height)
+
+
+def _is_bare_tv_inventory_row(row: dict[str, Any]) -> bool:
+    values = (
+        row.get("type"),
+        row.get("asset_type"),
+        row.get("object_type"),
+        row.get("category"),
+        row.get("semantic_object_type"),
+        row.get("name"),
+        row.get("inventory_name"),
+    )
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        key = value.strip().lower().replace("-", "_").replace(" ", "_")
+        if not key or any(token in key for token in ("tv_console", "ke_tv", "ke_tivi")):
+            continue
+        if key in {"tv", "tivi", "ti_vi", "television", "smart_tv"}:
+            return True
+        tokens = set(key.split("_"))
+        if tokens & {"tv", "tivi", "television"}:
+            return True
+    return False
 
 
 def _build_existing_objects(
@@ -695,11 +761,7 @@ def _select_anchor_candidates(
 
 
 def _is_disallowed_anchor_attachment(*, anchor: str, item_type: str) -> bool:
-    normalized_anchor = anchor.strip().lower()
-    normalized_item_type = item_type.strip().lower()
-    if normalized_item_type != "tv":
-        return False
-    return normalized_anchor == "tv_console"
+    return False
 
 
 def _ordered_candidates(
@@ -741,6 +803,17 @@ def _place_support_attached_items(
     on_top_types: list[str] = []
 
     for item_type in item_types:
+        if support.object_type == "tv_console" and item_type == "tv":
+            row = _place_tv_on_console_item(
+                support=support,
+                item_type=item_type,
+                inventory_profiles=inventory_profiles,
+                existing_ids=existing_ids,
+                counters=counters,
+            )
+            if row is not None:
+                generated.append(row)
+                continue
         if item_type == "throw_blanket":
             row = _place_throw_blanket_item(
                 support=support,
@@ -802,6 +875,53 @@ def _place_support_attached_items(
         )
     )
     return generated
+
+
+def _place_tv_on_console_item(
+    *,
+    support: _Support,
+    item_type: str,
+    inventory_profiles: dict[str, _Profile],
+    existing_ids: set[str],
+    counters: dict[str, int],
+) -> dict[str, Any] | None:
+    support_rect = support.rect
+    inner_min_x = support_rect.min_x + SUPPORT_INSET_MM
+    inner_max_x = support_rect.max_x - SUPPORT_INSET_MM
+    inner_min_y = support_rect.min_y + SUPPORT_INSET_MM
+    inner_max_y = support_rect.max_y - SUPPORT_INSET_MM
+    if inner_max_x <= inner_min_x or inner_max_y <= inner_min_y:
+        return None
+
+    profile = _profile_for_type(item_type, inventory_profiles)
+    long_size = max(profile.length_mm, profile.width_mm)
+    short_size = min(profile.length_mm, profile.width_mm)
+    short_size = max(TV_SURFACE_MIN_DEPTH_MM, short_size)
+    if support_rect.width >= support_rect.height:
+        width = min(long_size, inner_max_x - inner_min_x)
+        height = min(short_size, inner_max_y - inner_min_y)
+    else:
+        width = min(short_size, inner_max_x - inner_min_x)
+        height = min(long_size, inner_max_y - inner_min_y)
+    if width <= 0 or height <= 0:
+        return None
+
+    rect = _centered_rect(
+        center_x=support_rect.center_x,
+        center_y=support_rect.center_y,
+        width=width,
+        height=height,
+    )
+    return _make_generated_object(
+        item_type=item_type,
+        rect=rect,
+        method="on_top",
+        target_instance_id=support.instance_id,
+        cluster_id=support.cluster_id,
+        inventory_profiles=inventory_profiles,
+        existing_ids=existing_ids,
+        counters=counters,
+    )
 
 
 def _pack_on_support(
@@ -895,10 +1015,10 @@ def _pack_on_support(
                 min_x = max_x - cross_size
 
         rect = _Rect(
-            min_x=int(round(min_x)),
-            min_y=int(round(min_y)),
-            max_x=int(round(max_x)),
-            max_y=int(round(max_y)),
+            min_x=round(min_x),
+            min_y=round(min_y),
+            max_x=round(max_x),
+            max_y=round(max_y),
         )
         row = _make_generated_object(
             item_type=item_type,
@@ -952,12 +1072,12 @@ def _place_throw_blanket_item(
 
     if horizontal:
         blanket_width = _clamp(
-            int(round(support_rect.width * 0.68)),
+            round(support_rect.width * 0.68),
             min(available_width, max(profile.width_mm, 450)),
             available_width,
         )
         blanket_height = _clamp(
-            int(round(support_rect.height * 0.34)),
+            round(support_rect.height * 0.34),
             min(available_height, max(profile.height_mm * 6, 260)),
             available_height,
         )
@@ -968,17 +1088,17 @@ def _place_throw_blanket_item(
         )
         center_x = support_rect.center_x + shift_direction * min(
             long_shift_limit,
-            int(round(support_rect.width * 0.12)),
+            round(support_rect.width * 0.12),
         )
         center_y = support_rect.center_y
     else:
         blanket_width = _clamp(
-            int(round(support_rect.width * 0.34)),
+            round(support_rect.width * 0.34),
             min(available_width, max(profile.height_mm * 6, 260)),
             available_width,
         )
         blanket_height = _clamp(
-            int(round(support_rect.height * 0.68)),
+            round(support_rect.height * 0.68),
             min(available_height, max(profile.width_mm, 450)),
             available_height,
         )
@@ -990,7 +1110,7 @@ def _place_throw_blanket_item(
         center_x = support_rect.center_x
         center_y = support_rect.center_y + shift_direction * min(
             long_shift_limit,
-            int(round(support_rect.height * 0.12)),
+            round(support_rect.height * 0.12),
         )
 
     rect = _centered_rect(
@@ -1062,7 +1182,10 @@ def _place_adjacent_floor_item(
     horizontal = support.rect.width >= support.rect.height
     room_cx, room_cy = room_center
     if horizontal:
-        side = _outward_direction(support.rect.center_y, room_cy)
+        side = _outward_direction(
+            support_center=support.rect.center_y,
+            room_center=room_cy,
+        )
         if side > 0:
             min_y = support.rect.min_y - height - STACK_GAP_MM
             max_y = min_y + height
@@ -1070,10 +1193,13 @@ def _place_adjacent_floor_item(
             max_y = support.rect.max_y + height + STACK_GAP_MM
             min_y = max_y - height
         center_x = support.rect.center_x
-        min_x = int(round(center_x - width / 2.0))
+        min_x = round(center_x - width / 2.0)
         max_x = min_x + width
     else:
-        side = _outward_direction(support.rect.center_x, room_cx)
+        side = _outward_direction(
+            support_center=support.rect.center_x,
+            room_center=room_cx,
+        )
         if side > 0:
             min_x = support.rect.min_x - width - STACK_GAP_MM
             max_x = min_x + width
@@ -1081,14 +1207,14 @@ def _place_adjacent_floor_item(
             max_x = support.rect.max_x + width + STACK_GAP_MM
             min_x = max_x - width
         center_y = support.rect.center_y
-        min_y = int(round(center_y - height / 2.0))
+        min_y = round(center_y - height / 2.0)
         max_y = min_y + height
 
     rect = _Rect(
-        min_x=int(round(min_x)),
-        min_y=int(round(min_y)),
-        max_x=int(round(max_x)),
-        max_y=int(round(max_y)),
+        min_x=round(min_x),
+        min_y=round(min_y),
+        max_x=round(max_x),
+        max_y=round(max_y),
     )
     return _make_generated_object(
         item_type=item_type,
@@ -1117,7 +1243,7 @@ def _place_wall_item_over_support(
 
     if wall in {"top", "bottom"}:
         center_x = _clamp(
-            int(round(support.rect.center_x)),
+            round(support.rect.center_x),
             room_rect.min_x + width // 2 + MOUNT_INSET_MM,
             room_rect.max_x - width // 2 - MOUNT_INSET_MM,
         )
@@ -1131,7 +1257,7 @@ def _place_wall_item_over_support(
             min_y = max_y - plan_height
     else:
         center_y = _clamp(
-            int(round(support.rect.center_y)),
+            round(support.rect.center_y),
             room_rect.min_y + plan_height // 2 + MOUNT_INSET_MM,
             room_rect.max_y - plan_height // 2 - MOUNT_INSET_MM,
         )
@@ -1182,7 +1308,7 @@ def _place_opening_items(
     for opening in target_openings:
         segment = opening.get("segment_mm") if isinstance(opening, dict) else None
         opening_id = opening.get("id") if isinstance(opening, dict) else None
-        if not isinstance(segment, list) or len(segment) != 2:
+        if not isinstance(segment, list) or len(segment) != SEGMENT_POINT_COUNT:
             continue
         if not isinstance(opening_id, str) or not opening_id:
             continue
@@ -1191,15 +1317,15 @@ def _place_opening_items(
         if p1 is None or p2 is None:
             continue
         # Skip if we already placed a curtain at this segment position.
-        seg_key = (int(round(p1[0])), int(round(p1[1])), int(round(p2[0])), int(round(p2[1])))
-        seg_key_rev = (int(round(p2[0])), int(round(p2[1])), int(round(p1[0])), int(round(p1[1])))
+        seg_key = (round(p1[0]), round(p1[1]), round(p2[0]), round(p2[1]))
+        seg_key_rev = (round(p2[0]), round(p2[1]), round(p1[0]), round(p1[1]))
         if seg_key in seen_seg_keys or seg_key_rev in seen_seg_keys:
             continue
         seen_seg_keys.add(seg_key)
-        seg_length = max(1, int(round(_segment_length(p1, p2))))
+        seg_length = max(1, round(_segment_length(p1, p2)))
         width = max(profile.wall_projection()[0], seg_length + 200)
-        center_x = int(round((p1[0] + p2[0]) / 2.0))
-        center_y = int(round((p1[1] + p2[1]) / 2.0))
+        center_x = round((p1[0] + p2[0]) / 2.0)
+        center_y = round((p1[1] + p2[1]) / 2.0)
         rect = _centered_rect(
             center_x=center_x,
             center_y=center_y,
@@ -1236,7 +1362,7 @@ def _place_wall_items(
     profile = _profile_for_type(item_type, inventory_profiles)
     width, plan_height = profile.wall_projection()
     focus = max(supports, key=lambda row: row.rect.area, default=None)
-    center_x = int(round(focus.rect.center_x if focus else room_rect.center_x))
+    center_x = round(focus.rect.center_x if focus else room_rect.center_x)
     wall = "top"
     if focus is not None:
         wall = _nearest_room_edge(room_rect=room_rect, rect=focus.rect)
@@ -1256,7 +1382,7 @@ def _place_wall_items(
             max_y = room_rect.max_y - MOUNT_INSET_MM
             min_y = max_y - plan_height
     else:
-        center_y = int(round(focus.rect.center_y if focus else room_rect.center_y))
+        center_y = round(focus.rect.center_y if focus else room_rect.center_y)
         center_y = _clamp(
             center_y,
             room_rect.min_y + plan_height // 2 + MOUNT_INSET_MM,
@@ -1300,8 +1426,8 @@ def _place_ceiling_items(
     profile = _profile_for_type(item_type, inventory_profiles)
     width, height = profile.footprint()
     anchor = _preferred_ceiling_anchor(supports)
-    center_x = int(round(anchor.rect.center_x if anchor else room_rect.center_x))
-    center_y = int(round(anchor.rect.center_y if anchor else room_rect.center_y))
+    center_x = round(anchor.rect.center_x if anchor else room_rect.center_x)
+    center_y = round(anchor.rect.center_y if anchor else room_rect.center_y)
     rect = _centered_rect(
         center_x=center_x, center_y=center_y, width=width, height=height
     )
@@ -1483,23 +1609,26 @@ def _validate_styled_objects(
             continue
 
         if layer == "floor_solid":
-            if any(
-                _rects_overlap_local(rect, other_rect)
-                for _, other_rect, _ in floor_solids
+            if (
+                any(
+                    _rects_overlap_local(rect, other_rect)
+                    for _, other_rect, _ in floor_solids
+                )
+                and source == "inventory"
             ):
-                if source == "inventory":
-                    dropped.append(
-                        {
-                            "instance_id": instance_id,
-                            "reason": "floor_solid_overlap",
-                        }
-                    )
-                    continue
+                dropped.append(
+                    {
+                        "instance_id": instance_id,
+                        "reason": "floor_solid_overlap",
+                    }
+                )
+                continue
             floor_solids.append((instance_id, rect, object_type))
 
         if layer == "wall_mounted" and object_type in OPENING_MOUNTED_TYPES:
             if any(
-                _rect_overlap_ratio_local(rect, other_rect) > 0.15
+                _rect_overlap_ratio_local(rect, other_rect)
+                > OPENING_MOUNT_SOLID_OVERLAP_THRESHOLD
                 for _, other_rect, _ in floor_solids
             ):
                 dropped.append(
@@ -1512,7 +1641,8 @@ def _validate_styled_objects(
             # Deduplicate curtains/blinds that fall on the same opening segment
             # (can happen when the frontend sends duplicate door/window entries).
             if source == "inventory" and any(
-                _rect_overlap_ratio_local(rect, other_rect) > 0.5
+                _rect_overlap_ratio_local(rect, other_rect)
+                > DUPLICATE_OPENING_MOUNT_OVERLAP_THRESHOLD
                 for _, other_rect, ot in wall_mounted_solids
                 if ot == object_type
             ):
@@ -1673,6 +1803,7 @@ def _fallback_material(object_type: str) -> str:
             "speaker",
             "air_conditioner",
             "monitor",
+            "tv",
             "laptop",
             "desktop",
             "printer",
@@ -1705,7 +1836,7 @@ def _normalize_openings(value: Any) -> dict[str, list[dict[str, Any]]]:
             if not isinstance(row, dict):
                 continue
             segment = row.get("segment_mm")
-            if not isinstance(segment, list) or len(segment) != 2:
+            if not isinstance(segment, list) or len(segment) != SEGMENT_POINT_COUNT:
                 continue
             opening_id = row.get("id") or row.get(f"{key[:-1]}_id")
             if not isinstance(opening_id, str) or not opening_id:
@@ -1751,7 +1882,7 @@ def _rect_from_bbox(value: Any) -> _Rect | None:
     min_y = _to_int(value.get("min_y"))
     max_x = _to_int(value.get("max_x"))
     max_y = _to_int(value.get("max_y"))
-    if None in {min_x, min_y, max_x, max_y}:
+    if min_x is None or min_y is None or max_x is None or max_y is None:
         return None
     if max_x <= min_x or max_y <= min_y:
         return None
@@ -1759,7 +1890,7 @@ def _rect_from_bbox(value: Any) -> _Rect | None:
 
 
 def _rect_from_polygon(value: list[dict[str, int]]) -> _Rect | None:
-    if len(value) < 3:
+    if len(value) < MIN_POLYGON_POINTS:
         return None
     xs = [point["x"] for point in value]
     ys = [point["y"] for point in value]
@@ -1788,8 +1919,8 @@ def _centered_rect(
     width: int,
     height: int,
 ) -> _Rect:
-    min_x = int(round(center_x - width / 2.0))
-    min_y = int(round(center_y - height / 2.0))
+    min_x = round(center_x - width / 2.0)
+    min_y = round(center_y - height / 2.0)
     return _Rect(
         min_x=min_x,
         min_y=min_y,
@@ -1827,13 +1958,13 @@ def _fit_rect_within_bounds(
 def _nearest_room_edge(
     *, room_rect: _Rect, rect: _Rect
 ) -> Literal["top", "bottom", "left", "right"]:
-    distances = {
+    distances: dict[Literal["top", "bottom", "left", "right"], int] = {
         "top": abs(rect.min_y - room_rect.min_y),
         "bottom": abs(room_rect.max_y - rect.max_y),
         "left": abs(rect.min_x - room_rect.min_x),
         "right": abs(room_rect.max_x - rect.max_x),
     }
-    return min(distances, key=distances.get)  # type: ignore[return-value]
+    return min(distances, key=lambda side: distances[side])
 
 
 def _oriented_on_top_dims(
@@ -1885,7 +2016,7 @@ def _to_int(value: Any) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return int(round(float(value)))
+        return round(float(value))
     return None
 
 

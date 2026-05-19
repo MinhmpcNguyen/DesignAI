@@ -52,6 +52,24 @@ for _object_type, _aliases in _VIETNAMESE_OBJECT_ALIASES.items():
     _OBJECT_ALIASES[_object_type] = tuple(
         dict.fromkeys((*_OBJECT_ALIASES.get(_object_type, ()), *_aliases))
     )
+_MEDIA_DISPLAY_REQUEST_ALIASES = (
+    "tv",
+    "television",
+    "smart tv",
+    "tivi",
+    "ti vi",
+    "ti_vi",
+    "ke tv",
+    "ke tivi",
+    "ke ti vi",
+    "tu tv",
+    "tu tivi",
+    "tu ti vi",
+)
+_TV_CONSOLE_ALIASES = _OBJECT_ALIASES.get("tv_console", ())
+_OBJECT_ALIASES["tv_console"] = tuple(
+    dict.fromkeys((*_TV_CONSOLE_ALIASES, *_MEDIA_DISPLAY_REQUEST_ALIASES))
+)
 
 _GENERIC_TABLE_ALIAS = "ban"
 _GENERIC_DESK_TABLE_BLOCKERS = (
@@ -154,21 +172,34 @@ def build_request_contract(
         if str(item).strip()
     }
     candidates = sorted(set(_OBJECT_ALIASES) | available)
-    contract_objects: list[dict[str, Any]] = []
+    by_type: dict[str, dict[str, Any]] = {}
 
     for object_type in candidates:
         mentions = _find_mentions(text, object_type)
         if not mentions:
             continue
         best = _best_mention_contract(text, object_type, mentions)
-        best["available_in_program"] = object_type in available
-        contract_objects.append(best)
+        contract_object_type = canonical_object_type(object_type)
+        best["object_type"] = contract_object_type
+        best["available_in_program"] = contract_object_type in available
+        existing = by_type.get(contract_object_type)
+        best_rank = _intent_rank(str(best.get("intent") or ""))
+        existing_rank = (
+            _intent_rank(str(existing.get("intent") or ""))
+            if existing is not None
+            else None
+        )
+        if existing is None or (
+            existing_rank is not None and best_rank < existing_rank
+        ):
+            by_type[contract_object_type] = best
 
-    contract_objects.sort(
+    contract_objects = sorted(
+        by_type.values(),
         key=lambda row: (
             _intent_rank(str(row.get("intent") or "")),
             str(row.get("object_type") or ""),
-        )
+        ),
     )
     return {
         "version": 1,
@@ -418,7 +449,7 @@ def contract_item_for_object_type(
         return None
     for item in _contract_objects(contract):
         if canonical_object_type(str(item.get("object_type") or "")) == canonical:
-            return deepcopy(item)
+            return deepcopy(dict(item))
     return None
 
 
@@ -507,7 +538,7 @@ def missing_non_functional_contract_items(
             or contract_target_count(item) <= 0
         ):
             continue
-        missing.append(deepcopy(item))
+        missing.append(deepcopy(dict(item)))
         seen.add(object_type)
     return missing
 
@@ -676,7 +707,10 @@ def _semantic_program_object_types(program: Mapping[str, Any]) -> list[str]:
                         object_type = str(row.get("object_type") or "").strip()
                         if object_type:
                             out.append(object_type)
-        for member in cluster.get("members") or []:
+        members = cluster.get("members")
+        if not isinstance(members, Sequence) or isinstance(members, str):
+            continue
+        for member in members:
             if isinstance(member, str) and member.strip():
                 out.append(member)
     return out

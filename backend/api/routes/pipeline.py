@@ -50,6 +50,13 @@ _NORMALIZE_RUN_JOB_MANAGER = NormalizeRunJobManager(
 _SIZE_VECTOR_LENGTH = 3
 _QUATERNION_LENGTH = 4
 _MIN_QUATERNION_NORM = 1e-12
+_QUARTER_TURN_THRESHOLD = 0.15
+_TV_UPRIGHT_DEFAULT_ROTATION: list[float] = [
+    -0.707106781187,
+    0.0,
+    0.0,
+    0.707106781187,
+]
 _CATALOG_TYPE_FALLBACKS: dict[str, tuple[str, ...]] = {}
 
 
@@ -353,6 +360,9 @@ def _enriched_case_options(case_id: str, final_output: Any) -> list[dict[str, An
                     if isinstance(variant.get("complete"), bool)
                     else None,
                     "coverage_ratio": _number(variant.get("coverage_ratio")),
+                    "quality_gate_reasons": variant.get("quality_gate_reasons")
+                    if isinstance(variant.get("quality_gate_reasons"), list)
+                    else [],
                     "styled_payload": _enrich_rotation_ccw(
                         stylist_payload=styled_payload,
                         absolute_layout_payload=absolute_payload
@@ -572,6 +582,8 @@ def _normalize_run_room_objects(
             )
             continue
 
+        default_rotation = _default_rotation_for_object(catalog_payload, obj)
+
         # Compute the Y (vertical) base elevation.
         # For items placed on top of furniture, start at the support's surface.
         place_on = (
@@ -586,12 +598,16 @@ def _normalize_run_room_objects(
             base_y_mm = support_height_mm.get(place_on_target, 0.0)
         else:
             base_y_mm = 0.0
-        pos_y_mm = base_y_mm + size_mm[1] / 2.0
+        vertical_extent_mm = _render_vertical_extent_mm(
+            size_mm=size_mm,
+            default_rotation=default_rotation,
+        )
+        pos_y_mm = base_y_mm + vertical_extent_mm / 2.0
 
         # Record this item's surface height for items that stack on top of it.
         instance_id = str(obj.get("instance_id") or "")
         if instance_id:
-            support_height_mm[instance_id] = base_y_mm + size_mm[1]
+            support_height_mm[instance_id] = base_y_mm + vertical_extent_mm
 
         rotation_ccw = _number(obj.get("rotation_ccw"))
         if rotation_ccw is None:
@@ -617,7 +633,7 @@ def _normalize_run_room_objects(
         }
         out.append(output_obj)
         rotations_ccw.append(rotation_ccw)
-        default_rotations.append(_catalog_default_rotation(catalog_payload))
+        default_rotations.append(default_rotation)
     return out, rotations_ccw, default_rotations
 
 
@@ -764,6 +780,78 @@ def _catalog_default_rotation(
     return _quaternion_from_value(
         attributes.get("defaultRotation") or attributes.get("default_rotation")
     )
+
+
+def _default_rotation_for_object(
+    catalog_payload: dict[str, Any] | None,
+    obj: dict[str, Any],
+) -> list[float] | None:
+    default_rotation = _catalog_default_rotation(catalog_payload)
+    if default_rotation is not None:
+        return default_rotation
+    if _is_bare_tv_display(catalog_payload=catalog_payload, obj=obj):
+        return list(_TV_UPRIGHT_DEFAULT_ROTATION)
+    return None
+
+
+def _render_vertical_extent_mm(
+    *,
+    size_mm: list[float],
+    default_rotation: list[float] | None,
+) -> float:
+    if _is_quarter_turn_x(default_rotation):
+        return size_mm[2]
+    return size_mm[1]
+
+
+def _is_quarter_turn_x(rotation: list[float] | None) -> bool:
+    if rotation is None or len(rotation) != _QUATERNION_LENGTH:
+        return False
+    qx, qy, qz, qw = rotation
+    half_sqrt2 = 0.7071067811865476
+    return (
+        abs(abs(qx) - half_sqrt2) < _QUARTER_TURN_THRESHOLD
+        and abs(qy) < _QUARTER_TURN_THRESHOLD
+        and abs(qz) < _QUARTER_TURN_THRESHOLD
+        and abs(abs(qw) - half_sqrt2) < _QUARTER_TURN_THRESHOLD
+    )
+
+
+def _is_bare_tv_display(
+    *,
+    catalog_payload: dict[str, Any] | None,
+    obj: dict[str, Any],
+) -> bool:
+    values: list[object] = [
+        obj.get("object_type"),
+        obj.get("category"),
+        obj.get("type"),
+    ]
+    if catalog_payload is not None:
+        attributes = _mapping(catalog_payload.get("attributes"))
+        values.extend(
+            [
+                catalog_payload.get("type"),
+                catalog_payload.get("category"),
+                catalog_payload.get("name"),
+                catalog_payload.get("inventory_name"),
+                attributes.get("semantic_object_type"),
+                attributes.get("category"),
+                attributes.get("inventory_name"),
+                attributes.get("catalog_name"),
+            ]
+        )
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        key = value.strip().lower().replace("-", "_").replace(" ", "_")
+        if not key or any(token in key for token in ("tv_console", "ke_tv", "ke_tivi")):
+            continue
+        if key in {"tv", "tivi", "ti_vi", "television", "smart_tv"}:
+            return True
+        if set(key.split("_")) & {"tv", "tivi", "television"}:
+            return True
+    return False
 
 
 def _catalog_name(
@@ -1372,33 +1460,34 @@ def _restore_normalize_run_options(
 
         option_objects: list[dict[str, Any]] = []
         option_meta = selected_room_options[0][1]
-        publishable = all(
-            _normalize_run_option_is_publishable(option)
-            for _, option in selected_room_options
-        )
-        if publishable:
-            for room_id, option in selected_room_options:
-                styled_payload = option.get("styled_payload")
-                if not isinstance(styled_payload, dict):
-                    continue
-                option_objects.extend(
-                    _normalize_run_restored_objects(
-                        coordinate_service=coordinate_service,
-                        styled_payload=styled_payload,
-                        catalog_index=catalog_index,
-                        transform=transform,
-                        room_id=room_id,
-                    )
+        for room_id, option in selected_room_options:
+            styled_payload = option.get("styled_payload")
+            if not isinstance(styled_payload, dict):
+                continue
+            option_objects.extend(
+                _normalize_run_restored_objects(
+                    coordinate_service=coordinate_service,
+                    styled_payload=styled_payload,
+                    catalog_index=catalog_index,
+                    transform=transform,
+                    room_id=room_id,
                 )
-        disabled_reason = (
-            None
-            if publishable
-            else _normalize_run_option_disabled_reason(
-                [option for _, option in selected_room_options]
             )
+        all_options_for_reason = [option for _, option in selected_room_options]
+        has_hard_invalid = any(
+            opt.get("hard_valid") is False for opt in all_options_for_reason
         )
-        if publishable and not option_objects:
+        has_incomplete = any(
+            opt.get("complete") is False for opt in all_options_for_reason
+        )
+        if has_hard_invalid or has_incomplete:
+            disabled_reason: str | None = _normalize_run_option_disabled_reason(
+                all_options_for_reason
+            )
+        elif not option_objects:
             disabled_reason = "Không có đồ nội thất hợp lệ để đặt."
+        else:
+            disabled_reason = None
 
         option_id = (
             _string_or_none((option_meta or {}).get("option_id"))
@@ -1453,9 +1542,17 @@ def _normalize_run_option_is_publishable(option: Mapping[str, Any]) -> bool:
 def _normalize_run_option_disabled_reason(options: Sequence[Mapping[str, Any]]) -> str:
     has_hard_invalid = any(option.get("hard_valid") is False for option in options)
     has_incomplete = any(option.get("complete") is False for option in options)
+    all_gate_reasons: set[str] = set()
+    for option in options:
+        qgr = option.get("quality_gate_reasons")
+        if isinstance(qgr, list):
+            all_gate_reasons.update(str(r) for r in qgr if isinstance(r, str))
     reasons: list[str] = []
     if has_hard_invalid:
-        reasons.append("Không đạt kiểm tra không chồng lấn và vùng thao tác.")
+        if "required_face_contract_failed" in all_gate_reasons:
+            reasons.append("Không thỏa mãn ràng buộc hướng nhìn giữa các cụm đồ.")
+        else:
+            reasons.append("Không đạt kiểm tra không chồng lấn và vùng thao tác.")
     if has_incomplete:
         reasons.append("Chưa đặt đủ các đồ bắt buộc.")
     return " ".join(reasons) or "Phương án này không đạt kiểm tra bố cục."

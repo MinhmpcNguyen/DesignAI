@@ -59,6 +59,17 @@ ConceptFamily = Literal[
 Priority = Literal["core", "support", "optional"]
 ZoneComplementRole = Literal["focal_claim", "topology_complement", "neutral"]
 AnchorStrength = Literal["hard", "strong", "medium"]
+_FACE_RELATION_TYPES = frozenset(
+    {
+        "face",
+        "face_each_other",
+        "focal_face_axis",
+        "look_at",
+        "opposite",
+        "view",
+        "viewing",
+    }
+)
 
 CONCEPT_FAMILIES: tuple[ConceptFamily, ...] = (
     "focal_axis",
@@ -1565,6 +1576,31 @@ def _macro_scenario_for_family(family: ConceptFamily) -> MacroScenario:
     return scenarios[family]
 
 
+def _macro_scenarios_for_family(family: ConceptFamily) -> list[MacroScenario]:
+    primary = _macro_scenario_for_family(family)
+    if family == "focal_axis":
+        return [
+            primary,
+            MacroScenario(
+                scenario_id="focal_axis_left_right",
+                label="primary seating left wall, focal media opposite right",
+                primary_zone_id="left_wall_zone",
+                secondary_zone_id="right_wall_zone",
+                storage_zone_id="top_wall_zone",
+                support_zone_id="bottom_wall_zone",
+                primary_wall_side="left_wall",
+                secondary_wall_side="right_wall",
+                storage_wall_side="top_wall",
+                pair_type="opposite_walls",
+                center_policy="balanced_open",
+                primary_anchor_strength="strong",
+                secondary_anchor_strength="strong",
+                support_anchor_strength="medium",
+            ),
+        ]
+    return [primary]
+
+
 def _macro_scenario_to_dict(scenario: MacroScenario) -> dict[str, object]:
     return {
         "scenario_id": scenario.scenario_id,
@@ -1605,8 +1641,12 @@ def _instantiate_concept_families(
     secondary_cluster_id = _secondary_cluster_id(cluster_programs, primary_cluster_id)
     guidance_by_family = _guidance_by_family(guidance_bundle)
     concepts: list[dict[str, object]] = []
-    for index, family in enumerate(family_order[:concept_count], start=1):
-        scenario = _macro_scenario_for_family(family)
+    family_scenario_pairs: list[tuple[ConceptFamily, MacroScenario]] = [
+        (family, scenario)
+        for family in family_order[:concept_count]
+        for scenario in _macro_scenarios_for_family(family)
+    ]
+    for index, (family, scenario) in enumerate(family_scenario_pairs, start=1):
         family_guidance = guidance_by_family.get(family, {})
         topology_policy = _merge_topology_policy_guidance(
             _topology_policy_for_family(family, style_policy=style_policy),
@@ -1663,6 +1703,20 @@ def _instantiate_concept_families(
             cluster_zone_plan=cluster_zone_plan,
             primary_cluster_id=primary_cluster_id,
             secondary_cluster_id=secondary_cluster_id,
+        )
+        semantic_pair_contracts = _semantic_pair_contracts_for_concept(
+            cluster_programs=cluster_programs
+        )
+        primary_pair_contracts = _dedupe_pair_contracts(
+            [*semantic_pair_contracts, *primary_pair_contracts]
+        )
+        primary_pair_contracts = _relax_pair_contracts_for_guardrail_reassignment(
+            primary_pair_contracts=primary_pair_contracts,
+            cluster_zone_plan=cluster_zone_plan,
+        )
+        primary_pair_contracts = _relax_pair_contracts_for_same_zone_colocation(
+            primary_pair_contracts=primary_pair_contracts,
+            cluster_zone_plan=cluster_zone_plan,
         )
         concept = {
             "concept_id": f"concept_{index:02d}",
@@ -1949,7 +2003,9 @@ def _cluster_zone_assignment(
         primary_cluster_id=primary_cluster_id,
         secondary_cluster_id=secondary_cluster_id,
     )
-    if scenario_role in {"primary", "secondary"}:
+    if scenario_role in {"primary", "secondary"} or (
+        family == "focal_axis" and cluster.role_kind in {"media", "focal"}
+    ):
         zone_assignment = preferred_region_id
     wall_claim = _wall_claim_for(cluster, zone_assignment, family)
     center_usage = _center_usage_for(
@@ -2340,6 +2396,13 @@ def _preferred_region_for_family(
     if scenario_role == "primary":
         return scenario.primary_zone_id
     if scenario_role == "secondary":
+        return scenario.secondary_zone_id
+    if family == "focal_axis" and cluster.role_kind in {"media", "focal"}:
+        # Media clusters should face the primary cluster across the room.
+        # Anchoring them to secondary_zone_id (bottom_wall) ensures the zone
+        # guardrail can fire when that wall is blocked, allowing Fix 1 to relax
+        # the face_each_other contract instead of placing them on the same wall
+        # as the primary cluster (top_wall).
         return scenario.secondary_zone_id
     if scenario_role in {"support", "optional"} and cluster.role_kind not in {
         "work",
@@ -2811,16 +2874,27 @@ def _anchor_layout_hints_by_cluster(
 def _primary_secondary_from_pair_contracts(
     pair_contracts: Sequence[Mapping[str, object]],
 ) -> tuple[str, str] | None:
-    ranked_contracts = sorted(
-        pair_contracts,
-        key=lambda row: 0 if bool(row.get("required")) else 1,
-    )
+    ranked_contracts = _rank_pair_contracts_for_solver(pair_contracts)
     for contract in ranked_contracts:
         cluster_a = _clean_str(contract.get("cluster_a"))
         cluster_b = _clean_str(contract.get("cluster_b"))
         if cluster_a is not None and cluster_b is not None and cluster_a != cluster_b:
             return cluster_a, cluster_b
     return None
+
+
+def _rank_pair_contracts_for_solver(
+    pair_contracts: Sequence[Mapping[str, object]],
+) -> list[Mapping[str, object]]:
+    return sorted(pair_contracts, key=_pair_contract_solver_rank)
+
+
+def _pair_contract_solver_rank(contract: Mapping[str, object]) -> tuple[int, int]:
+    pair_type = str(contract.get("pair_type") or "")
+    return (
+        0 if bool(contract.get("required")) else 1,
+        0 if pair_type == "face_each_other" else 1,
+    )
 
 
 def _anchor_pair_contracts_for_concept(
@@ -3077,6 +3151,186 @@ def _primary_pair_contracts_for_concept(
     return contracts
 
 
+def _relax_pair_contracts_for_guardrail_reassignment(
+    *,
+    primary_pair_contracts: list[dict[str, object]],
+    cluster_zone_plan: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Set required=False on contracts whose clusters were guardrail-reassigned.
+
+    When _apply_zone_forbidden_guardrails moves a cluster to a fallback zone,
+    spatial contracts between that cluster and its pair may become physically
+    impossible (e.g. face_each_other / opposite_walls across the wrong walls).
+    Relaxing required prevents hard_valid=false in the solver.
+    """
+    guardrail_ids: set[str] = {
+        str(row.get("cluster_id"))
+        for row in cluster_zone_plan
+        if row.get("zone_guardrail_notes")
+    }
+    if not guardrail_ids:
+        return primary_pair_contracts
+    relaxed: list[dict[str, object]] = []
+    for contract in primary_pair_contracts:
+        cluster_a = str(contract.get("cluster_a") or "")
+        cluster_b = str(contract.get("cluster_b") or "")
+        if contract.get("required") and (
+            cluster_a in guardrail_ids or cluster_b in guardrail_ids
+        ):
+            contract = {**contract, "required": False, "strength": "medium"}
+        relaxed.append(contract)
+    return relaxed
+
+
+def _relax_pair_contracts_for_same_zone_colocation(
+    *,
+    primary_pair_contracts: list[dict[str, object]],
+    cluster_zone_plan: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Relax face/opposite_walls contracts when both clusters share the same zone.
+
+    Two clusters on the same wall cannot physically face each other.
+    This is a backstop for cases where zone routing (Fix A) couldn't push media
+    to the opposite wall — e.g. when primary_focal_wall_zone itself resolves to
+    the same physical wall as the primary cluster.
+    """
+    zone_by_cluster: dict[str, str] = {}
+    for row in cluster_zone_plan:
+        cid = str(row.get("cluster_id") or "")
+        zone = str(row.get("zone_assignment") or "")
+        if cid and zone:
+            zone_by_cluster[cid] = zone
+    relaxed: list[dict[str, object]] = []
+    for contract in primary_pair_contracts:
+        if not contract.get("required"):
+            relaxed.append(contract)
+            continue
+        pair_type = str(contract.get("pair_type") or "")
+        if pair_type not in {"face_each_other", "opposite_walls"}:
+            relaxed.append(contract)
+            continue
+        cluster_a = str(contract.get("cluster_a") or "")
+        cluster_b = str(contract.get("cluster_b") or "")
+        zone_a = zone_by_cluster.get(cluster_a)
+        zone_b = zone_by_cluster.get(cluster_b)
+        if zone_a and zone_b and zone_a == zone_b:
+            contract = {**contract, "required": False, "strength": "medium"}
+        relaxed.append(contract)
+    return relaxed
+
+
+def _semantic_pair_contracts_for_concept(
+    *,
+    cluster_programs: Sequence[ClusterProgram],
+) -> list[dict[str, object]]:
+    clusters_by_id = {cluster.cluster_id: cluster for cluster in cluster_programs}
+    contracts: list[dict[str, object]] = []
+    for source in sorted(cluster_programs, key=lambda cluster: cluster.cluster_id):
+        for intent in source.relation_intents:
+            target_id = _relation_intent_target_cluster_id(intent)
+            target = clusters_by_id.get(target_id or "")
+            if target is None or target.cluster_id == source.cluster_id:
+                continue
+            relation_type = _relation_intent_type(intent)
+            if relation_type not in _FACE_RELATION_TYPES:
+                continue
+            primary, secondary = _ordered_face_relation_clusters(source, target)
+            contracts.append(
+                {
+                    "pair_type": "face_each_other",
+                    "cluster_a": primary.cluster_id,
+                    "cluster_b": secondary.cluster_id,
+                    "strength": "high",
+                    "required": _face_relation_requires_contract(
+                        source, target, intent
+                    ),
+                    "source_relation_intent": {
+                        "source_cluster": source.cluster_id,
+                        "target_cluster": target.cluster_id,
+                        "type": relation_type,
+                        "strength": _relation_intent_strength(intent),
+                    },
+                }
+            )
+    return _dedupe_pair_contracts(contracts)
+
+
+def _dedupe_pair_contracts(
+    pair_contracts: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for contract in pair_contracts:
+        cluster_a = _clean_str(contract.get("cluster_a"))
+        cluster_b = _clean_str(contract.get("cluster_b"))
+        pair_type = _clean_str(contract.get("pair_type"))
+        if cluster_a is None or cluster_b is None or pair_type is None:
+            continue
+        key_clusters = tuple(sorted((cluster_a, cluster_b)))
+        key = (pair_type, key_clusters[0], key_clusters[1])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(dict(contract))
+    return out
+
+
+def _ordered_face_relation_clusters(
+    first: ClusterProgram,
+    second: ClusterProgram,
+) -> tuple[ClusterProgram, ClusterProgram]:
+    first_score = _face_relation_primary_score(first)
+    second_score = _face_relation_primary_score(second)
+    if first_score > second_score:
+        return first, second
+    if second_score > first_score:
+        return second, first
+    if first.cluster_id <= second.cluster_id:
+        return first, second
+    return second, first
+
+
+def _face_relation_primary_score(cluster: ClusterProgram) -> int:
+    if cluster.layout_role == "primary":
+        return 90
+    if cluster.role_kind in {"sleep", "social_anchor", "lounge", "work"}:
+        return 70
+    if cluster.priority == "core":
+        return 50
+    if cluster.layout_role == "secondary":
+        return 30
+    if cluster.role_kind in {"media", "focal"}:
+        return 10
+    return 20
+
+
+def _face_relation_requires_contract(
+    first: ClusterProgram,
+    second: ClusterProgram,
+    intent: Mapping[str, object],
+) -> bool:
+    if first.role_kind in {"media", "focal"} or second.role_kind in {"media", "focal"}:
+        return True
+    return _relation_intent_strength(intent) in {"hard", "required", "strong", "high"}
+
+
+def _relation_intent_type(intent: Mapping[str, object]) -> str:
+    return str(intent.get("type") or "").strip().lower()
+
+
+def _relation_intent_strength(intent: Mapping[str, object]) -> str:
+    return str(intent.get("strength") or "medium").strip().lower()
+
+
+def _relation_intent_target_cluster_id(intent: Mapping[str, object]) -> str | None:
+    return _clean_str(
+        intent.get("target_cluster")
+        or intent.get("target_cluster_id")
+        or intent.get("cluster_id")
+        or intent.get("target")
+    )
+
+
 def _primary_pair_type_for_family(
     *,
     family: ConceptFamily,
@@ -3237,6 +3491,15 @@ def _concept_to_solver_plan(
             primary_cluster_id=primary_cluster_id,
             secondary_cluster_id=secondary_cluster_id,
         )
+        pair_contracts = _relax_pair_contracts_for_guardrail_reassignment(
+            primary_pair_contracts=pair_contracts,
+            cluster_zone_plan=cluster_zone_plan,
+        )
+        pair_contracts = _relax_pair_contracts_for_same_zone_colocation(
+            primary_pair_contracts=pair_contracts,
+            cluster_zone_plan=cluster_zone_plan,
+        )
+    pair_contracts = _rank_pair_contracts_for_solver(pair_contracts)
 
     affinities = [
         _solver_affinity_for_assignment(row, policy) for row in cluster_zone_plan
@@ -3820,6 +4083,13 @@ def _secondary_cluster_id(
     clusters: Sequence[ClusterProgram],
     primary_cluster_id: str | None,
 ) -> str | None:
+    semantic_target = _face_relation_secondary_cluster_id(
+        clusters,
+        primary_cluster_id,
+    )
+    if semantic_target is not None:
+        return semantic_target
+
     explicit = sorted(
         (
             cluster
@@ -3845,6 +4115,63 @@ def _secondary_cluster_id(
         ),
     )
     return ranked[0].cluster_id if ranked else None
+
+
+def _face_relation_secondary_cluster_id(
+    clusters: Sequence[ClusterProgram],
+    primary_cluster_id: str | None,
+) -> str | None:
+    if primary_cluster_id is None:
+        return None
+    clusters_by_id = {cluster.cluster_id: cluster for cluster in clusters}
+    primary = clusters_by_id.get(primary_cluster_id)
+    if primary is None:
+        return None
+
+    candidates: list[tuple[int, str]] = []
+    for cluster in clusters:
+        if cluster.cluster_id == primary_cluster_id:
+            continue
+        relation_score = _face_relation_secondary_score(
+            source=cluster,
+            target=primary,
+        )
+        relation_score = max(
+            relation_score,
+            _face_relation_secondary_score(source=primary, target=cluster),
+        )
+        if relation_score <= 0:
+            continue
+        candidates.append((relation_score, cluster.cluster_id))
+    if not candidates:
+        return None
+    ranked = sorted(candidates, key=lambda item: (-item[0], item[1]))
+    return ranked[0][1]
+
+
+def _face_relation_secondary_score(
+    *,
+    source: ClusterProgram,
+    target: ClusterProgram,
+) -> int:
+    has_face_relation = any(
+        _relation_intent_type(intent) in _FACE_RELATION_TYPES
+        and _relation_intent_target_cluster_id(intent) == target.cluster_id
+        for intent in source.relation_intents
+    )
+    if not has_face_relation:
+        return 0
+    score = 100
+    if source.role_kind in {"media", "focal"} or target.role_kind in {
+        "media",
+        "focal",
+    }:
+        score += 50
+    if source.layout_role == "secondary" or target.layout_role == "secondary":
+        score += 20
+    if source.priority == "core" or target.priority == "core":
+        score += 10
+    return score
 
 
 def _wall_claim_for(

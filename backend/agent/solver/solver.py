@@ -7708,6 +7708,18 @@ def _anchor_pair_orientation_score(
     if not isinstance(relation_plan, Mapping):
         return 0.0
     score = 0.0
+    pair_key = _normalized_cluster_pair(left_cluster_id, right_cluster_id)
+    strict_face_pair = (
+        pair_key is not None
+        and pair_key in _object_level_required_face_pairs(relation_plan)
+    )
+    min_dot = (
+        OBJECT_LEVEL_REQUIRED_FACE_PAIR_MIN_DOT
+        if strict_face_pair
+        else OBJECT_LEVEL_FRONT_ALIGNMENT_MIN_DOT
+    )
+    dot_weight = 4200.0 if strict_face_pair else 1600.0
+    miss_penalty = 9000.0 if strict_face_pair else 0.0
     pairs = (
         (left_cluster_id, left_anchor, right_cluster_id, right_anchor),
         (right_cluster_id, right_anchor, left_cluster_id, left_anchor),
@@ -7736,7 +7748,11 @@ def _anchor_pair_orientation_score(
         )
         if front is None or desired is None:
             continue
-        score += _dot_normalized(front, desired) * 1600.0
+        dot = _dot_normalized(front, desired)
+        if strict_face_pair and dot < min_dot:
+            score -= miss_penalty + ((min_dot - dot) * dot_weight)
+        else:
+            score += dot * dot_weight
     return score
 
 
@@ -9767,7 +9783,38 @@ def _object_level_blocking_orientation_issues(
 
 def _row_allows_soft_wall_contact_orientation(row: Mapping[str, Any]) -> bool:
     tokens = _object_semantic_tokens(row)
-    return bool(tokens & {"headboard"})
+    return (
+        bool(tokens & {"headboard"})
+        or _row_is_media_display(row)
+        or _row_is_side_flush_storage(row)
+    )
+
+
+def _row_is_media_display(row: Mapping[str, Any]) -> bool:
+    display_tokens = {"monitor", "projector", "screen", "television", "tv"}
+    return any(
+        _normalized_policy_token(row.get(key)) in display_tokens
+        for key in ("object_id", "category", "object_type")
+    )
+
+
+def _row_is_side_flush_storage(row: Mapping[str, Any]) -> bool:
+    tokens = _object_semantic_tokens(row)
+    return bool(
+        tokens
+        & {
+            "armoire",
+            "bookcase",
+            "bookshelf",
+            "cabinet",
+            "closet",
+            "dresser",
+            "shelf",
+            "shelving",
+            "storage",
+            "wardrobe",
+        }
+    )
 
 
 def _object_level_quality_gate_reasons(

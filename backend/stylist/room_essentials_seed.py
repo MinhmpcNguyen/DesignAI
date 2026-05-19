@@ -33,7 +33,9 @@ ROOM_SURFACE_GROUPS: dict[str, dict[str, Any]] = {
             "nightstand": [
                 "bedside_lamp",
             ],
-            "tv_console": [],
+            "tv_console": [
+                "tv",
+            ],
             "desk": [
                 "laptop",
                 "monitor",
@@ -212,6 +214,7 @@ ROOM_SURFACE_GROUPS: dict[str, dict[str, Any]] = {
                 "throw_blanket",
             ],
             "tv_console": [
+                "tv",
                 "speaker",
             ],
             "media_shelf": [
@@ -532,6 +535,7 @@ ROOM_SURFACE_GROUPS: dict[str, dict[str, Any]] = {
                 "rug",
             ],
             "tv_console": [
+                "tv",
                 "speaker",
                 "smart_speaker",
             ],

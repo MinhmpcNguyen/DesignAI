@@ -276,6 +276,81 @@ class BedsideNightstandSlotTest(unittest.TestCase):
             )
         )
 
+    def test_media_display_wall_contact_orientation_is_not_blocking(self) -> None:
+        if blocking_orientation_issues is None:
+            raise RuntimeError("OR-Tools is not installed.")
+
+        blocking = blocking_orientation_issues(
+            orientation_issues=[
+                {
+                    "cluster_id": "media_optional",
+                    "object_id": "tv",
+                    "reason": "wall_contact_inward",
+                }
+            ],
+            placed_objects=[
+                {
+                    "cluster_id": "media_optional",
+                    "object_id": "tv",
+                    "category": "tv",
+                    "role": "dominant_anchor",
+                    "requires_front_access": True,
+                }
+            ],
+        )
+
+        self.assertEqual(blocking, [])
+
+    def test_storage_side_wall_contact_orientation_is_not_blocking(self) -> None:
+        if blocking_orientation_issues is None:
+            raise RuntimeError("OR-Tools is not installed.")
+
+        blocking = blocking_orientation_issues(
+            orientation_issues=[
+                {
+                    "cluster_id": "storage_core",
+                    "object_id": "wardrobe",
+                    "reason": "wall_contact_inward",
+                }
+            ],
+            placed_objects=[
+                {
+                    "cluster_id": "storage_core",
+                    "object_id": "wardrobe",
+                    "category": "wardrobe",
+                    "role": "dominant_anchor",
+                    "requires_front_access": True,
+                }
+            ],
+        )
+
+        self.assertEqual(blocking, [])
+
+    def test_tv_console_wall_contact_orientation_stays_blocking(self) -> None:
+        if blocking_orientation_issues is None:
+            raise RuntimeError("OR-Tools is not installed.")
+
+        blocking = blocking_orientation_issues(
+            orientation_issues=[
+                {
+                    "cluster_id": "media_optional",
+                    "object_id": "tv_console",
+                    "reason": "wall_contact_inward",
+                }
+            ],
+            placed_objects=[
+                {
+                    "cluster_id": "media_optional",
+                    "object_id": "tv_console",
+                    "category": "tv_console",
+                    "role": "dominant_anchor",
+                    "requires_front_access": True,
+                }
+            ],
+        )
+
+        self.assertEqual(len(blocking), 1)
+
     def test_bed_wall_contact_orientation_issue_is_blocking(self) -> None:
         if blocking_orientation_issues is None:
             raise RuntimeError("OR-Tools is not installed.")

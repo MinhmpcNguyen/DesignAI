@@ -146,16 +146,14 @@
                     "cluster_id": "media_optional",
                     "priority": "optional",
                     "selection_rule": "may_include_if_useful",
-                    "conditional_rules": [
-                        {
-                            "if": "brief_mentions_tv_or_media",
-                            "required_all_of": [
-                                "tv_console"
-                            ]
-                        }
-                    ],
+                    "pick_rules": {
+                        "required_all_of_if_kept": [
+                            "tv_console"
+                        ]
+                    },
                     "notes": [
-                        "Only include media furniture when the brief explicitly supports it."
+                        "Only include media furniture when the brief explicitly supports it.",
+                        "When bedroom media is requested, place only the TV console in the layout; the TV display is added later as decor on the console."
                     ]
                 },
                 {

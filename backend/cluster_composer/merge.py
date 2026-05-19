@@ -11,11 +11,12 @@ def merge_cluster_outputs(
     tier_count: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Merge ClusterForge output with TierCount decisions into a solver-ready object program.
+    Merge ClusterForge and TierCount output into a solver-ready object program.
 
-    This stage now acts as the semantic/object program normalizer for the object-level
-    anchor-first solver. It keeps only active objects, filters stale semantic references,
-    and materializes per-cluster object metadata needed by downstream planning.
+    This stage now acts as the semantic/object program normalizer for the
+    object-level anchor-first solver. It keeps only active objects, filters stale
+    semantic references, and materializes per-cluster object metadata needed by
+    downstream planning.
     """
     cluster_payload = _unwrap_payload(cluster_forge, key="clusters")
     tier_payload = _unwrap_payload(tier_count, key="decisions")
@@ -181,9 +182,9 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
             if isinstance(decision.get("rep_dims_m"), dict)
             else {}
         )
-        length_mm = int(round(float(rep_dims.get("L") or 0.0) * 1000.0))
-        width_mm = int(round(float(rep_dims.get("W") or 0.0) * 1000.0))
-        height_mm = int(round(float(rep_dims.get("H") or 0.0) * 1000.0))
+        length_mm = round(float(rep_dims.get("L") or 0.0) * 1000.0)
+        width_mm = round(float(rep_dims.get("W") or 0.0) * 1000.0)
+        height_mm = round(float(rep_dims.get("H") or 0.0) * 1000.0)
         if length_mm <= 0 or width_mm <= 0:
             continue
         preserve_level = str(decision.get("preserve_level") or "").strip().lower()
@@ -294,6 +295,10 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
                     "orientation": str(row.get("orientation") or ""),
                 }
             )
+    support_edges = _ensure_media_support_edges(
+        support_edges=support_edges,
+        expanded_ids_by_base=expanded_ids_by_base,
+    )
 
     policy_protected_ids = _expand_id_list(
         _string_list(anchor_first_policy.get("protected_ids")),
@@ -371,6 +376,42 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
         "optional_object_ids": _stable_unique(optional_ids),
         "object_specs_by_id": object_specs_by_id,
     }
+
+
+def _ensure_media_support_edges(
+    *,
+    support_edges: list[dict[str, Any]],
+    expanded_ids_by_base: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    existing_object_ids = {
+        str(edge.get("object_id") or "")
+        for edge in support_edges
+        if isinstance(edge.get("object_id"), str)
+    }
+    tv_console_id = _primary_expanded_id("tv_console", expanded_ids_by_base)
+    if tv_console_id is None:
+        return support_edges
+
+    out = list(support_edges)
+    for tv_id in expanded_ids_by_base.get("tv", []):
+        if tv_id in existing_object_ids:
+            continue
+        out.append(
+            {
+                "object_id": tv_id,
+                "relative_to": tv_console_id,
+                "kind": "anchor_side",
+                "side_options": ["left", "right"],
+                "gap_min_mm": 0,
+                "gap_max_mm": 100,
+                "proximity": "compact",
+                "selection": "best_fit",
+                "support_role": "wall_support",
+                "band_intent": "wall_band",
+                "orientation": "same_direction",
+            }
+        )
+    return out
 
 
 def _remove_key_recursive(value: Any, key: str) -> None:
@@ -772,7 +813,5 @@ def _merged_notes(
             text = str(item).strip()
             if text and text not in notes:
                 notes.append(text)
-    notes.append(
-        "Merged into solver-ready object program for object-level anchor-first placement."
-    )
+    notes.append("Merged into solver-ready object program for anchor-first placement.")
     return notes

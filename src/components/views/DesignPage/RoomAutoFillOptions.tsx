@@ -65,12 +65,7 @@ export function mapAutoFillItems(
 }
 
 export function canApplyAutoFillOption(option: AutoFillOption): boolean {
-  return (
-    option.hardValid !== false &&
-    option.complete !== false &&
-    !option.disabledReason &&
-    option.objects.length > 0
-  );
+  return option.objects.length > 0;
 }
 
 export type FillRoomState = {
@@ -176,10 +171,14 @@ export default function RoomAutoFillOptions({
         {options.map((option) => {
           const isActive = fillRoomState.selectedOptionId === option.optionId;
           const canApply = canApplyAutoFillOption(option);
+          const hasConstraintWarning =
+            canApply && (option.hardValid === false || !!option.disabledReason);
           const statusLabel = canApply
             ? isActive
               ? "Đang dùng"
-              : "Hợp lệ"
+              : hasConstraintWarning
+                ? "Cảnh báo"
+                : "Hợp lệ"
             : "Bị loại";
           return (
             <div
@@ -189,7 +188,7 @@ export default function RoomAutoFillOptions({
                   ? "border-(--primary-color,#C8A882) bg-[#fdf6ee]"
                   : canApply
                     ? "border-zinc-100 bg-zinc-50 hover:border-zinc-200"
-                    : "border-zinc-100 bg-zinc-50 opacity-80"
+                    : "border-zinc-100 bg-zinc-50 opacity-60"
               }`}
             >
               <div className="flex items-start justify-between gap-2 mb-2">
@@ -198,9 +197,11 @@ export default function RoomAutoFillOptions({
                 </span>
                 <span
                   className={`text-[10px] font-medium rounded-full px-1.5 py-0.5 shrink-0 ${
-                    canApply
-                      ? "text-white bg-(--primary-color,#C8A882)"
-                      : "text-zinc-500 bg-zinc-200"
+                    !canApply
+                      ? "text-zinc-500 bg-zinc-200"
+                      : hasConstraintWarning
+                        ? "text-amber-700 bg-amber-100"
+                        : "text-white bg-(--primary-color,#C8A882)"
                   }`}
                 >
                   {statusLabel}
@@ -217,8 +218,12 @@ export default function RoomAutoFillOptions({
               </div>
               {!canApply && (
                 <p className="mb-2 text-[11px] leading-4 text-zinc-500">
-                  {option.disabledReason ??
-                    "Phương án này không đạt kiểm tra bố cục."}
+                  Phương án này không đạt kiểm tra bố cục.
+                </p>
+              )}
+              {canApply && option.disabledReason && (
+                <p className="mb-2 text-[11px] leading-4 text-amber-600">
+                  ⚠ {option.disabledReason}
                 </p>
               )}
               {!isActive && (

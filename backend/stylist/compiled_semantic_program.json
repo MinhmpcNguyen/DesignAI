@@ -421,29 +421,13 @@
             "base_rule": "may_include_if_useful",
             "always_consider": false,
             "requires_usefulness_test": true,
-            "conditions": [
-              {
-                "predicate": "brief_mentions_tv_or_media",
-                "effects": {
-                  "required": [
-                    "tv_console"
-                  ],
-                  "required_if_kept": [],
-                  "choose_exactly_one_from": [],
-                  "choose_exactly_one_from_if_kept": [],
-                  "choose_at_least_one_from": [],
-                  "optional": [],
-                  "optional_limits": {
-                    "global": null,
-                    "by_object": {}
-                  }
-                }
-              }
-            ]
+            "conditions": []
           },
           "object_program": {
             "required": [],
-            "required_if_kept": [],
+            "required_if_kept": [
+              "tv_console"
+            ],
             "choose_exactly_one_from": [],
             "choose_exactly_one_from_if_kept": [],
             "choose_at_least_one_from": [],
@@ -456,11 +440,14 @@
           "semantic": {
             "dominant_anchor_candidates": [],
             "notes": [
-              "Only include media furniture when the brief explicitly supports it."
+              "Only include media furniture when the brief explicitly supports it.",
+              "When bedroom media is requested, place only the TV console in the layout; the TV display is added later as decor on the console."
             ]
           },
           "degradation_hints": {
-            "preserve_first": [],
+            "preserve_first": [
+              "tv_console"
+            ],
             "shrink_before_drop": [],
             "drop_first": [
               "tv_console"

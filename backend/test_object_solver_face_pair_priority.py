@@ -1,0 +1,96 @@
+# pyright: reportPrivateUsage=false
+from __future__ import annotations
+
+import unittest
+from collections.abc import Mapping
+
+from agent.solver.solver import _anchor_pair_orientation_score
+
+
+def _relation_plan() -> dict[str, object]:
+    return {
+        "layout_intent_profile": {
+            "focus_mode": "viewing",
+            "primary_cluster_id": "sleep_core",
+            "secondary_cluster_id": "media_optional",
+        },
+        "cluster_directional_relations": [
+            {
+                "a": "sleep_core",
+                "b": "media_optional",
+                "relation": "face_each_other",
+                "priority": "high",
+            }
+        ],
+        "cluster_orientations": [
+            {
+                "cluster_id": "sleep_core",
+                "intents": ["face_cluster"],
+                "target_cluster_id": "media_optional",
+            },
+            {
+                "cluster_id": "media_optional",
+                "intents": ["face_cluster"],
+                "target_cluster_id": "sleep_core",
+            },
+        ],
+    }
+
+
+def _anchor_row(
+    *,
+    cluster_id: str,
+    object_id: str,
+    rect: tuple[int, int, int, int],
+    front_world: Mapping[str, float],
+) -> dict[str, object]:
+    return {
+        "cluster_id": cluster_id,
+        "object_id": object_id,
+        "rect": rect,
+        "front_world": dict(front_world),
+    }
+
+
+class ObjectSolverFacePairPriorityTest(unittest.TestCase):
+    def test_required_face_pair_penalizes_one_sided_viewing(self) -> None:
+        bed = _anchor_row(
+            cluster_id="sleep_core",
+            object_id="bed",
+            rect=(3000, 300, 5080, 1980),
+            front_world={"dx": -1.0, "dy": 0.0},
+        )
+        bad_media = _anchor_row(
+            cluster_id="media_optional",
+            object_id="tv",
+            rect=(700, 200, 1150, 601),
+            front_world={"dx": 0.0, "dy": 1.0},
+        )
+        good_media = _anchor_row(
+            cluster_id="media_optional",
+            object_id="tv",
+            rect=(100, 300, 501, 750),
+            front_world={"dx": 1.0, "dy": 0.0},
+        )
+
+        bad_score = _anchor_pair_orientation_score(
+            left_cluster_id="sleep_core",
+            right_cluster_id="media_optional",
+            left_anchor=bed,
+            right_anchor=bad_media,
+            relation_plan=_relation_plan(),
+        )
+        good_score = _anchor_pair_orientation_score(
+            left_cluster_id="sleep_core",
+            right_cluster_id="media_optional",
+            left_anchor=bed,
+            right_anchor=good_media,
+            relation_plan=_relation_plan(),
+        )
+
+        self.assertLess(bad_score, 0.0)
+        self.assertGreater(good_score, bad_score + 10000.0)
+
+
+if __name__ == "__main__":
+    _ = unittest.main()

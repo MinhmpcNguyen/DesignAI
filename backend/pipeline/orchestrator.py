@@ -1429,6 +1429,15 @@ def _solve_object_level_variant_bundle(
                         )
                         or []
                     ),
+                    "quality_gate_reasons": list(
+                        (solver_candidate.get("verify_summary") or {}).get(
+                            "quality_gate_reasons"
+                        )
+                        or (solver_output.get("verify_summary") or {}).get(
+                            "quality_gate_reasons"
+                        )
+                        or []
+                    ),
                     "notes": notes,
                     "source": f"concept:{concept.get('concept_id') or variant_index}",
                     "reason": f"Solved from macro concept {concept.get('concept_family') or concept.get('concept_id') or variant_index} using object-level anchor-first search.",
@@ -2998,6 +3007,9 @@ def _build_layout_variants_payload_from_final_candidates(
                 "coverage_ratio": float(candidate.get("coverage_ratio") or 0.0),
                 "missing_cluster_ids": deepcopy(
                     candidate.get("missing_cluster_ids") or []
+                ),
+                "quality_gate_reasons": list(
+                    candidate.get("quality_gate_reasons") or []
                 ),
                 "notes": deepcopy(candidate.get("notes") or []),
                 "absolute_layout": deepcopy(absolute_layout),

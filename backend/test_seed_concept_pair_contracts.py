@@ -5,7 +5,13 @@ import unittest
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from agent.seed_concept_generator import _concept_to_solver_plan
+from agent.seed_concept_generator import (
+    ClusterProgram,
+    Priority,
+    _concept_to_solver_plan,
+    _secondary_cluster_id,
+    _semantic_pair_contracts_for_concept,
+)
 
 
 def _concept_with_pair(
@@ -39,6 +45,31 @@ def _room_model() -> dict[str, object]:
         "room": {"room_id": "room_1"},
         "openings": {"doors": []},
     }
+
+
+def _cluster_program(
+    cluster_id: str,
+    *,
+    role_kind: str,
+    priority: Priority,
+    semantic_role: str = "",
+    layout_role: str = "",
+    relation_intents: tuple[Mapping[str, object], ...] = (),
+) -> ClusterProgram:
+    return ClusterProgram(
+        cluster_id=cluster_id,
+        semantic_role=semantic_role,
+        layout_role=layout_role,
+        role_kind=role_kind,
+        priority=priority,
+        zone_claims={},
+        relation_intents=relation_intents,
+        seed_region_tags=(),
+        object_ids=(cluster_id,),
+        required_object_ids=(cluster_id,),
+        optional_object_ids=(),
+        droppable_object_ids=(),
+    )
 
 
 def _directional_relations(plan: Mapping[str, object]) -> set[str]:
@@ -82,6 +113,120 @@ class SeedConceptPairContractTest(unittest.TestCase):
         relations = _directional_relations(plan)
 
         self.assertIn("face_each_other", relations)
+
+    def test_media_face_relation_promotes_secondary_over_storage(self) -> None:
+        clusters = [
+            _cluster_program(
+                "sleep_core",
+                role_kind="sleep",
+                priority="core",
+                layout_role="primary",
+            ),
+            _cluster_program(
+                "storage_core",
+                role_kind="storage",
+                priority="core",
+                layout_role="secondary",
+            ),
+            _cluster_program(
+                "media_optional",
+                role_kind="media",
+                priority="optional",
+                layout_role="optional",
+                relation_intents=(
+                    {
+                        "type": "face",
+                        "target_cluster": "sleep_core",
+                        "strength": "soft",
+                    },
+                ),
+            ),
+        ]
+
+        secondary_cluster_id = _secondary_cluster_id(clusters, "sleep_core")
+
+        self.assertEqual(secondary_cluster_id, "media_optional")
+
+    def test_semantic_face_intent_emits_required_face_contract(self) -> None:
+        clusters = [
+            _cluster_program(
+                "sleep_core",
+                role_kind="sleep",
+                priority="core",
+                layout_role="primary",
+            ),
+            _cluster_program(
+                "media_optional",
+                role_kind="media",
+                priority="optional",
+                layout_role="optional",
+                relation_intents=(
+                    {
+                        "type": "face",
+                        "target_cluster": "sleep_core",
+                        "strength": "soft",
+                    },
+                ),
+            ),
+        ]
+
+        contracts = _semantic_pair_contracts_for_concept(cluster_programs=clusters)
+
+        self.assertEqual(
+            contracts,
+            [
+                {
+                    "pair_type": "face_each_other",
+                    "cluster_a": "sleep_core",
+                    "cluster_b": "media_optional",
+                    "strength": "high",
+                    "required": True,
+                    "source_relation_intent": {
+                        "source_cluster": "media_optional",
+                        "target_cluster": "sleep_core",
+                        "type": "face",
+                        "strength": "soft",
+                    },
+                }
+            ],
+        )
+
+    def test_face_contract_wins_directional_projection_for_same_pair(self) -> None:
+        concept = _concept_with_pair("sleep_core", "media_optional")
+        concept["primary_pair_contracts"] = [
+            {
+                "pair_type": "opposite_walls",
+                "cluster_a": "sleep_core",
+                "cluster_b": "media_optional",
+                "strength": "high",
+                "required": True,
+            },
+            {
+                "pair_type": "supports_use_axis",
+                "cluster_a": "sleep_core",
+                "cluster_b": "media_optional",
+                "strength": "medium",
+                "required": True,
+            },
+            {
+                "pair_type": "face_each_other",
+                "cluster_a": "sleep_core",
+                "cluster_b": "media_optional",
+                "strength": "high",
+                "required": True,
+            },
+        ]
+
+        plan = _concept_to_solver_plan(
+            concept=concept,
+            room_model=_room_model(),
+            room_type="bedroom",
+        )
+
+        relations = _directional_relations(plan)
+
+        self.assertIn("face_each_other", relations)
+        self.assertNotIn("access_faces_other", relations)
 
 
 if __name__ == "__main__":
