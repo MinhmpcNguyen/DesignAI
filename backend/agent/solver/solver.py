@@ -124,6 +124,20 @@ OBJECT_LEVEL_BLOCKING_PROTECTED_SEVERITIES = frozenset({"blocking", "critical"})
 OBJECT_LEVEL_LOW_HEIGHT_DAYLIGHT_SOFT_MAX_MM = 1400
 OBJECT_LEVEL_LOW_HEIGHT_DAYLIGHT_MAX_OVERLAP_RATIO = 0.35
 OBJECT_LEVEL_HARD_SOFT_ANCHOR_REJECT_RATIO = 0.16
+OBJECT_LEVEL_BEDSIDE_HEAD_WALL_MAX_GAP_MM = 350
+OBJECT_LEVEL_BEDSIDE_HEAD_MIN_PROJECTION_RATIO = 0.1
+OBJECT_LEVEL_BEDSIDE_HEAD_MAX_SIDE_GAP_MM = 260
+OBJECT_LEVEL_COMPACT_BEDROOM_MAX_AREA_M2 = 12.0
+OBJECT_LEVEL_COMPACT_BEDROOM_ROOM_TYPES = frozenset(
+    {"bedroom", "guest_bedroom", "primary_bedroom"}
+)
+OBJECT_LEVEL_COMPACT_SOFT_PROTECTED_ZONE_TYPES = frozenset(
+    {"center_openness_core", "primary_circulation_corridor"}
+)
+OBJECT_LEVEL_COMPACT_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE = {
+    "center_openness_core": 0.28,
+    "primary_circulation_corridor": 0.24,
+}
 
 QUALITY_WEIGHTS = {
     "functionality": 0.32,
@@ -5079,37 +5093,125 @@ def solve_object_level_layout(
             ],
         }
 
-    attempt_plans: list[tuple[str, dict[str, Any] | None]] = [
-        ("original", relation_plan),
-        ("relaxed", _relax_relation_plan_for_candidate_search(relation_plan)),
-    ]
-    seen_signatures: set[str] = set()
-    attempt_results: list[dict[str, Any]] = []
-
-    for attempt_index, (attempt_label, attempt_plan) in enumerate(attempt_plans, start=1):
-        if _object_level_time_limit_reached(deadline_ts):
-            break
-        if attempt_index > 1 and attempt_plan == relation_plan:
-            continue
-        attempt_result = _solve_object_level_layout_attempt(
+    world = _build_object_solver_world(
+        room_model=room_model,
+        merged_clusters=merged_clusters,
+        relation_plan=relation_plan,
+        cluster_constraints=cluster_constraints,
+        grid_mm=grid_mm,
+    )
+    anchor_order = world["anchor_cluster_order"]
+    anchor_candidates_by_cluster = {
+        cluster_id: _generate_anchor_pose_candidates(
+            cluster_program=world["clusters_by_id"][cluster_id],
             room_model=room_model,
-            merged_clusters=merged_clusters,
-            relation_plan=attempt_plan,
-            cluster_constraints=cluster_constraints,
+            relation_plan=relation_plan,
+            world=world,
             grid_mm=grid_mm,
-            max_rounds=max_rounds,
-            deadline_ts=deadline_ts,
         )
-        if attempt_result is None:
+        for cluster_id in anchor_order
+    }
+    if any(
+        not rows
+        for cluster_id, rows in anchor_candidates_by_cluster.items()
+        if not _cluster_is_solver_trial_optional(world["clusters_by_id"][cluster_id])
+    ):
+        offending = [
+            cluster_id
+            for cluster_id, rows in anchor_candidates_by_cluster.items()
+            if not rows
+            and not _cluster_is_solver_trial_optional(
+                world["clusters_by_id"][cluster_id]
+            )
+        ]
+        return {
+            "status": "UNSAT",
+            "solver_kind": "object_level_anchor_first",
+            "offending_clusters": offending,
+            "notes": [
+                "No anchor pose candidates could be generated for one or more core clusters."
+            ],
+            "solver_debug": {
+                "anchor_candidate_counts": {
+                    k: len(v) for k, v in anchor_candidates_by_cluster.items()
+                },
+                "compact_bedroom_policy": _object_solver_compact_policy_debug(world),
+            },
+        }
+
+    anchor_solutions = list(
+        _search_anchor_solutions(
+            anchor_order=anchor_order,
+            anchor_candidates_by_cluster=anchor_candidates_by_cluster,
+            world=world,
+            room_model=room_model,
+            relation_plan=relation_plan,
+            max_solutions=max(8, int(max_rounds) * 4),
+        )
+    )
+    if not anchor_solutions:
+        return {
+            "status": "UNSAT",
+            "solver_kind": "object_level_anchor_first",
+            "offending_clusters": list(anchor_order),
+            "notes": [
+                "Anchor candidates were generated, but no compatible non-overlapping anchor set could be assembled.",
+                *_object_solver_compact_policy_notes(world),
+            ],
+            "solver_debug": {
+                "anchor_candidate_counts": {
+                    k: len(v) for k, v in anchor_candidates_by_cluster.items()
+                },
+                "anchor_order": list(anchor_order),
+                "compact_bedroom_policy": _object_solver_compact_policy_debug(world),
+            },
+        }
+
+    solution_pool: list[dict[str, Any]] = []
+    for solution in anchor_solutions:
+        support_results = _place_support_objects_for_solution(
+            solution=solution,
+            world=world,
+            room_model=room_model,
+            relation_plan=relation_plan,
+            grid_mm=grid_mm,
+            max_solutions=OBJECT_LEVEL_MAX_SUPPORT_SOLUTIONS_PER_ANCHOR,
+        )
+        if not support_results:
             continue
-        signature = str(attempt_result.get("signature") or "")
-        if signature and signature in seen_signatures:
-            continue
-        if signature:
-            seen_signatures.add(signature)
-        attempt_result["attempt_label"] = attempt_label
-        attempt_results.append(attempt_result)
-        if attempt_result.get("status") == "OK":
+        for support_result in support_results:
+            candidate_solution = {**solution, **support_result}
+            repair_summary = _repair_object_level_solution_geometry(
+                solution=candidate_solution,
+                world=world,
+                grid_mm=grid_mm,
+            )
+            if repair_summary is None:
+                continue
+            candidate_solution["placed_objects"] = repair_summary["placed_objects"]
+            candidate_solution["geometry_repair"] = repair_summary["summary"]
+            verify = _verify_object_level_solution(
+                solution=candidate_solution,
+                world=world,
+                room_model=room_model,
+                relation_plan=relation_plan,
+            )
+            _apply_object_level_geometry_repair_penalty(
+                verify, candidate_solution["geometry_repair"]
+            )
+            if not bool(verify.get("geometry_valid")):
+                continue
+            candidate_solution["verify"] = verify
+            candidate_solution["score"] = _object_solution_score(
+                candidate_solution, relation_plan
+            )
+            candidate_solution["signature"] = _object_level_solution_signature(
+                candidate_solution
+            )
+            solution_pool.append(candidate_solution)
+            if len(solution_pool) >= OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS:
+                break
+        if len(solution_pool) >= OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS:
             break
 
     ranked_attempts = [
@@ -5139,7 +5241,11 @@ def solve_object_level_layout(
             "selected_variants": [],
             "verify_summary": deepcopy(best_attempt.get("verify_summary") or {}),
             "solver_debug": {
-                "attempts": attempt_results,
+                "anchor_candidate_counts": {
+                    k: len(v) for k, v in anchor_candidates_by_cluster.items()
+                },
+                "candidate_solution_count": len(solution_pool),
+                "compact_bedroom_policy": _object_solver_compact_policy_debug(world),
             },
             "notes": best_attempt.get("notes") or [],
         }
@@ -5147,9 +5253,38 @@ def solve_object_level_layout(
     return {
         "status": "UNSAT",
         "solver_kind": "object_level_anchor_first",
-        "offending_clusters": [],
+        "selected_concept_id": _concept_id_from_relation_plan(relation_plan),
+        "absolute_layout": absolute_layout,
+        "solutions": ranked_solutions,
+        "hard_valid": bool(best_solution["verify"].get("hard_valid")),
+        "geometry_valid": bool(best_solution["verify"].get("geometry_valid")),
+        "acceptable_valid": bool(best_solution["verify"].get("gallery_eligible")),
+        "complete": bool(best_solution["verify"].get("complete")),
+        "gallery_eligible": bool(best_solution["verify"].get("gallery_eligible")),
+        "coverage_ratio": float(best_solution["verify"].get("coverage_ratio") or 0.0),
+        "offending_clusters": list(
+            best_solution["verify"].get("offending_clusters") or []
+        ),
+        "dropped_inventory_by_cluster": deepcopy(
+            best_solution.get("dropped_inventory_by_cluster") or {}
+        ),
+        "cluster_transforms": [],
+        "selected_variants": [],
+        "verify_summary": deepcopy(best_solution["verify"]),
+        "solver_debug": {
+            "anchor_candidate_counts": {
+                k: len(v) for k, v in anchor_candidates_by_cluster.items()
+            },
+            "anchor_order": anchor_order,
+            "object_count": len(best_solution.get("placed_objects") or []),
+            "candidate_solution_count": len(solution_pool),
+            "ranked_solution_count": len(ranked_solutions),
+            "compact_bedroom_policy": _object_solver_compact_policy_debug(world),
+        },
         "notes": [
-            "Object-level solver could not assemble a valid layout even after one controlled simplification pass."
+            "Solved directly at object level with anchor-first placement.",
+            "Local support placement now enumerates multiple non-overlapping arrangements before ranking them.",
+            *_object_solver_compact_policy_notes(world),
         ],
         "solver_debug": {
             "attempts": attempt_results,
@@ -5293,9 +5428,19 @@ def _build_object_solver_world(
 
     anchor_order = _object_level_anchor_cluster_order(clusters_by_id, relation_plan)
     region_index = _index_room_regions(room_model)
+    compact_bedroom_policy = _compact_bedroom_solver_policy(room_model)
     protected_regions = _collect_protected_regions(
         room_model, relation_plan, region_index
     )
+    protected_regions, compact_relaxations = (
+        _relax_protected_regions_for_compact_bedroom(
+            protected_regions=protected_regions,
+            compact_bedroom_policy=compact_bedroom_policy,
+        )
+    )
+    if compact_relaxations:
+        compact_bedroom_policy = dict(compact_bedroom_policy)
+        compact_bedroom_policy["protected_region_relaxations"] = compact_relaxations
     return {
         "clusters_by_id": clusters_by_id,
         "anchor_cluster_order": anchor_order,
@@ -5304,10 +5449,180 @@ def _build_object_solver_world(
         "room_bbox": _object_solver_room_bbox(room_model),
         "room_polygon": _object_solver_room_polygon(room_model),
         "protected_regions": protected_regions,
+        "compact_bedroom_policy": compact_bedroom_policy,
         "cluster_forbidden_regions": _collect_cluster_forbidden_regions(
-            clusters_by_id, room_model, relation_plan, region_index
+            clusters_by_id,
+            room_model,
+            relation_plan,
+            region_index,
+            protected_regions=protected_regions,
         ),
     }
+
+
+def _compact_bedroom_solver_policy(room_model: Mapping[str, Any]) -> dict[str, Any]:
+    room_type = _room_type(room_model).strip().lower()
+    room_area_m2 = _object_solver_room_area_m2(room_model)
+    available_area_m2 = _object_solver_available_area_m2(room_model)
+    compact_area_m2 = available_area_m2 if available_area_m2 > 0.0 else room_area_m2
+    enabled = (
+        room_type in OBJECT_LEVEL_COMPACT_BEDROOM_ROOM_TYPES
+        and compact_area_m2 > 0.0
+        and compact_area_m2 <= OBJECT_LEVEL_COMPACT_BEDROOM_MAX_AREA_M2
+    )
+    return {
+        "enabled": enabled,
+        "room_type": room_type,
+        "area_threshold_m2": OBJECT_LEVEL_COMPACT_BEDROOM_MAX_AREA_M2,
+        "room_area_m2": round(room_area_m2, 3),
+        "available_area_m2": round(available_area_m2, 3),
+        "degradation_order": [
+            "drop non-core requested furniture first",
+            "drop extra decor and extra storage next",
+            "shrink bed and wardrobe to smallest viable tiers",
+            "try one nightstand as late droppable support",
+            "soften circulation, center, and non-media face-pair checks last",
+        ],
+    }
+
+
+def _object_solver_room_area_m2(room_model: Mapping[str, Any]) -> float:
+    room = room_model.get("room") if isinstance(room_model.get("room"), Mapping) else {}
+    for source in (room, room_model):
+        if not isinstance(source, Mapping):
+            continue
+        area_m2 = source.get("area_m2")
+        if isinstance(area_m2, (int, float)) and area_m2 > 0:
+            return float(area_m2)
+        area_mm2 = source.get("area_mm2")
+        if isinstance(area_mm2, (int, float)) and area_mm2 > 0:
+            return float(area_mm2) / 1_000_000.0
+    return _object_solver_polygon_area_m2(_object_solver_room_polygon(room_model))
+
+
+def _object_solver_available_area_m2(room_model: Mapping[str, Any]) -> float:
+    room_area_m2 = _object_solver_room_area_m2(room_model)
+    if room_area_m2 <= 0.0:
+        return 0.0
+    obstacle_area_m2 = 0.0
+    hard_obstacles = room_model.get("hard_obstacles")
+    obstacles = room_model.get("obstacles")
+    section = (
+        hard_obstacles
+        if isinstance(hard_obstacles, Sequence)
+        and not isinstance(hard_obstacles, str)
+        and len(hard_obstacles) > 0
+        else obstacles
+    )
+    if not isinstance(section, Sequence) or isinstance(section, str):
+        return room_area_m2
+    for obstacle in section:
+        if not isinstance(obstacle, Mapping):
+            continue
+        if obstacle.get("hard", True) is False:
+            continue
+        obstacle_area_m2 += _object_solver_polygon_area_m2(obstacle.get("polygon_ccw"))
+    return max(0.0, room_area_m2 - obstacle_area_m2)
+
+
+def _object_solver_polygon_area_m2(points: Any) -> float:
+    parsed: list[tuple[float, float]] = []
+    if isinstance(points, Sequence) and not isinstance(points, str):
+        for point in points:
+            if isinstance(point, Mapping):
+                try:
+                    parsed.append((float(point.get("x")), float(point.get("y"))))
+                except (TypeError, ValueError):
+                    continue
+            elif isinstance(point, Sequence) and not isinstance(point, str):
+                if len(point) < 2:
+                    continue
+                try:
+                    parsed.append((float(point[0]), float(point[1])))
+                except (TypeError, ValueError):
+                    continue
+    if len(parsed) < 3:
+        return 0.0
+    total = 0.0
+    for index, point in enumerate(parsed):
+        next_point = parsed[(index + 1) % len(parsed)]
+        total += point[0] * next_point[1] - next_point[0] * point[1]
+    return abs(total) / 2.0 / 1_000_000.0
+
+
+def _relax_protected_regions_for_compact_bedroom(
+    *,
+    protected_regions: Sequence[Mapping[str, Any]],
+    compact_bedroom_policy: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not bool(compact_bedroom_policy.get("enabled")):
+        return [dict(row) for row in protected_regions], []
+
+    out: list[dict[str, Any]] = []
+    relaxations: list[dict[str, Any]] = []
+    for row in protected_regions:
+        next_row = dict(row)
+        zone_type = str(next_row.get("zone_type") or "").strip().lower()
+        enforcement = str(next_row.get("enforcement") or "").strip().lower()
+        if (
+            zone_type in OBJECT_LEVEL_COMPACT_SOFT_PROTECTED_ZONE_TYPES
+            and enforcement == "hard_soft"
+        ):
+            original_max_overlap = float(next_row.get("max_overlap_ratio") or 0.0)
+            max_overlap = max(
+                original_max_overlap,
+                OBJECT_LEVEL_COMPACT_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE.get(
+                    zone_type, original_max_overlap
+                ),
+            )
+            next_row["max_overlap_ratio"] = max_overlap
+            next_row["original_enforcement"] = enforcement
+            next_row["enforcement"] = "soft"
+            next_row["violation_severity"] = "advisory"
+            next_row["compact_bedroom_relaxed"] = True
+            relaxations.append(
+                {
+                    "region_id": str(next_row.get("region_id") or ""),
+                    "zone_type": zone_type,
+                    "from_enforcement": enforcement,
+                    "to_enforcement": "soft",
+                    "from_max_overlap_ratio": round(original_max_overlap, 3),
+                    "to_max_overlap_ratio": round(max_overlap, 3),
+                }
+            )
+        out.append(next_row)
+    return out, relaxations
+
+
+def _object_solver_compact_policy_debug(world: Mapping[str, Any]) -> dict[str, Any]:
+    policy = world.get("compact_bedroom_policy")
+    if not isinstance(policy, Mapping) or not bool(policy.get("enabled")):
+        return {}
+    return deepcopy(dict(policy))
+
+
+def _object_solver_compact_policy_notes(world: Mapping[str, Any]) -> list[str]:
+    policy = world.get("compact_bedroom_policy")
+    if not isinstance(policy, Mapping) or not bool(policy.get("enabled")):
+        return []
+    if not policy.get("protected_region_relaxations"):
+        return [
+            " ".join(
+                [
+                    "Compact bedroom policy was active; core sleep/storage objects",
+                    "remained hard protected.",
+                ]
+            )
+        ]
+    return [
+        " ".join(
+            [
+                "Compact bedroom policy softened circulation, center-openness, and",
+                "non-media face-pair quality checks after item degradation, while",
+                "entry/door clearances stayed hard.",
+            ]
+        )
+    ]
 
 
 def _object_level_anchor_cluster_order(
@@ -5588,13 +5903,19 @@ def _protected_region_policy_indexes(
     room_model: Mapping[str, Any],
     relation_plan: Mapping[str, Any] | None,
     region_index: Mapping[str, tuple[int, int, int, int]],
+    protected_regions: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[
     dict[tuple[str, tuple[int, int, int, int]], dict[str, Any]],
     dict[tuple[int, int, int, int], dict[str, Any]],
 ]:
     policy_by_ref: dict[tuple[str, tuple[int, int, int, int]], dict[str, Any]] = {}
     policy_by_bbox: dict[tuple[int, int, int, int], dict[str, Any]] = {}
-    for row in _collect_protected_regions(room_model, relation_plan, region_index):
+    source_rows = (
+        protected_regions
+        if protected_regions is not None
+        else _collect_protected_regions(room_model, relation_plan, region_index)
+    )
+    for row in source_rows:
         region_id = str(row.get("region_id") or "").strip()
         bbox = row.get("bbox")
         if not isinstance(bbox, tuple) or len(bbox) != 4:
@@ -5792,11 +6113,17 @@ def _collect_cluster_forbidden_regions(
     room_model: Mapping[str, Any],
     relation_plan: Mapping[str, Any] | None,
     region_index: Mapping[str, tuple[int, int, int, int]],
+    protected_regions: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     hint_rows = _cluster_forbidden_hint_rows(relation_plan)
     protected_policy_by_ref, protected_policy_by_bbox = (
-        _protected_region_policy_indexes(room_model, relation_plan, region_index)
+        _protected_region_policy_indexes(
+            room_model,
+            relation_plan,
+            region_index,
+            protected_regions=protected_regions,
+        )
     )
     seen: set[tuple[str, str, tuple[int, int, int, int]]] = set()
     for cluster_id, cluster_program in clusters_by_id.items():
@@ -6225,6 +6552,35 @@ def _object_spec(
     return row if isinstance(row, Mapping) else None
 
 
+def _spec_object_key(spec: Mapping[str, Any], object_id: str) -> str:
+    return " ".join(
+        str(value or "").strip().lower()
+        for value in (object_id, spec.get("category"), spec.get("base_object_id"))
+    )
+
+
+def _spec_is_bed_like(spec: Mapping[str, Any], object_id: str) -> bool:
+    return "bed" in _spec_object_key(spec, object_id)
+
+
+def _functional_front_token_for_spec(spec: Mapping[str, Any], object_id: str) -> str:
+    token = spec.get("front") if isinstance(spec.get("front"), str) else "top"
+    front_token = str(token or "top").strip().lower()
+    # Bed plans often mark local "top" as the headboard; access/front is the foot.
+    if _spec_is_bed_like(spec, object_id) and front_token == "top":
+        return "bottom"
+    return front_token
+
+
+def _requires_strict_anchor_front_alignment(
+    *,
+    spec: Mapping[str, Any],
+    object_id: str,
+    desired_front: tuple[float, float] | None,
+) -> bool:
+    return desired_front is not None and _spec_is_bed_like(spec, object_id)
+
+
 def _rotate_dims_for_rot(length_mm: int, width_mm: int, rot: int) -> tuple[int, int]:
     return (length_mm, width_mm) if int(rot) % 180 == 0 else (width_mm, length_mm)
 
@@ -6406,11 +6762,7 @@ def _generate_anchor_pose_candidates(
                     if key in seen:
                         continue
                     seen.add(key)
-                    front_token = (
-                        spec.get("front")
-                        if isinstance(spec.get("front"), str)
-                        else "top"
-                    )
+                    front_token = _functional_front_token_for_spec(spec, anchor_id)
                     front_world = _front_vector_from_rotation(front_token, int(rot))
                     desired_front = _desired_anchor_front_vector(
                         cluster_id=cluster_id,
@@ -6421,6 +6773,15 @@ def _generate_anchor_pose_candidates(
                         anchor_kind=anchor_kind,
                         placement_behavior=placement_behavior,
                     )
+                    if _requires_strict_anchor_front_alignment(
+                        spec=spec,
+                        object_id=anchor_id,
+                        desired_front=desired_front,
+                    ) and not _front_matches_required_direction(
+                        front_world=front_world,
+                        desired_front=desired_front,
+                    ):
+                        continue
                     orientation_score = _front_alignment_score(
                         front_world=front_world,
                         desired_front=desired_front,
@@ -7513,6 +7874,7 @@ def _place_support_objects_for_solution(
             base_row=base_row,
             edge=edge,
             grid_mm=grid_mm,
+            room_bbox=world["room_bbox"],
         )
         viable_slots: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
         for slot in slots:
@@ -7523,6 +7885,23 @@ def _place_support_objects_for_solution(
                 continue
             if any(_rects_overlap(rect, occ) for occ in occupied):
                 continue
+            bedside_metrics = _bedside_head_slot_metrics(
+                side_option=str(slot.get("side_option") or ""),
+                rect=rect,
+                base_row=base_row,
+                base_front=_front_vector_from_rotation(
+                    base_row.get("front_token"),
+                    int(base_row.get("rot") or 0),
+                ),
+                room_bbox=world["room_bbox"],
+                gap_max_mm=int(
+                    edge.get("gap_max_mm")
+                    or edge.get("gap_max")
+                    or OBJECT_LEVEL_BEDSIDE_HEAD_MAX_SIDE_GAP_MM
+                ),
+            )
+            if bedside_metrics is not None and not bedside_metrics["contract_ok"]:
+                continue
             materialized = _materialize_object_row(
                 cluster_program,
                 object_id,
@@ -7531,6 +7910,17 @@ def _place_support_objects_for_solution(
                 slot["rot"],
                 relative_to=base_id,
             )
+            materialized["support_side_option"] = slot.get("side_option")
+            materialized["bedside_head_projection_mm"] = slot.get(
+                "bedside_head_projection_mm"
+            )
+            materialized["bedside_side_gap_mm"] = slot.get("bedside_side_gap_mm")
+            if _support_candidate_has_blocking_region_issue(
+                candidate=materialized,
+                protected_regions=protected_regions,
+                world=world,
+            ):
+                continue
             relax_penalty = _support_slot_relaxation_penalty(
                 candidate=materialized,
                 placed_objects=placed_objects,
@@ -7543,6 +7933,9 @@ def _place_support_objects_for_solution(
             key=lambda item: (
                 item[0],
                 -float(item[1].get("orientation_score") or 0.0),
+                -float(item[1].get("semantic_alignment_score") or 0.0),
+                -float(item[1].get("bedside_head_projection_mm") or 0.0),
+                float(item[1].get("bedside_side_gap_mm") or 0.0),
                 item[1]["y"],
                 item[1]["x"],
                 item[1]["rot"],
@@ -7558,6 +7951,7 @@ def _place_support_objects_for_solution(
                 index + 1,
                 support_score
                 + float(slot.get("orientation_score") or 0.0)
+                + (float(slot.get("semantic_alignment_score") or 0.0) * 0.1)
                 - relax_penalty,
             )
             occupied.pop()
@@ -7629,6 +8023,38 @@ def _support_slot_relaxation_penalty(
         + _object_level_protected_region_penalty(forbidden_issues)
         + 1400.0 * len(blocking_functional)
         + 180.0 * max(0, len(functional_issues) - len(blocking_functional))
+    )
+
+
+def _support_candidate_has_blocking_region_issue(
+    *,
+    candidate: Mapping[str, Any],
+    protected_regions: Sequence[Mapping[str, Any]],
+    world: Mapping[str, Any],
+) -> bool:
+    if protected_regions and any(
+        _protected_region_issue_blocks_geometry(issue)
+        for issue in _object_level_protected_region_issues(
+            placed_objects=[candidate],
+            protected_regions=protected_regions,
+        )
+    ):
+        return True
+
+    forbidden_regions = (
+        world.get("cluster_forbidden_regions")
+        if isinstance(world.get("cluster_forbidden_regions"), Sequence)
+        else []
+    )
+    return bool(
+        forbidden_regions
+        and any(
+            _forbidden_region_issue_blocks_geometry(issue)
+            for issue in _object_level_cluster_forbidden_region_issues(
+                placed_objects=[candidate],
+                forbidden_regions=forbidden_regions,
+            )
+        )
     )
 
 
@@ -7918,6 +8344,12 @@ def _best_object_geometry_repair_rect(
         front_access_rows=front_access_rows,
     ):
         return original_rect
+    if _row_requires_strict_bedside_head_repair_contract(
+        row=row,
+        original_rows_by_key=original_rows_by_key,
+        repaired_by_key=repaired_by_key,
+    ):
+        return None
 
     room_bbox = world["room_bbox"]
     width = original_rect[2] - original_rect[0]
@@ -8214,6 +8646,41 @@ def _object_repair_order_key(row: Mapping[str, Any]) -> tuple[int, str, str]:
     return rank, str(row.get("cluster_id") or ""), str(row.get("object_id") or "")
 
 
+def _row_requires_strict_bedside_head_repair_contract(
+    *,
+    row: Mapping[str, Any],
+    original_rows_by_key: Mapping[tuple[str, str], Mapping[str, Any]],
+    repaired_by_key: Mapping[tuple[str, str], Mapping[str, Any]],
+) -> bool:
+    side_option = str(
+        row.get("support_side_option") or row.get("side_option") or ""
+    ).strip()
+    if _is_bedside_head_slot_option(side_option):
+        return True
+
+    cluster_id = str(row.get("cluster_id") or "").strip()
+    relative_to = str(row.get("relative_to") or "").strip()
+    if not cluster_id or not relative_to:
+        return False
+    support_key = " ".join(
+        str(row.get(key) or "").strip().lower() for key in ("object_id", "category")
+    )
+    if not any(
+        marker in support_key
+        for marker in ("nightstand", "bedside", "sidebed", "side_bed")
+    ):
+        return False
+
+    base_key = (cluster_id, relative_to)
+    base_row = repaired_by_key.get(base_key) or original_rows_by_key.get(base_key)
+    if base_row is None:
+        return False
+    base_token = str(
+        base_row.get("category") or base_row.get("object_id") or ""
+    ).lower()
+    return "bed" in base_token
+
+
 def _object_repair_key(row: Mapping[str, Any]) -> tuple[str, str] | None:
     cluster_id = str(row.get("cluster_id") or "").strip()
     object_id = str(row.get("object_id") or "").strip()
@@ -8289,10 +8756,7 @@ def _droppable_object_ids(object_program: Mapping[str, Any]) -> set[str]:
         if isinstance(spec, Mapping)
         and (
             bool(spec.get("protected"))
-            or (
-                str(object_id) in required
-                and not bool(spec.get("droppable"))
-            )
+            or (str(object_id) in required and not bool(spec.get("droppable")))
         )
     )
     droppable = {
@@ -8435,6 +8899,7 @@ def _support_slot_candidates(
     base_row: Mapping[str, Any],
     edge: Mapping[str, Any],
     grid_mm: int,
+    room_bbox: tuple[int, int, int, int] | None = None,
 ) -> list[dict[str, Any]]:
     spec = _object_spec(cluster_program, object_id)
     if spec is None:
@@ -8454,7 +8919,9 @@ def _support_slot_candidates(
     gap_max = int(
         edge.get("gap_max_mm") or edge.get("gap_max") or max(gap_min + 50, 180)
     )
-    base_rect = base_row["rect"]
+    base_rect = _rect_tuple(base_row.get("rect"))
+    if base_rect is None:
+        return []
     base_center = (
         (base_rect[0] + base_rect[2]) / 2.0,
         (base_rect[1] + base_rect[3]) / 2.0,
@@ -8464,7 +8931,6 @@ def _support_slot_candidates(
     base_front = _front_vector_from_rotation(
         base_row.get("front_token"), int(base_row.get("rot") or 0)
     )
-    side_vec = (-base_front[1], base_front[0])
     orientation = str(edge.get("orientation") or "").strip().lower()
     out: list[dict[str, Any]] = []
     seen: set[tuple[int, int, int]] = set()
@@ -8472,7 +8938,14 @@ def _support_slot_candidates(
         slot_side_option = _bedside_nightstand_slot_option(
             side_option=side_option,
             object_id=object_id,
+            object_category=str(spec.get("category") or ""),
             base_row=base_row,
+        )
+        support_front, support_side = _support_slot_basis(
+            side_option=slot_side_option,
+            base_front=base_front,
+            base_row=base_row,
+            room_bbox=room_bbox,
         )
         for gap in _support_gap_samples(gap_min=gap_min, gap_max=gap_max):
             for rot in allowed_rotations:
@@ -8487,15 +8960,15 @@ def _support_slot_candidates(
                     base_h=base_h,
                     obj_w=w_mm,
                     obj_h=h_mm,
-                    front=base_front,
-                    side=side_vec,
+                    front=support_front,
+                    side=support_side,
                 )
                 for slide in _support_slot_slide_offsets(
                     side_option=slot_side_option,
                     base_w=base_w,
                     base_h=base_h,
-                    front=base_front,
-                    side=side_vec,
+                    front=support_front,
+                    side=support_side,
                 ):
                     x = _snap_to_grid(
                         int(
@@ -8513,20 +8986,44 @@ def _support_slot_candidates(
                         ),
                         grid_mm,
                     )
+                    if room_bbox is not None:
+                        x, y = _snap_origin_inside_room(
+                            x=x,
+                            y=y,
+                            w_mm=w_mm,
+                            h_mm=h_mm,
+                            room_bbox=room_bbox,
+                            grid_mm=grid_mm,
+                        )
                     key = (x, y, final_rot)
                     if key in seen:
                         continue
                     seen.add(key)
                     rect = (x, y, x + w_mm, y + h_mm)
+                    if room_bbox is not None and not _rect_inside_room(rect, room_bbox):
+                        continue
+                    if _rects_overlap(rect, base_rect):
+                        continue
+                    bedside_metrics = _bedside_head_slot_metrics(
+                        side_option=slot_side_option,
+                        rect=rect,
+                        base_row=base_row,
+                        base_front=base_front,
+                        room_bbox=room_bbox,
+                        gap_max_mm=gap_max,
+                    )
+                    if (
+                        bedside_metrics is not None
+                        and not bedside_metrics["contract_ok"]
+                    ):
+                        continue
                     desired_front = _desired_support_front_vector(
                         orientation=orientation,
                         rect=rect,
                         base_row=base_row,
                     )
                     front_world = _front_vector_from_rotation(
-                        spec.get("front")
-                        if isinstance(spec.get("front"), str)
-                        else "top",
+                        _functional_front_token_for_spec(spec, object_id),
                         final_rot,
                     )
                     out.append(
@@ -8537,15 +9034,36 @@ def _support_slot_candidates(
                             "w": w_mm,
                             "h": h_mm,
                             "rect": rect,
+                            "side_option": slot_side_option,
+                            "bedside_head_projection_mm": (
+                                0.0
+                                if bedside_metrics is None
+                                else bedside_metrics["head_projection_mm"]
+                            ),
+                            "bedside_side_gap_mm": (
+                                0.0
+                                if bedside_metrics is None
+                                else bedside_metrics["side_gap_mm"]
+                            ),
                             "orientation_score": _front_alignment_score(
                                 front_world=front_world,
                                 desired_front=desired_front,
+                            ),
+                            "semantic_alignment_score": (
+                                _support_slot_semantic_alignment_score(
+                                    side_option=slot_side_option,
+                                    slide=slide,
+                                    front=support_front,
+                                )
                             ),
                         }
                     )
     out.sort(
         key=lambda item: (
             -float(item.get("orientation_score") or 0.0),
+            -float(item.get("semantic_alignment_score") or 0.0),
+            -float(item.get("bedside_head_projection_mm") or 0.0),
+            float(item.get("bedside_side_gap_mm") or 0.0),
             item["y"],
             item["x"],
             item["rot"],
@@ -8558,18 +9076,165 @@ def _bedside_nightstand_slot_option(
     *,
     side_option: str,
     object_id: str,
+    object_category: str,
     base_row: Mapping[str, Any],
 ) -> str:
     token = str(side_option).strip().lower()
-    if token not in {"head_left", "head_right"}:
+    left_tokens = {"left", "head_left", "front_left", "foot_left", "back_left"}
+    right_tokens = {"right", "head_right", "front_right", "foot_right", "back_right"}
+    if token not in left_tokens | right_tokens:
         return side_option
 
     object_key = object_id.strip().lower()
+    category_key = object_category.strip().lower()
     base_key = str(base_row.get("category") or base_row.get("object_id") or "").lower()
-    if "nightstand" not in object_key or "bed" not in base_key:
+    support_key = f"{object_key} {category_key}"
+    if (
+        not any(
+            marker in support_key
+            for marker in ("nightstand", "bedside", "sidebed", "side_bed")
+        )
+        or "bed" not in base_key
+    ):
         return side_option
 
-    return f"bedside_{token}"
+    return "bedside_head_left" if token in left_tokens else "bedside_head_right"
+
+
+def _support_slot_basis(
+    *,
+    side_option: str,
+    base_front: tuple[int, int],
+    base_row: Mapping[str, Any],
+    room_bbox: tuple[int, int, int, int] | None,
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    default_side = (-base_front[1], base_front[0])
+    if str(side_option).strip().lower() not in {
+        "bedside_head_left",
+        "bedside_head_right",
+    }:
+        return base_front, default_side
+
+    head_vector = _wall_backed_bed_head_vector(
+        base_row=base_row,
+        room_bbox=room_bbox,
+    )
+    if head_vector is None:
+        return base_front, default_side
+
+    foot_vector = (-head_vector[0], -head_vector[1])
+    return foot_vector, (-foot_vector[1], foot_vector[0])
+
+
+def _is_bedside_head_slot_option(side_option: str) -> bool:
+    return str(side_option).strip().lower() in {
+        "bedside_head_left",
+        "bedside_head_right",
+    }
+
+
+def _wall_backed_bed_head_vector(
+    *,
+    base_row: Mapping[str, Any],
+    room_bbox: tuple[int, int, int, int] | None,
+) -> tuple[int, int] | None:
+    base_key = str(base_row.get("category") or base_row.get("object_id") or "").lower()
+    if "bed" not in base_key or room_bbox is None:
+        return None
+    rect = _rect_tuple(base_row.get("rect"))
+    if rect is None:
+        return None
+
+    contacts = [
+        (abs(rect[0] - room_bbox[0]), (1, 0)),
+        (abs(room_bbox[2] - rect[2]), (-1, 0)),
+        (abs(rect[1] - room_bbox[1]), (0, 1)),
+        (abs(room_bbox[3] - rect[3]), (0, -1)),
+    ]
+    distance, inward = min(contacts, key=lambda item: item[0])
+    if distance > OBJECT_LEVEL_BEDSIDE_HEAD_WALL_MAX_GAP_MM:
+        return None
+    return (-inward[0], -inward[1])
+
+
+def _bedside_head_slot_metrics(
+    *,
+    side_option: str,
+    rect: tuple[int, int, int, int],
+    base_row: Mapping[str, Any],
+    base_front: tuple[int, int],
+    room_bbox: tuple[int, int, int, int] | None,
+    gap_max_mm: int,
+) -> dict[str, float | bool] | None:
+    if not _is_bedside_head_slot_option(side_option):
+        return None
+
+    base_key = str(base_row.get("category") or base_row.get("object_id") or "").lower()
+    if "bed" not in base_key:
+        return None
+    base_rect = _rect_tuple(base_row.get("rect"))
+    if base_rect is None:
+        return None
+
+    head_vector = _wall_backed_bed_head_vector(
+        base_row=base_row,
+        room_bbox=room_bbox,
+    ) or (-base_front[0], -base_front[1])
+    candidate_center = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+    base_center = (
+        (base_rect[0] + base_rect[2]) / 2.0,
+        (base_rect[1] + base_rect[3]) / 2.0,
+    )
+    delta = (candidate_center[0] - base_center[0], candidate_center[1] - base_center[1])
+    head_projection = delta[0] * head_vector[0] + delta[1] * head_vector[1]
+    head_span = (
+        base_rect[2] - base_rect[0]
+        if abs(head_vector[0]) == 1
+        else base_rect[3] - base_rect[1]
+    )
+    min_head_projection = max(
+        0.0,
+        float(head_span) * OBJECT_LEVEL_BEDSIDE_HEAD_MIN_PROJECTION_RATIO,
+    )
+    side_gap = (
+        _rect_axis_gap(rect, base_rect, axis="y")
+        if abs(head_vector[0]) == 1
+        else _rect_axis_gap(rect, base_rect, axis="x")
+    )
+    max_side_gap = max(
+        float(OBJECT_LEVEL_BEDSIDE_HEAD_MAX_SIDE_GAP_MM),
+        float(gap_max_mm) + 160.0,
+    )
+    return {
+        "head_projection_mm": float(head_projection),
+        "side_gap_mm": float(side_gap),
+        "contract_ok": bool(
+            head_projection >= min_head_projection and side_gap <= max_side_gap
+        ),
+    }
+
+
+def _rect_axis_gap(
+    left: tuple[int, int, int, int],
+    right: tuple[int, int, int, int],
+    *,
+    axis: str,
+) -> int:
+    if axis == "x":
+        return max(right[0] - left[2], left[0] - right[2], 0)
+    return max(right[1] - left[3], left[1] - right[3], 0)
+
+
+def _support_slot_semantic_alignment_score(
+    *,
+    side_option: str,
+    slide: tuple[float, float],
+    front: tuple[int, int],
+) -> float:
+    token = str(side_option).strip().lower()
+    if token not in {"bedside_head_left", "bedside_head_right"}:
+        return 0.0
+    return max(0.0, -(slide[0] * front[0] + slide[1] * front[1]))
 
 
 def _support_gap_samples(*, gap_min: int, gap_max: int) -> list[int]:
@@ -8708,7 +9373,7 @@ def _materialize_object_row(
     width_mm = max(160, int(dims.get("W") or 0))
     w_mm, h_mm = _rotate_dims_for_rot(length_mm, width_mm, rot)
     rect = (int(x), int(y), int(x) + w_mm, int(y) + h_mm)
-    front_token = spec.get("front") if isinstance(spec.get("front"), str) else "top"
+    front_token = _functional_front_token_for_spec(spec, object_id)
     front_world = _front_vector_from_rotation(front_token, rot)
     front_side_world = {
         (0, 1): "top",
@@ -8897,6 +9562,16 @@ def _verify_object_level_solution(
         placed_objects=placed_objects,
         relation_plan=relation_plan,
     )
+    softened_face_pair_issues: list[dict[str, Any]] = []
+    if face_pair_issues and _compact_bedroom_relaxes_face_pair_issues(
+        world=world,
+        face_pair_issues=face_pair_issues,
+    ):
+        softened_face_pair_issues = [
+            {**issue, "blocking": False, "compact_bedroom_relaxed": True}
+            for issue in face_pair_issues
+        ]
+        face_pair_issues = []
     if face_pair_issues:
         hard_valid = False
         for item in face_pair_issues:
@@ -8998,6 +9673,7 @@ def _verify_object_level_solution(
         - len(blocking_protected_region_issues)
         + len(forbidden_region_issues)
         - len(blocking_forbidden_region_issues)
+        + len(softened_face_pair_issues)
         + len(functional_geometry_issues)
         - len(blocking_functional_geometry_issues)
     )
@@ -9033,6 +9709,7 @@ def _verify_object_level_solution(
         "functional_geometry_issues": functional_geometry_issues,
         "blocking_functional_geometry_issues": blocking_functional_geometry_issues,
         "face_pair_issues": face_pair_issues,
+        "softened_face_pair_issues": softened_face_pair_issues,
         "critical_issue_count": critical_issue_count,
         "blocking_issue_count": blocking_issue_count,
         "view_corridor_ok": view_corridor_ok,
@@ -9285,7 +9962,7 @@ def _object_level_blocking_orientation_issues(
 
 def _row_allows_soft_wall_contact_orientation(row: Mapping[str, Any]) -> bool:
     tokens = _object_semantic_tokens(row)
-    return bool(tokens & {"bed", "mattress", "headboard", "bunk", "crib"})
+    return bool(tokens & {"headboard"})
 
 
 def _object_level_quality_gate_reasons(
@@ -9802,6 +10479,22 @@ def _pair_tokens_include_media(primary: str, secondary: str) -> bool:
         if part
     }
     return bool(tokens & {"media", "tv", "television", "console"})
+
+
+def _compact_bedroom_relaxes_face_pair_issues(
+    *,
+    world: Mapping[str, Any],
+    face_pair_issues: Sequence[Mapping[str, Any]],
+) -> bool:
+    policy = world.get("compact_bedroom_policy")
+    if not isinstance(policy, Mapping) or not bool(policy.get("enabled")):
+        return False
+    for issue in face_pair_issues:
+        left_cluster_id = str(issue.get("a") or "")
+        right_cluster_id = str(issue.get("b") or "")
+        if _pair_tokens_include_media(left_cluster_id, right_cluster_id):
+            return False
+    return True
 
 
 def _object_level_face_pair_issues(

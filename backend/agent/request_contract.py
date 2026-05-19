@@ -76,6 +76,10 @@ _OPTIONAL_ONLY_PATTERNS = (
     "only if there is enough space",
     "only if it fits",
     "only if they fit",
+    "neu du khong gian",
+    "neu co du khong gian",
+    "neu con khong gian",
+    "chi khi du khong gian",
 )
 _PREFERRED_IF_FIT_PATTERNS = (
     "if it fits",
@@ -83,6 +87,10 @@ _PREFERRED_IF_FIT_PATTERNS = (
     "if possible",
     "where possible",
     "when possible",
+    "neu co the",
+    "neu vua",
+    "neu phu hop",
+    "neu sap xep duoc",
 )
 _MUST_VERBS = (
     "include",

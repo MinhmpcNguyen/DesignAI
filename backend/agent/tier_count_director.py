@@ -31,6 +31,32 @@ logger = logging.getLogger(__name__)
 _LAYOUT_SPEED_MODE_ENV = "TKNT_LAYOUT_SPEED_MODE"
 _HARD_REQUEST_CONTRACT_INTENTS = {"must_keep", "must_try"}
 _TARGET_REQUEST_CONTRACT_INTENTS = {"target_if_viable", "preferred_if_fit"}
+_COMPACT_BEDROOM_MAX_AREA_M2 = 12.0
+_COMPACT_BEDROOM_ROOM_TOKENS = frozenset(
+    {"bedroom", "guest_bedroom", "primary_bedroom"}
+)
+_COMPACT_BEDROOM_SLEEP_TYPES = frozenset({"bed"})
+_COMPACT_BEDROOM_STORAGE_ANCHOR_TYPES = frozenset({"wardrobe", "dresser"})
+_COMPACT_BEDROOM_CORE_TYPES = (
+    _COMPACT_BEDROOM_SLEEP_TYPES | _COMPACT_BEDROOM_STORAGE_ANCHOR_TYPES
+)
+_COMPACT_BEDROOM_RELAXED_TYPES = frozenset(
+    {
+        "armchair",
+        "bookshelf",
+        "chair",
+        "desk",
+        "floor_lamp",
+        "laundry_basket",
+        "media_shelf",
+        "office_chair",
+        "side_table",
+        "storage_cabinet",
+        "tv_console",
+    }
+)
+_COMPACT_BEDROOM_DEFAULT_SUPPORT_TYPES = frozenset({"nightstand"})
+_COMPACT_BEDROOM_SUPPORT_TRIAL_MAX_FOOTPRINT_M2 = 0.6
 
 
 def _layout_speed_mode() -> str:
@@ -244,6 +270,12 @@ def _run_hardcoded_tier_count(
     )
     style_policy = extract_style_policy(clusters_json)
     room_type = _infer_room_type(context.get("room_model_json"), semantic_program)
+    compact_bedroom = _is_compact_bedroom(
+        room_type=room_type,
+        available_area_m2=available_area_m2,
+    )
+    if compact_bedroom:
+        request_contract = _relax_request_contract_for_compact_bedroom(request_contract)
     capacity_model = _compute_capacity_model(
         room_model_json=context.get("room_model_json"),
         available_area_m2=available_area_m2,
@@ -286,6 +318,8 @@ def _run_hardcoded_tier_count(
         bundles,
         request_contract=request_contract,
     )
+    if compact_bedroom:
+        bundles = _apply_compact_bedroom_policy_to_bundles(bundles)
     draft = _select_inventory_decision_program(
         bundles=bundles,
         room_type=room_type,
@@ -332,6 +366,19 @@ def _run_hardcoded_tier_count(
         context=context,
         furnishing_mode=furnishing_mode,
     )
+    if compact_bedroom:
+        draft["compact_bedroom_policy"] = {
+            "enabled": True,
+            "area_threshold_m2": _COMPACT_BEDROOM_MAX_AREA_M2,
+            "available_area_m2": round(available_area_m2, 3),
+            "preserve_core": sorted(_COMPACT_BEDROOM_CORE_TYPES),
+            "relax_non_core": sorted(_COMPACT_BEDROOM_RELAXED_TYPES),
+        }
+        _refresh_compact_bedroom_degradation_report(
+            draft,
+            draft_decisions=_decision_rows(draft.get("decisions")),
+            final_decisions=_decision_rows(draft.get("decisions")),
+        )
     draft["budget_valid"] = draft["status"] == "OK"
 
     tool_registry = _get_tool_registry()
@@ -881,6 +928,248 @@ def _fallback_bundle_from_cluster(
     )
 
 
+def _is_compact_bedroom(*, room_type: str, available_area_m2: float) -> bool:
+    room_key = _norm_key(room_type)
+    return (
+        available_area_m2 <= _COMPACT_BEDROOM_MAX_AREA_M2
+        and room_key in _COMPACT_BEDROOM_ROOM_TOKENS
+    )
+
+
+def _relax_request_contract_for_compact_bedroom(
+    request_contract: dict[str, Any],
+) -> dict[str, Any]:
+    objects = request_contract.get("objects")
+    if not isinstance(objects, list):
+        return request_contract
+
+    changed = False
+    relaxed_objects: list[dict[str, Any]] = []
+    for item in objects:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        object_type = _profile_category_for_member(str(row.get("object_type") or ""))
+        intent = str(row.get("intent") or "")
+        if (
+            object_type in _COMPACT_BEDROOM_RELAXED_TYPES
+            and intent in _HARD_REQUEST_CONTRACT_INTENTS
+        ):
+            row["compact_bedroom_original_intent"] = intent
+            row["intent"] = "optional_if_surplus"
+            row["min_keep"] = 0
+            row["target_count"] = max(
+                1,
+                _int_value(row.get("target_count"), default=1),
+            )
+            row["preferred_count"] = int(row["target_count"])
+            row["reason"] = " ".join(
+                [
+                    "compact bedroom policy keeps this requested object only when",
+                    "space surplus remains",
+                ]
+            )
+            changed = True
+        relaxed_objects.append(row)
+
+    if not changed:
+        return request_contract
+
+    out = dict(request_contract)
+    out["objects"] = relaxed_objects
+    notes = [str(note) for note in out.get("notes") or [] if str(note)]
+    notes.append(
+        "Compact bedroom policy relaxed non-core requested objects before tier count."
+    )
+    out["notes"] = _uniq(notes)
+    out["compact_bedroom_policy_applied"] = True
+    return out
+
+
+def _apply_compact_bedroom_policy_to_bundles(
+    bundles: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    compact_bundles: list[dict[str, Any]] = []
+    storage_anchor_key = _compact_bedroom_storage_anchor_key(bundles)
+    for bundle in bundles:
+        objects = _bundle_objects(bundle)
+        if not objects:
+            compact_bundles.append(bundle)
+            continue
+
+        changed = False
+        relaxed_count = 0
+        core_count = 0
+        next_objects: list[dict[str, Any]] = []
+        for obj in objects:
+            next_obj = dict(obj)
+            base_type = str(
+                next_obj.get("base_type")
+                or _profile_category_for_member(str(next_obj.get("object_type") or ""))
+            )
+            object_key = _compact_bedroom_object_key(bundle, next_obj)
+            if base_type in _COMPACT_BEDROOM_SLEEP_TYPES or (
+                base_type in _COMPACT_BEDROOM_STORAGE_ANCHOR_TYPES
+                and object_key == storage_anchor_key
+            ):
+                next_obj = _preserve_compact_bedroom_core_object(next_obj)
+                core_count += 1
+            elif base_type in _COMPACT_BEDROOM_STORAGE_ANCHOR_TYPES:
+                next_obj = _relax_compact_bedroom_object(
+                    next_obj,
+                    reason="extra_storage_anchor",
+                    drop_order_bias="drop_late",
+                    preserve_level="medium",
+                    role=str(next_obj.get("role") or "support"),
+                    space_surplus_threshold=0.64,
+                )
+                relaxed_count += 1
+                changed = True
+            elif base_type in _COMPACT_BEDROOM_DEFAULT_SUPPORT_TYPES:
+                next_obj = _relax_compact_bedroom_object(
+                    next_obj,
+                    reason="default_support",
+                    drop_order_bias="drop_late",
+                    preserve_level="high",
+                    role=str(next_obj.get("role") or "support"),
+                    space_surplus_threshold=0.46,
+                )
+                relaxed_count += 1
+                changed = True
+            elif base_type in _COMPACT_BEDROOM_RELAXED_TYPES:
+                next_obj = _relax_compact_bedroom_object(
+                    next_obj,
+                    reason="non_core_requested",
+                    drop_order_bias="drop_first",
+                    preserve_level="low",
+                    role="optional",
+                    space_surplus_threshold=0.78,
+                )
+                relaxed_count += 1
+                changed = True
+            next_objects.append(next_obj)
+
+        if not changed:
+            compact_bundles.append(bundle)
+            continue
+
+        next_bundle = dict(bundle)
+        next_bundle["objects"] = next_objects
+        next_bundle["compact_bedroom_policy_applied"] = True
+        if relaxed_count and core_count == 0:
+            next_bundle["droppable"] = True
+            next_bundle["bundle_class"] = "optional"
+            next_bundle["preserve_level"] = "low"
+            next_bundle["drop_order_bias"] = "drop_first"
+            next_bundle["keep_if_space_surplus"] = True
+            next_bundle["space_surplus_threshold"] = 0.78
+        compact_bundles.append(next_bundle)
+    return compact_bundles
+
+
+def _compact_bedroom_storage_anchor_key(
+    bundles: list[dict[str, Any]],
+) -> tuple[str, str] | None:
+    candidates: list[tuple[int, int, int, tuple[str, str]]] = []
+    for bundle_index, bundle in enumerate(bundles):
+        for object_index, obj in enumerate(_bundle_objects(bundle)):
+            base_type = str(
+                obj.get("base_type")
+                or _profile_category_for_member(str(obj.get("object_type") or ""))
+            )
+            if base_type not in _COMPACT_BEDROOM_STORAGE_ANCHOR_TYPES:
+                continue
+            role = str(obj.get("role") or "")
+            score = 0 if base_type == "wardrobe" else 1
+            if bool(obj.get("required")):
+                score -= 4
+            if bool(obj.get("protected")):
+                score -= 3
+            if role in {"dominant_anchor", "workflow_anchor"}:
+                score -= 2
+            candidates.append(
+                (
+                    score,
+                    bundle_index,
+                    object_index,
+                    _compact_bedroom_object_key(bundle, obj),
+                )
+            )
+    if not candidates:
+        return None
+    return min(candidates)[3]
+
+
+def _compact_bedroom_object_key(
+    bundle: dict[str, Any],
+    obj: dict[str, Any],
+) -> tuple[str, str]:
+    return (
+        str(bundle.get("cluster_id") or ""),
+        str(obj.get("object_type") or obj.get("base_type") or ""),
+    )
+
+
+def _preserve_compact_bedroom_core_object(obj: dict[str, Any]) -> dict[str, Any]:
+    out = dict(obj)
+    out["min_keep"] = max(1, _int_value(out.get("min_keep"), default=0))
+    out["max_keep"] = max(
+        _positive_int(out.get("max_keep"), default=1),
+        int(out["min_keep"]),
+    )
+    out["required"] = True
+    out["protected"] = True
+    out["droppable"] = False
+    out["keep_if_space_surplus"] = False
+    out["drop_order_bias"] = _stronger_drop_order(
+        str(out.get("drop_order_bias") or "neutral"),
+        "drop_last",
+    )
+    out["preserve_level"] = _stronger_preserve(
+        str(out.get("preserve_level") or "medium"),
+        "highest",
+    )
+    out["compact_bedroom_core"] = True
+    return out
+
+
+def _relax_compact_bedroom_object(
+    obj: dict[str, Any],
+    *,
+    reason: str,
+    drop_order_bias: str,
+    preserve_level: str,
+    role: str,
+    space_surplus_threshold: float,
+) -> dict[str, Any]:
+    out = dict(obj)
+    original_intent = str(
+        out.get("compact_bedroom_original_intent")
+        or out.get("request_contract_intent")
+        or ""
+    )
+    if original_intent:
+        out["compact_bedroom_original_intent"] = original_intent
+    out["request_contract_intent"] = "optional_if_surplus"
+    out["min_keep"] = 0
+    out["max_keep"] = max(1, _positive_int(out.get("max_keep"), default=1))
+    out["required"] = False
+    out["protected"] = False
+    out["droppable"] = True
+    out["tier_count_explicit"] = True
+    out["keep_if_space_surplus"] = True
+    out["space_surplus_threshold"] = max(
+        space_surplus_threshold,
+        _coerce_ratio(out.get("space_surplus_threshold"), default=0.0),
+    )
+    out["drop_order_bias"] = drop_order_bias
+    out["preserve_level"] = preserve_level
+    out["role"] = role
+    out["compact_bedroom_relaxed"] = True
+    out["compact_bedroom_relaxation_reason"] = reason
+    return out
+
+
 def _apply_request_contract_to_object(
     obj: dict[str, Any],
     *,
@@ -901,6 +1190,9 @@ def _apply_request_contract_to_object(
     out["request_contract_reason"] = str(item.get("reason") or "")
     out["request_contract_evidence"] = str(item.get("evidence") or "")
     out["request_contract_target_count"] = target_count
+    compact_original_intent = str(item.get("compact_bedroom_original_intent") or "")
+    if compact_original_intent:
+        out["compact_bedroom_original_intent"] = compact_original_intent
 
     if intent == "max0":
         out["min_keep"] = 0
@@ -1991,6 +2283,7 @@ def _select_inventory_decision_program(
                 },
             }
             _copy_exclusive_family_trace(obj, decision_object)
+            _copy_compact_bedroom_trace(obj, decision_object)
             bundle_decision["objects"].append(decision_object)
 
             decision_row = {
@@ -2044,6 +2337,7 @@ def _select_inventory_decision_program(
                 "utility_score": round(float(score["total"]), 3),
             }
             _copy_exclusive_family_trace(obj, decision_row)
+            _copy_compact_bedroom_trace(obj, decision_row)
             decisions.append(decision_row)
 
             if quantity > 0 and _is_core_object(obj, bundle) and score["total"] < 0:
@@ -2483,6 +2777,17 @@ def _select_quantity(
         used_footprint_m2=used_footprint_m2,
         capacity_model=capacity_model,
     )
+    compact_relaxation_reason = str(obj.get("compact_bedroom_relaxation_reason") or "")
+    compact_default_support = (
+        bool(obj.get("compact_bedroom_relaxed"))
+        and compact_relaxation_reason == "default_support"
+    )
+    if (
+        bool(obj.get("compact_bedroom_relaxed"))
+        and not compact_default_support
+        and not surplus_keep
+    ):
+        return 0
     base_type = str(obj.get("base_type") or "")
     if (
         not explicit_guidance
@@ -2561,6 +2866,7 @@ def _select_quantity(
         and total < keep_threshold + 1.1
         and not surplus_keep
         and min_keep <= 0
+        and not compact_default_support
     ):
         return 0
 
@@ -3237,6 +3543,20 @@ def _copy_exclusive_family_trace(
         return
     target["exclusive_family"] = family_id
     target["exclusive_family_winner"] = winner
+
+
+def _copy_compact_bedroom_trace(
+    source: dict[str, Any],
+    target: dict[str, Any],
+) -> None:
+    for key in (
+        "compact_bedroom_core",
+        "compact_bedroom_relaxed",
+        "compact_bedroom_relaxation_reason",
+        "compact_bedroom_original_intent",
+    ):
+        if key in source:
+            target[key] = source[key]
 
 
 def _circulation_pressure(
@@ -5331,6 +5651,12 @@ def _budget_solver_trial_candidate(
     *,
     size_profiles_by_category: dict[str, Any] | None,
 ) -> bool:
+    compact_relaxation_reason = str(row.get("compact_bedroom_relaxation_reason") or "")
+    if (
+        bool(row.get("compact_bedroom_relaxed"))
+        and compact_relaxation_reason != "default_support"
+    ):
+        return False
     if _decision_quantity(row) <= 0:
         return False
     if _request_contract_min_keep_from_object(row) > 0:
@@ -5353,6 +5679,8 @@ def _budget_solver_trial_candidate(
     )
     if footprint_m2 <= 0.0 or footprint_m2 > 1.15:
         return False
+    if compact_relaxation_reason == "default_support":
+        return footprint_m2 <= _COMPACT_BEDROOM_SUPPORT_TRIAL_MAX_FOOTPRINT_M2
     utility_score = _decision_utility_score(row)
     if role in {"dominant_anchor", "workflow_anchor"} or priority == "anchor":
         return utility_score >= 6.5
@@ -5375,6 +5703,11 @@ def _budget_trial_cluster_should_restore(
     )
     if total_footprint > 1.6:
         return False
+    if any(
+        str(row.get("compact_bedroom_relaxation_reason") or "") == "default_support"
+        for row in candidates
+    ):
+        return total_footprint <= _COMPACT_BEDROOM_SUPPORT_TRIAL_MAX_FOOTPRINT_M2
     return any(
         str(row.get("role") or "").strip().lower()
         in {"dominant_anchor", "workflow_anchor"}
@@ -5685,6 +6018,12 @@ def _refresh_budget_adjusted_trace(
         result.pop("degradation_status", None)
         result.pop("request_contract_degradation_report", None)
 
+    _refresh_compact_bedroom_degradation_report(
+        result,
+        draft_decisions=draft_decisions,
+        final_decisions=final_decisions,
+    )
+
 
 def _request_contract_degradation_report(
     *,
@@ -5731,6 +6070,149 @@ def _request_contract_degradation_report(
         "dropped": dropped,
         "reduced": reduced,
     }
+
+
+def _refresh_compact_bedroom_degradation_report(
+    result: dict[str, Any],
+    *,
+    draft_decisions: list[dict[str, Any]],
+    final_decisions: list[dict[str, Any]],
+) -> None:
+    report = _compact_bedroom_degradation_report(
+        draft_decisions=draft_decisions,
+        final_decisions=final_decisions,
+    )
+    if not report["relaxed"]:
+        result.pop("compact_bedroom_degradation_report", None)
+        return
+
+    result["compact_bedroom_degradation_report"] = report
+    if report["dropped"] or report["reduced"]:
+        result["degradation_status"] = "DEGRADED_OK"
+    notes = [str(note) for note in result.get("global_notes") or [] if str(note)]
+    notes.append(
+        " ".join(
+            [
+                "Compact bedroom policy preserved sleep/storage core and relaxed",
+                "non-core objects.",
+            ]
+        )
+    )
+    result["global_notes"] = _uniq(notes)
+
+
+def _compact_bedroom_degradation_report(
+    *,
+    draft_decisions: list[dict[str, Any]],
+    final_decisions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    final_by_key = {
+        key: row for row in final_decisions if (key := _decision_key(row)) is not None
+    }
+    relaxed: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    reduced: list[dict[str, Any]] = []
+
+    for draft in draft_decisions:
+        if not bool(draft.get("compact_bedroom_relaxed")):
+            continue
+        key = _decision_key(draft)
+        if key is None:
+            continue
+        final = final_by_key.get(key, {})
+        from_quantity = _decision_quantity(draft)
+        to_quantity = _decision_quantity(final)
+        row = {
+            "cluster_id": key[0],
+            "object_type": key[1],
+            "from_quantity": from_quantity,
+            "to_quantity": to_quantity,
+            "reason": str(draft.get("compact_bedroom_relaxation_reason") or ""),
+            "original_intent": str(draft.get("compact_bedroom_original_intent") or ""),
+        }
+        relaxed.append(row)
+        if from_quantity > 0 and to_quantity < from_quantity:
+            if to_quantity <= 0:
+                dropped.append(
+                    {**row, "degradation_reason": "dropped_for_compact_room"}
+                )
+            else:
+                reduced.append(
+                    {**row, "degradation_reason": "quantity_reduced_for_compact_room"}
+                )
+        elif from_quantity <= 0 and to_quantity <= 0:
+            dropped.append({**row, "degradation_reason": "omitted_for_compact_room"})
+
+    return {
+        "relaxed": relaxed,
+        "dropped": dropped,
+        "reduced": reduced,
+        "degradation_order": _compact_bedroom_degradation_order(
+            relaxed=relaxed,
+            dropped=dropped,
+            reduced=reduced,
+        ),
+    }
+
+
+def _compact_bedroom_degradation_order(
+    *,
+    relaxed: list[dict[str, Any]],
+    dropped: list[dict[str, Any]],
+    reduced: list[dict[str, Any]],
+) -> list[str]:
+    order: list[str] = []
+
+    dropped_non_core = [
+        row
+        for row in dropped
+        if str(row.get("reason") or "") == "non_core_requested"
+        and str(row.get("original_intent") or "") in _HARD_REQUEST_CONTRACT_INTENTS
+    ]
+    if dropped_non_core:
+        dropped_names = _compact_report_object_list(dropped_non_core)
+        order.append(f"drop non-core requested furniture: {dropped_names}")
+
+    dropped_extra = [
+        row
+        for row in dropped
+        if str(row.get("reason") or "")
+        in {"extra_storage_anchor", "non_core_requested"}
+        and str(row.get("original_intent") or "") not in _HARD_REQUEST_CONTRACT_INTENTS
+    ]
+    if dropped_extra:
+        order.append(
+            f"drop extra storage/decor: {_compact_report_object_list(dropped_extra)}"
+        )
+
+    reduced_objects = _compact_report_object_list(reduced)
+    if reduced_objects:
+        order.append(f"reduce compact-relaxed quantities: {reduced_objects}")
+
+    default_support = [
+        row for row in relaxed if str(row.get("reason") or "") == "default_support"
+    ]
+    if default_support:
+        default_support_names = _compact_report_object_list(default_support)
+        if any(int(row.get("to_quantity") or 0) > 0 for row in default_support):
+            order.append(f"try late droppable bedroom support: {default_support_names}")
+        else:
+            support_drop = f"drop bedroom support only after core pressure: {default_support_names}"
+            order.append(support_drop)
+
+    order.append("keep sleep/storage core and shrink core tiers before dropping core")
+    return _uniq(order)
+
+
+def _compact_report_object_list(rows: list[dict[str, Any]]) -> str:
+    names = sorted(
+        {
+            str(row.get("object_type") or "").strip()
+            for row in rows
+            if str(row.get("object_type") or "").strip()
+        }
+    )
+    return ", ".join(names)
 
 
 def _tool_reports_repair_exhausted(budget_out: dict[str, Any]) -> bool:
