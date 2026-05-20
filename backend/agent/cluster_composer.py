@@ -1943,7 +1943,14 @@ def _select_variant_families(
 
     role_token = _normalize_token(semantic_role or "")
     if role_token:
-        if "kitchen" in role_token:
+        if _is_dining_like_cluster(
+            cluster_type=cluster_type,
+            semantic_role=semantic_role,
+            cluster_id=_cluster_id(cluster),
+            members=(ctx.members if ctx is not None else _member_ids(cluster)),
+        ):
+            cluster_type = "dining"
+        elif "kitchen" in role_token:
             cluster_type = "kitchen"
         elif "media" in role_token:
             cluster_type = "living_media"
@@ -2010,6 +2017,8 @@ def _infer_cluster_type(cluster: dict[str, Any]) -> str:
 def _cluster_type_from_token(token: str) -> str | None:
     if token in ARCHETYPE_LIBRARY:
         return token
+    if "dining" in token or "meal" in token:
+        return "dining"
     if "kitchen" in token or any(
         marker in token
         for marker in ("fridge", "stove", "sink", "cooktop", "dishwasher")
@@ -2023,8 +2032,6 @@ def _cluster_type_from_token(token: str) -> str | None:
         return "sleep"
     if "work" in token or "study" in token or "desk" in token:
         return "work"
-    if "dining" in token or "meal" in token:
-        return "dining"
     if "storage" in token or "closet" in token or "wardrobe" in token:
         return "storage"
     return None
@@ -2040,6 +2047,24 @@ def _semantic_role_from_cluster(cluster: dict[str, Any]) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _is_dining_like_cluster(
+    *,
+    cluster_type: str | None,
+    semantic_role: str | None,
+    cluster_id: str | None,
+    members: Sequence[str] | None,
+) -> bool:
+    tokens = " ".join(
+        [
+            _normalize_token(cluster_type or ""),
+            _normalize_token(semantic_role or ""),
+            _normalize_token(cluster_id or ""),
+            *[_normalize_token(item) for item in (members or [])],
+        ]
+    )
+    return "dining" in tokens or "meal" in tokens or "breakfast" in tokens
 
 
 def _is_media_like_cluster(
@@ -2142,6 +2167,8 @@ def _cluster_structure_tokens(cluster: dict[str, Any]) -> list[str]:
 def _infer_type_from_token(token: str) -> tuple[str, int] | None:
     if not token:
         return None
+    if "dining" in token:
+        return ("dining", 3)
     if "kitchen" in token or any(
         marker in token
         for marker in (
@@ -2162,8 +2189,6 @@ def _infer_type_from_token(token: str) -> tuple[str, int] | None:
         return ("sleep", 3)
     if "work" in token or "study" in token or "desk" in token:
         return ("work", 3)
-    if "dining" in token:
-        return ("dining", 3)
     if "storage" in token:
         return ("storage", 3)
     if any(

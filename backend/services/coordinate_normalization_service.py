@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import math
+import re
+import unicodedata
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 from shapely.geometry import MultiPolygon, Polygon, box
 from shapely.geometry.base import BaseGeometry
-
 
 JsonObject = dict[str, Any]
 CoordinateSpace = Literal["apartment_normalized", "room_local"]
@@ -38,6 +40,44 @@ _POSITION_3D_KEYS = {"position", "translation"}
 _QUATERNION_KEYS = {"rotation", "rotation_quaternion"}
 _DIMENSION_KEYS = {"dimensions", "footprint", "footprint_mm", "size", "size_mm"}
 _SKIP_BOUNDS_KEYS = {"objects"}
+_LIVING_PROMPT_TERMS = (
+    "khach",
+    "living",
+    "sinh hoat",
+    "khong gian chung",
+    "common",
+    "shared",
+    "sofa",
+    "ghe sofa",
+    "ke tv",
+    "ke tivi",
+    "tu tv",
+    "tu tivi",
+    "ban tra",
+    "ban ca phe",
+    "ban nuoc",
+)
+_KITCHEN_PROMPT_TERMS = (
+    "bep",
+    "kitchen",
+    "tu bep",
+    "ban bep",
+    "tu lanh",
+    "bon rua",
+    "chau rua",
+    "bep nau",
+    "bep ga",
+    "bep dien",
+    "bep tu",
+    "stove",
+    "sink",
+    "fridge",
+    "refrigerator",
+    "ban an",
+    "ghe an",
+    "dining",
+    "dao bep",
+)
 
 
 @dataclass(frozen=True)
@@ -336,20 +376,25 @@ class CoordinateNormalizationService:
                 "parentRoomId": base_id,
             }
 
+        living_polygon_points = self._points_from_polygon(living_polygon)
+        kitchen_polygon_points = self._points_from_polygon(kitchen_polygon)
         split_details = {
             "parent_room_id": base_id,
             "parent_room_name": base_name,
             "parent_area_m2": round(float(polygon.area) / 1_000_000.0, 3),
+            "partition_wall": partition_wall,
             "children": [
                 {
                     "room_id": living_room["key"],
                     "room_type": "living_room",
                     "area_m2": round(float(living_polygon.area) / 1_000_000.0, 3),
+                    "polygon": living_polygon_points,
                 },
                 {
                     "room_id": kitchen_room["key"],
                     "room_type": "kitchen",
                     "area_m2": round(float(kitchen_polygon.area) / 1_000_000.0, 3),
+                    "polygon": kitchen_polygon_points,
                 },
             ],
         }
@@ -587,10 +632,22 @@ class CoordinateNormalizationService:
                 3,
             )
             openings = room_openings.get(room_id, {"doors": [], "windows": []})
-            user_input: JsonObject = {
-                "description": description
+            base_description = (
+                description
                 or room_description
-                or f"Design {room_name} as a {room_type.replace('_', ' ')}.",
+                or f"Design {room_name} as a {room_type.replace('_', ' ')}."
+            )
+            resolved_description = self._description_for_split_room(
+                base_description=base_description,
+                room_payload=local_payload,
+                floor_area_m2=floor_area_m2,
+            )
+            resolved_special_notes = self._special_notes_for_split_room(
+                special_notes=special_notes,
+                room_payload=local_payload,
+            )
+            user_input: JsonObject = {
+                "description": resolved_description,
                 "room_type": room_type,
                 "floor_area_m2": floor_area_m2,
                 "height": default_height_mm,
@@ -620,7 +677,7 @@ class CoordinateNormalizationService:
                 "user_id": resolved_user_id,
                 "input_payload": input_payload,
                 "description": user_input["description"],
-                "special_notes": special_notes,
+                "special_notes": resolved_special_notes,
             }
             system_inputs.append(
                 {
@@ -632,6 +689,159 @@ class CoordinateNormalizationService:
                 }
             )
         return system_inputs
+
+    def _description_for_split_room(
+        self,
+        *,
+        base_description: str,
+        room_payload: Mapping[str, Any],
+        floor_area_m2: float,
+    ) -> str:
+        split_role = self._split_role(room_payload)
+        if split_role not in {"living_room", "kitchen"}:
+            return base_description
+
+        related_request = self._related_request_for_split_role(
+            text=base_description,
+            split_role=split_role,
+        )
+        if split_role == "living_room":
+            required_living_targets = (
+                (
+                    "Đồ bắt buộc: một sofa lớn 2-3 chỗ làm sofa chính (sofa), "
+                    "bàn (coffee_table), kệ TV (tv_console) và TV (tv). "
+                    "Nếu cần thêm chỗ ngồi, dùng ghế thư giãn hoặc sofa đơn "
+                    "(armchair) như mục tiêu mềm, đặt vuông góc hoặc đối diện "
+                    "sofa chính để tạo cụm ngồi; không dùng món phụ làm sofa chính."
+                )
+                if floor_area_m2 >= 18.0
+                else (
+                    "Đồ bắt buộc: một sofa lớn 2-3 chỗ (sofa), bàn (coffee_table), "
+                    "kệ TV (tv_console) và TV (tv); không dùng món phụ làm sofa chính."
+                )
+            )
+            extra_living_targets = (
+                "Vì vùng phòng khách đủ diện tích, cần cố gắng có thêm "
+                "một ghế thư giãn (armchair), bàn phụ (side_table), "
+                "đèn cây (floor_lamp) và thảm (rug) để cụm khách không bị trống."
+                if floor_area_m2 >= 14.0
+                else (
+                    "Nếu còn đủ diện tích, thêm một ghế thư giãn (armchair), "
+                    "bàn phụ (side_table), đèn cây (floor_lamp) hoặc thảm (rug)."
+                )
+            )
+            return " ".join(
+                [
+                    "Thiết kế riêng phần phòng khách của không gian phòng khách + bếp.",
+                    (
+                        "Chỉ bố trí đồ phòng khách trong vùng này; không đặt đồ bếp "
+                        "như tủ bếp, bàn bếp, tủ lạnh, bồn rửa hoặc bếp nấu."
+                    ),
+                    required_living_targets,
+                    extra_living_targets,
+                    (
+                        "Bố cục phải có sofa quay mặt trực tiếp về kệ TV/TV, "
+                        "bàn nằm giữa sofa và TV, armchair đặt lệch cạnh sofa "
+                        "để tạo cụm trò chuyện; không dồn toàn bộ đồ sát vách bếp."
+                    ),
+                    f"Yêu cầu liên quan: {related_request}",
+                ]
+            )
+
+        return " ".join(
+            [
+                "Thiết kế riêng phần bếp của không gian phòng khách + bếp.",
+                (
+                    "Chỉ bố trí đồ bếp trong vùng này; không đặt đồ phòng khách "
+                    "như sofa, bàn phòng khách, kệ TV hoặc TV."
+                ),
+                (
+                    "Đồ ưu tiên: tủ bếp hoặc bàn bếp (kitchen_base_cabinet), "
+                    "tủ lạnh (fridge), bồn rửa bát (sink) và bếp nấu (stove)."
+                ),
+                (
+                    "Bàn ăn nhỏ (dining_table) là bắt buộc trong vùng bếp: "
+                    "đặt ở giữa phòng/vùng bếp với 4 ghế ăn compact "
+                    "(dining_chair) xung quanh; ghế ăn không làm tăng footprint "
+                    "ngân sách."
+                ),
+                f"Yêu cầu liên quan: {related_request}",
+            ]
+        )
+
+    def _special_notes_for_split_room(
+        self,
+        *,
+        special_notes: str | None,
+        room_payload: Mapping[str, Any],
+    ) -> str | None:
+        if special_notes is None:
+            return None
+        split_role = self._split_role(room_payload)
+        if split_role not in {"living_room", "kitchen"}:
+            return special_notes
+        related_notes = self._related_request_for_split_role(
+            text=special_notes,
+            split_role=split_role,
+        )
+        if split_role == "living_room":
+            return (
+                "Áp dụng ghi chú này chỉ cho phần phòng khách; bỏ qua các chi tiết "
+                f"thuộc bếp. Ghi chú liên quan: {related_notes}"
+            )
+        return (
+            "Áp dụng ghi chú này chỉ cho phần bếp; bỏ qua các chi tiết thuộc "
+            f"phòng khách. Ghi chú liên quan: {related_notes}"
+        )
+
+    def _split_role(self, room_payload: Mapping[str, Any]) -> str | None:
+        split_role = self._string_or_none(room_payload.get("splitRole"))
+        if split_role in {"living_room", "kitchen"}:
+            return split_role
+        if room_payload.get("splitGenerated") is not True:
+            return None
+        room_type = self._string_or_none(
+            room_payload.get("roomType") or room_payload.get("room_type")
+        )
+        if room_type in {"living_room", "kitchen"}:
+            return room_type
+        return None
+
+    def _related_request_for_split_role(self, *, text: str, split_role: str) -> str:
+        sentences = self._prompt_sentences(text)
+        if not sentences:
+            return text
+
+        role_terms = (
+            _LIVING_PROMPT_TERMS
+            if split_role == "living_room"
+            else _KITCHEN_PROMPT_TERMS
+        )
+        other_terms = (
+            _KITCHEN_PROMPT_TERMS
+            if split_role == "living_room"
+            else _LIVING_PROMPT_TERMS
+        )
+        selected: list[str] = []
+        neutral: list[str] = []
+        for sentence in sentences:
+            normalized = _prompt_search_text(sentence)
+            has_role_term = any(term in normalized for term in role_terms)
+            has_other_term = any(term in normalized for term in other_terms)
+            if has_role_term and not has_other_term:
+                selected.append(sentence)
+            elif not has_role_term and not has_other_term:
+                neutral.append(sentence)
+
+        related = [*neutral, *selected]
+        return " ".join(related or sentences)
+
+    def _prompt_sentences(self, text: str) -> list[str]:
+        return [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?。])\s+|\n+", text)
+            if sentence.strip()
+        ]
 
     def _build_room_views(
         self,
@@ -1631,3 +1841,11 @@ def _clean_float(value: float) -> float:
     if abs(rounded - nearest_integer) <= 1e-9:
         return float(nearest_integer)
     return rounded
+
+
+def _prompt_search_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    without_marks = "".join(
+        char for char in decomposed if not unicodedata.combining(char)
+    )
+    return without_marks.casefold()

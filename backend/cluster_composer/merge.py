@@ -2,8 +2,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
+
+_MEDIA_CONSOLE_TYPES = frozenset(
+    {
+        "ke_ti_vi",
+        "ke_tivi",
+        "ke_tv",
+        "media_console",
+        "tv_cabinet",
+        "tv_console",
+        "tv_stand",
+        "tu_ti_vi",
+        "tu_tivi",
+        "tu_tv",
+    }
+)
+_BARE_TV_DISPLAY_TYPES = frozenset({"smart_tv", "television", "ti_vi", "tivi", "tv"})
 
 
 def merge_cluster_outputs(
@@ -40,6 +57,12 @@ def merge_cluster_outputs(
             decision_by_cluster_and_type[(cluster_id, obj_type)] = deepcopy(decision)
         decision_by_type.setdefault(obj_type, deepcopy(decision))
 
+    media_console_owner_cluster_ids = _media_console_owner_cluster_ids(
+        clusters=clusters,
+        decision_by_cluster_and_type=decision_by_cluster_and_type,
+        decision_by_type=decision_by_type,
+    )
+
     merged_clusters: list[dict[str, Any]] = []
     object_program_by_cluster: dict[str, dict[str, Any]] = {}
     active_cluster_ids: list[str] = []
@@ -58,6 +81,12 @@ def merge_cluster_outputs(
             for member in members
             if isinstance(member, str)
             and member.strip()
+            and not _is_duplicate_media_console_member(
+                cluster_id=cluster_id,
+                cluster=cluster,
+                member=member,
+                media_console_owner_cluster_ids=media_console_owner_cluster_ids,
+            )
             and _decision_for_member(
                 cluster_id, member, decision_by_cluster_and_type, decision_by_type
             )
@@ -170,12 +199,19 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
     required_ids: list[str] = []
     optional_ids: list[str] = []
     decision_droppable_ids: list[str] = []
+    has_media_console = any(
+        _is_media_console_type(_decision_type_id(decision) or "")
+        for decision in decisions
+        if isinstance(decision, dict) and _decision_quantity(decision) > 0
+    )
 
     for decision in decisions:
         if not isinstance(decision, dict):
             continue
         base_object_id = _decision_type_id(decision)
         if base_object_id is None:
+            continue
+        if has_media_console and _is_bare_tv_display_type(base_object_id):
             continue
         rep_dims = (
             decision.get("rep_dims_m")
@@ -388,7 +424,7 @@ def _ensure_media_support_edges(
         for edge in support_edges
         if isinstance(edge.get("object_id"), str)
     }
-    tv_console_id = _primary_expanded_id("tv_console", expanded_ids_by_base)
+    tv_console_id = _primary_media_console_id(expanded_ids_by_base)
     if tv_console_id is None:
         return support_edges
 
@@ -412,6 +448,77 @@ def _ensure_media_support_edges(
             }
         )
     return out
+
+
+def _primary_media_console_id(
+    expanded_ids_by_base: dict[str, list[str]],
+) -> str | None:
+    for base_id, object_ids in expanded_ids_by_base.items():
+        if _is_media_console_type(base_id):
+            return next(iter(object_ids), None)
+    return None
+
+
+def _media_console_owner_cluster_ids(
+    *,
+    clusters: object,
+    decision_by_cluster_and_type: dict[tuple[str, str], dict[str, Any]],
+    decision_by_type: dict[str, dict[str, Any]],
+) -> set[str]:
+    if not isinstance(clusters, list):
+        return set()
+    out: set[str] = set()
+    for cluster in clusters:
+        if not isinstance(cluster, dict):
+            continue
+        cluster_id = str(cluster.get("cluster_id") or "").strip()
+        if not cluster_id or not _is_dedicated_media_cluster(cluster):
+            continue
+        members = cluster.get("members")
+        if not isinstance(members, list):
+            continue
+        for member in members:
+            if not isinstance(member, str) or not _is_media_console_type(member):
+                continue
+            decision = _decision_for_member(
+                cluster_id,
+                member,
+                decision_by_cluster_and_type,
+                decision_by_type,
+            )
+            if isinstance(decision, dict) and _decision_quantity(decision) > 0:
+                out.add(cluster_id)
+                break
+    return out
+
+
+def _is_duplicate_media_console_member(
+    *,
+    cluster_id: str,
+    cluster: Mapping[str, object],
+    member: str,
+    media_console_owner_cluster_ids: set[str],
+) -> bool:
+    if not media_console_owner_cluster_ids:
+        return False
+    if not _is_media_console_type(member):
+        return False
+    if cluster_id in media_console_owner_cluster_ids:
+        return False
+    return not _is_dedicated_media_cluster(cluster)
+
+
+def _is_dedicated_media_cluster(cluster: Mapping[str, object]) -> bool:
+    text = " ".join(
+        str(value or "")
+        for value in (
+            cluster.get("cluster_id"),
+            cluster.get("semantic_role"),
+            cluster.get("layout_role"),
+        )
+    )
+    key = _norm_key(text)
+    return any(token in key for token in ("media", "tv_focus", "entertainment"))
 
 
 def _remove_key_recursive(value: Any, key: str) -> None:
@@ -443,6 +550,27 @@ def _decision_type_id(decision: dict[str, Any]) -> str | None:
         return None
     obj_type = obj_type.strip()
     return obj_type if obj_type else None
+
+
+def _is_bare_tv_display_type(value: str) -> bool:
+    key = _norm_key(value)
+    if _is_media_console_type(key):
+        return False
+    if key in _BARE_TV_DISPLAY_TYPES:
+        return True
+    tokens = set(key.split("_"))
+    return bool(tokens & {"television", "tivi", "tv"}) and not bool(
+        tokens & {"cabinet", "console", "ke", "stand", "tu"}
+    )
+
+
+def _is_media_console_type(value: str) -> bool:
+    key = _norm_key(value)
+    return key in _MEDIA_CONSOLE_TYPES
+
+
+def _norm_key(value: str | None) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
 
 
 def _decision_quantity(decision: dict[str, Any]) -> int:

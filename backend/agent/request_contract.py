@@ -29,6 +29,12 @@ _OBJECT_ALIASES: dict[str, tuple[str, ...]] = {
 }
 _OBJECT_ALIASES.update(all_profile_object_aliases())
 _VIETNAMESE_OBJECT_ALIASES: dict[str, tuple[str, ...]] = {
+    "armchair": (
+        "ghe don",
+        "ghe sofa don",
+        "ghe thu gian",
+        "ghe doc sach",
+    ),
     "chair": (
         "ghe",
         "ghe tua",
@@ -40,12 +46,24 @@ _VIETNAMESE_OBJECT_ALIASES: dict[str, tuple[str, ...]] = {
     "coffee_table": ("ban tra", "ban cafe", "ban ca phe"),
     "desk": ("ban", "ban lam viec", "ban hoc", "ban trang diem", "ban go lam viec"),
     "dining_table": ("ban an",),
+    "floor_lamp": ("den cay", "den dung", "den san"),
+    "fridge": ("tu lanh",),
+    "kitchen_base_cabinet": ("tu bep", "ban bep", "ke bep", "mat bep"),
     "nightstand": (
         "ban dau giuong",
         "ban canh giuong",
         "tu dau giuong",
         "tu canh giuong",
         "tab dau giuong",
+    ),
+    "rug": ("tham", "tham trai san"),
+    "side_table": ("ban phu", "ban ben", "ban canh sofa", "ban don"),
+    "sink": ("bon rua", "bon rua bat", "chau rua", "chau rua bat"),
+    "stove": ("bep nau", "bep ga", "bep dien", "bep tu"),
+    "wardrobe": (
+        "tu ao",
+        "tu do",
+        "tu quan ao",
     ),
 }
 for _object_type, _aliases in _VIETNAMESE_OBJECT_ALIASES.items():
@@ -79,9 +97,19 @@ _GENERIC_DESK_TABLE_BLOCKERS = (
     "ban ca phe",
     "ban dau giuong",
     "ban canh giuong",
+    "ban bep",
     "ban nho",
     "ban phu",
     "ban ben",
+    "ban don",
+)
+_GENERIC_CHAIR_ALIAS = "ghe"
+_GENERIC_CHAIR_BLOCKERS = (
+    "ghe don",
+    "ghe doc sach",
+    "ghe sofa",
+    "ghe sofa don",
+    "ghe thu gian",
 )
 _VIETNAMESE_PRONOUN_RE = re.compile(r"\bb\u1ea1n\b", re.IGNORECASE)
 
@@ -100,9 +128,13 @@ _OPTIONAL_ONLY_PATTERNS = (
     "chi khi du khong gian",
 )
 _PREFERRED_IF_FIT_PATTERNS = (
+    "can co gang",
+    "co gang",
     "if it fits",
     "if they fit",
     "if possible",
+    "muc tieu",
+    "nen co gang",
     "where possible",
     "when possible",
     "neu co the",
@@ -137,7 +169,17 @@ _NON_FUNCTIONAL_CONTRACT_TYPES = {
 _HARD_CONTRACT_INTENTS = {"must_keep", "must_try"}
 _TARGET_CONTRACT_INTENTS = {"target_if_viable", "preferred_if_fit"}
 _SOFT_CONTRACT_INTENTS = {*_TARGET_CONTRACT_INTENTS, "optional_if_surplus"}
+_DISJUNCTIVE_SOFT_OBJECT_TYPES = {"kitchen_base_cabinet"}
+_DISJUNCTIVE_MARKER_RE = re.compile(r"\b(?:or|hoac)\b")
+_EXPLICIT_HARD_MARKERS = (
+    "bat buoc",
+    "phai co",
+    "can co",
+    "yeu cau co",
+)
 _MIN_GROUP_MEMBERS = 2
+_PRIMARY_SOFA_COUNT = 1
+_OPTIONAL_SECONDARY_SEAT_COUNT = 2
 _BEDROOM_NIGHTSTAND_CLUSTER_ID = "sleep_core"
 _BEDROOM_DEFAULT_NIGHTSTAND_TYPE = "nightstand"
 _CONTRACT_INTENT_ALIASES = {
@@ -580,7 +622,14 @@ def _best_mention_contract(
     for start, end in mentions:
         window = _clause_window(text, start, end)
         intent = _intent_for_window(window, object_type=object_type)
-        count_hint = _count_hint(window)
+        if intent == "must_keep" and _has_preceding_soft_list_marker(text, start):
+            intent = "target_if_viable"
+        if intent == "must_keep" and _should_soften_support_mention(
+            window,
+            object_type=object_type,
+        ):
+            intent = "target_if_viable"
+        count_hint = _count_hint_for_object(window, object_type=object_type)
         min_keep, preferred_count, max_keep = _counts_for_intent(intent, count_hint)
         scored.append(
             (
@@ -612,6 +661,38 @@ def _intent_for_window(window: str, *, object_type: str) -> str:
     return "must_keep"
 
 
+def _has_preceding_soft_list_marker(text: str, start: int) -> bool:
+    prefix = text[max(0, start - 120) : start]
+    sentence_tail = re.split(r"[.;:!?]", prefix)[-1]
+    if not sentence_tail:
+        return False
+    if any(pattern in sentence_tail for pattern in _OPTIONAL_ONLY_PATTERNS):
+        return True
+    return any(pattern in sentence_tail for pattern in _PREFERRED_IF_FIT_PATTERNS)
+
+
+def _has_disjunctive_soft_marker(window: str, *, object_type: str) -> bool:
+    return (
+        object_type in _DISJUNCTIVE_SOFT_OBJECT_TYPES
+        and _DISJUNCTIVE_MARKER_RE.search(window) is not None
+    )
+
+
+def _should_soften_support_mention(window: str, *, object_type: str) -> bool:
+    if object_type not in _DISJUNCTIVE_SOFT_OBJECT_TYPES:
+        return False
+    return _has_disjunctive_soft_marker(
+        window,
+        object_type=object_type,
+    ) or not _has_explicit_hard_marker(window)
+
+
+def _has_explicit_hard_marker(window: str) -> bool:
+    if any(pattern in window for pattern in _MUST_VERBS):
+        return True
+    return any(pattern in window for pattern in _EXPLICIT_HARD_MARKERS)
+
+
 def _counts_for_intent(
     intent: str,
     count_hint: tuple[int, int | None],
@@ -629,22 +710,42 @@ def _counts_for_intent(
 
 
 def _count_hint(window: str) -> tuple[int, int | None]:
-    if re.search(r"\bone\s+or\s+two\b|\b1\s+or\s+2\b", window):
+    count_window = _without_seat_capacity_numbers(window)
+    if re.search(r"\bone\s+or\s+two\b|\b1\s+or\s+2\b", count_window):
         return (1, 2)
-    if re.search(r"\btwo\s+or\s+one\b|\b2\s+or\s+1\b", window):
+    if re.search(r"\b1\s+hoac\s+2\b|\bmot\s+hoac\s+hai\b", count_window):
+        return (1, 2)
+    if re.search(r"\btwo\s+or\s+one\b|\b2\s+or\s+1\b", count_window):
+        return (1, 2)
+    if re.search(r"\b2\s+hoac\s+1\b|\bhai\s+hoac\s+mot\b", count_window):
         return (1, 2)
     for word, count in sorted(
         _COUNT_WORDS.items(),
         key=lambda item: (item[1], len(item[0])),
         reverse=True,
     ):
-        if re.search(rf"\b{re.escape(word)}\b", window):
+        if re.search(rf"\b{re.escape(word)}\b", count_window):
             return (count, count)
-    numeric = re.search(r"\b([1-4])\b", window)
+    numeric = re.search(r"\b([1-4])\b", count_window)
     if numeric:
         count = int(numeric.group(1))
         return (count, count)
     return (1, None)
+
+
+def _count_hint_for_object(window: str, *, object_type: str) -> tuple[int, int | None]:
+    low, high = _count_hint(window)
+    if (
+        object_type == "sofa"
+        and low == _PRIMARY_SOFA_COUNT
+        and high == _OPTIONAL_SECONDARY_SEAT_COUNT
+    ):
+        return (_PRIMARY_SOFA_COUNT, _PRIMARY_SOFA_COUNT)
+    return (low, high)
+
+
+def _without_seat_capacity_numbers(window: str) -> str:
+    return re.sub(r"\b[1-4](?:\s+[1-4])?\s+cho\b", " ", window)
 
 
 def _find_mentions(text: str, object_type: str) -> list[tuple[int, int]]:
@@ -656,7 +757,7 @@ def _find_mentions(text: str, object_type: str) -> list[tuple[int, int]]:
             continue
         pattern = re.compile(rf"\b{re.escape(normalized_alias)}s?\b")
         for match in pattern.finditer(text):
-            if _blocks_generic_desk_table_match(
+            if _blocks_generic_alias_match(
                 text,
                 object_type=object_type,
                 alias=normalized_alias,
@@ -739,6 +840,11 @@ def _sanitize_contract_object(
         return None
 
     intent = _normalize_contract_intent(item.get("intent"))
+    if intent in _HARD_CONTRACT_INTENTS and _should_soften_support_mention(
+        _normalize_text(evidence),
+        object_type=object_type,
+    ):
+        intent = "target_if_viable"
     low, high = _count_hint(_normalize_text(evidence))
     target_count = _positive_int(
         item.get("target_count", item.get("preferred_count")),
@@ -893,7 +999,7 @@ def _reason_for_intent(intent: str) -> str:
     return "brief mention"
 
 
-def _blocks_generic_desk_table_match(
+def _blocks_generic_alias_match(
     text: str,
     *,
     object_type: str,
@@ -901,8 +1007,13 @@ def _blocks_generic_desk_table_match(
     start: int,
 ) -> bool:
     if object_type != "desk" or alias != _GENERIC_TABLE_ALIAS:
-        return False
+        if object_type != "chair" or alias != _GENERIC_CHAIR_ALIAS:
+            return False
+        tail = text[start:]
+        return any(tail.startswith(blocker) for blocker in _GENERIC_CHAIR_BLOCKERS)
     tail = text[start:]
+    if "coffee_table" in tail[:32] or "side_table" in tail[:32]:
+        return True
     return any(tail.startswith(blocker) for blocker in _GENERIC_DESK_TABLE_BLOCKERS)
 
 

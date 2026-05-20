@@ -75,6 +75,24 @@ _WALL_ANCHOR_TOKENS = ("wall", "top", "bottom", "left", "right", "edge", "recess
 _CENTER_ANCHOR_TOKENS = ("center", "quadrant")
 _WINDOW_ANCHOR_TOKENS = ("window",)
 _ENTRY_ANCHOR_TOKENS = ("entry", "door")
+_KITCHEN_LINEAR_WORKFLOW_OBJECT_TOKENS = frozenset(
+    {
+        "cooktop",
+        "dishwasher",
+        "fridge",
+        "kitchen_base_cabinet",
+        "sink",
+        "stove",
+    }
+)
+_WALL_SEQUENCE_EDGE_TOKENS = frozenset(
+    {
+        "wall_band",
+        "wall_sequence",
+        "wall_support",
+        "workflow_chain",
+    }
+)
 _WINDOW_TREATMENT_OBJECT_TOKENS = frozenset(
     {
         "blind",
@@ -107,6 +125,7 @@ DEFAULT_SOLVER_TIME_LIMIT_SEC_PER_CONCEPT = 8.0
 DEFAULT_SOLVER_TOTAL_TIME_LIMIT_SEC = 40.0
 DEFAULT_MAX_DEGRADATION_ROUNDS = 3
 OBJECT_LEVEL_MAX_ANCHOR_CANDIDATES_PER_CLUSTER = 36
+OBJECT_LEVEL_MIN_ANCHOR_SOLUTIONS = 240
 OBJECT_LEVEL_MAX_SUPPORT_SOLUTIONS_PER_ANCHOR = 16
 OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS = 24
 OBJECT_LEVEL_MAX_SUPPORT_SLOT_CANDIDATES = 36
@@ -847,6 +866,12 @@ def _variant_family_compatibility_score(
             "conversation_facing",
         }:
             score += 0.8
+        elif role == "dining" and family in {
+            "centered_dining",
+            "wall_shifted_dining",
+            "hospitality_open_side",
+        }:
+            score += 0.75
         elif role in {"media", "focal"} and family in {
             "media_facing",
             "wall_backed_focal",
@@ -5115,13 +5140,15 @@ def solve_object_level_layout(
     if any(
         not rows
         for cluster_id, rows in anchor_candidates_by_cluster.items()
-        if not _cluster_is_solver_trial_optional(world["clusters_by_id"][cluster_id])
+        if not _cluster_can_be_dropped_for_object_solver(
+            world["clusters_by_id"][cluster_id]
+        )
     ):
         offending = [
             cluster_id
             for cluster_id, rows in anchor_candidates_by_cluster.items()
             if not rows
-            and not _cluster_is_solver_trial_optional(
+            and not _cluster_can_be_dropped_for_object_solver(
                 world["clusters_by_id"][cluster_id]
             )
         ]
@@ -5147,7 +5174,7 @@ def solve_object_level_layout(
             world=world,
             room_model=room_model,
             relation_plan=relation_plan,
-            max_solutions=max(8, int(max_rounds) * 4),
+            max_solutions=max(OBJECT_LEVEL_MIN_ANCHOR_SOLUTIONS, int(max_rounds) * 4),
         )
     )
     if not anchor_solutions:
@@ -5719,6 +5746,9 @@ def _index_room_regions(
     def add_region(region_id: str, bbox: tuple[int, int, int, int] | None) -> None:
         if region_id and bbox is not None and bbox[2] > bbox[0] and bbox[3] > bbox[1]:
             out.setdefault(region_id, bbox)
+            normalized_id = _normalized_region_ref(region_id)
+            if normalized_id != region_id:
+                out.setdefault(normalized_id, bbox)
 
     def bbox_from_mapping(row: Mapping[str, Any]) -> tuple[int, int, int, int] | None:
         bbox = row.get("bbox") or row.get("bbox_mm")
@@ -6393,8 +6423,9 @@ def _region_bbox_from_ref(
 ) -> tuple[int, int, int, int] | None:
     if not region_ref:
         return None
-    if region_ref in region_index:
-        return region_index[region_ref]
+    direct_bbox = _region_index_bbox(region_ref, region_index)
+    if direct_bbox is not None:
+        return direct_bbox
     macro_region_map = (
         relation_plan.get("macro_region_map")
         if isinstance(relation_plan, Mapping)
@@ -6466,6 +6497,9 @@ def _region_index_bbox(
 ) -> tuple[int, int, int, int] | None:
     if region_ref in region_index:
         return region_index[region_ref]
+    normalized_ref = _normalized_region_ref(region_ref)
+    if normalized_ref in region_index:
+        return region_index[normalized_ref]
     aliases = []
     if "_focal" in region_ref:
         aliases.append(region_ref.replace("_focal", "_anchor"))
@@ -6475,6 +6509,10 @@ def _region_index_bbox(
         if alias in region_index:
             return region_index[alias]
     return None
+
+
+def _normalized_region_ref(value: str) -> str:
+    return str(value or "").strip().replace("-", "_")
 
 
 def _without_macro_region_map(
@@ -6587,6 +6625,45 @@ def _cluster_is_solver_trial_optional(cluster_program: Mapping[str, Any]) -> boo
         bool(spec.get(key))
         for key in ("trial_optional", "solver_trial", "budget_trial")
     )
+
+
+def _cluster_can_be_dropped_for_object_solver(
+    cluster_program: Mapping[str, Any],
+) -> bool:
+    if _cluster_is_solver_trial_optional(cluster_program):
+        return True
+    anchor_id = _cluster_program_dominant_anchor(cluster_program)
+    if anchor_id is None:
+        return False
+    object_program = (
+        cluster_program.get("object_program")
+        if isinstance(cluster_program.get("object_program"), Mapping)
+        else {}
+    )
+    protected = {str(item) for item in object_program.get("protected_ids") or []}
+    if anchor_id in protected:
+        return False
+    spec = _object_spec(cluster_program, anchor_id)
+    if isinstance(spec, Mapping):
+        if bool(spec.get("protected")):
+            return False
+        if _spec_min_keep(spec) > 0:
+            return False
+        if bool(spec.get("droppable")):
+            return True
+    required = {str(item) for item in object_program.get("required_object_ids") or []}
+    if anchor_id in required:
+        return False
+    droppable = {str(item) for item in object_program.get("droppable_ids") or []}
+    optional = {str(item) for item in object_program.get("optional_object_ids") or []}
+    return anchor_id in droppable or anchor_id in optional
+
+
+def _spec_min_keep(spec: Mapping[str, Any]) -> int:
+    try:
+        return max(0, int(spec.get("min_keep") or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _object_spec(
@@ -7565,8 +7642,11 @@ def _search_anchor_solutions(
             return
         cluster_id = anchor_order[index]
         cluster_program = world["clusters_by_id"][cluster_id]
-        if _cluster_is_solver_trial_optional(cluster_program):
-            drop_records = _optional_trial_cluster_drop_records(cluster_program)
+        if _cluster_can_be_dropped_for_object_solver(cluster_program):
+            drop_records = _optional_trial_cluster_drop_records(
+                cluster_program,
+                reason="optional_anchor_cluster_not_placed",
+            )
             dropped_inventory_by_cluster.setdefault(cluster_id, []).extend(drop_records)
             rec(index + 1, chosen, dropped_inventory_by_cluster)
             if drop_records:
@@ -7630,6 +7710,8 @@ def _anchor_solution_has_dropped_trial(solution: Mapping[str, Any]) -> bool:
 
 def _optional_trial_cluster_drop_records(
     cluster_program: Mapping[str, Any],
+    *,
+    reason: str = "optional_trial_anchor_cluster_not_placed",
 ) -> list[dict[str, str]]:
     object_program = (
         cluster_program.get("object_program")
@@ -7650,7 +7732,7 @@ def _optional_trial_cluster_drop_records(
     return [
         {
             "object_id": object_id,
-            "reason": "optional_trial_anchor_cluster_not_placed",
+            "reason": reason,
         }
         for object_id in members
     ]
@@ -8748,7 +8830,9 @@ def _normalized_support_side_options(edge: Mapping[str, Any]) -> list[str]:
     }
     wall_band_tokens = {
         "wall_band",
+        "wall_sequence",
         "wall_support",
+        "workflow_chain",
     }
     flank_band_tokens = {"flank_band", "secondary_seat", "armchair", "chair"}
     if tokens & front_band_tokens:
@@ -8848,6 +8932,11 @@ def _support_slot_candidates(
         base_row.get("front_token"), int(base_row.get("rot") or 0)
     )
     orientation = str(edge.get("orientation") or "").strip().lower()
+    lock_wall_depth = _support_edge_locks_wall_depth(
+        edge=edge,
+        spec=spec,
+        object_id=object_id,
+    )
     out: list[dict[str, Any]] = []
     seen: set[tuple[int, int, int]] = set()
     for side_option in side_options:
@@ -8879,12 +8968,25 @@ def _support_slot_candidates(
                     front=support_front,
                     side=support_side,
                 )
+                if lock_wall_depth and slot_side_option in {"left", "right"}:
+                    depth_offset = _wall_depth_alignment_offset(
+                        front=support_front,
+                        base_w=base_w,
+                        base_h=base_h,
+                        obj_w=w_mm,
+                        obj_h=h_mm,
+                    )
+                    base_offset = (
+                        base_offset[0] + depth_offset[0],
+                        base_offset[1] + depth_offset[1],
+                    )
                 for slide in _support_slot_slide_offsets(
                     side_option=slot_side_option,
                     base_w=base_w,
                     base_h=base_h,
                     front=support_front,
                     side=support_side,
+                    lock_wall_depth=lock_wall_depth,
                 ):
                     x = _snap_to_grid(
                         int(
@@ -9169,8 +9271,11 @@ def _support_slot_slide_offsets(
     base_h: int,
     front: tuple[int, int],
     side: tuple[int, int],
+    lock_wall_depth: bool = False,
 ) -> list[tuple[float, float]]:
     token = str(side_option).lower()
+    if lock_wall_depth and token in {"left", "right"}:
+        return [(0.0, 0.0)]
     if token in {"bedside_head_left", "bedside_head_right"}:
         span = float(base_h if abs(front[1]) == 1 else base_w)
         return [
@@ -9198,6 +9303,24 @@ def _support_slot_slide_offsets(
             for factor in OBJECT_LEVEL_SUPPORT_ALIGNMENT_FACTORS
         ]
     return [(0.0, 0.0)]
+
+
+def _support_edge_locks_wall_depth(
+    *,
+    edge: Mapping[str, Any],
+    spec: Mapping[str, Any],
+    object_id: str,
+) -> bool:
+    edge_tokens = {
+        str(edge.get("support_role") or "").strip().lower(),
+        str(edge.get("band_intent") or "").strip().lower(),
+        str(edge.get("selection") or "").strip().lower(),
+        str(edge.get("proximity") or "").strip().lower(),
+    }
+    if not bool(edge_tokens & _WALL_SEQUENCE_EDGE_TOKENS):
+        return False
+    object_key = _spec_object_key(spec, object_id)
+    return any(token in object_key for token in _KITCHEN_LINEAR_WORKFLOW_OBJECT_TOKENS)
 
 
 def _desired_support_front_vector(
@@ -9258,6 +9381,20 @@ def _slot_offset(
             fy * front_clear + sy * side_clear * 0.85,
         )
     return (fx * front_clear, fy * front_clear)
+
+
+def _wall_depth_alignment_offset(
+    *,
+    front: tuple[int, int],
+    base_w: int,
+    base_h: int,
+    obj_w: int,
+    obj_h: int,
+) -> tuple[float, float]:
+    base_depth = float(base_h if abs(front[1]) == 1 else base_w)
+    obj_depth = float(obj_h if abs(front[1]) == 1 else obj_w)
+    delta = (obj_depth - base_depth) / 2.0
+    return (front[0] * delta, front[1] * delta)
 
 
 def _front_vector_from_rotation(front_token: Any, rot: int) -> tuple[int, int]:

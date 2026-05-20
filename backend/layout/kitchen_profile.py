@@ -53,8 +53,6 @@ KITCHEN_WORKFLOW_OBJECTS = frozenset(
         "sink",
         "stove",
         "cooktop",
-        "kitchen_base_cabinet",
-        "dishwasher",
     }
 )
 
@@ -164,16 +162,16 @@ _KITCHEN_SIZE_PROFILES: dict[str, dict[str, Any]] = {
     },
     "dining_table": {
         "rep_dims_m": {
-            "S": {"L": 0.80, "W": 0.70, "A": 0.56},
-            "M": {"L": 1.40, "W": 0.85, "A": 1.19},
-            "L": {"L": 1.80, "W": 0.95, "A": 1.71},
+            "S": {"L": 0.70, "W": 0.65, "A": 0.46},
+            "M": {"L": 0.90, "W": 0.70, "A": 0.63},
+            "L": {"L": 1.10, "W": 0.75, "A": 0.83},
         }
     },
     "dining_chair": {
         "rep_dims_m": {
-            "S": {"L": 0.42, "W": 0.42, "A": 0.18},
-            "M": {"L": 0.48, "W": 0.48, "A": 0.23},
-            "L": {"L": 0.55, "W": 0.55, "A": 0.30},
+            "S": {"L": 0.36, "W": 0.36, "A": 0.13},
+            "M": {"L": 0.40, "W": 0.40, "A": 0.16},
+            "L": {"L": 0.44, "W": 0.44, "A": 0.19},
         }
     },
     "bar_stool": {
@@ -204,7 +202,6 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
             },
             "object_program": {
                 "required": [
-                    "kitchen_base_cabinet",
                     "fridge",
                     "sink",
                     "stove",
@@ -213,27 +210,26 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
                 "choose_exactly_one_from": [],
                 "choose_exactly_one_from_if_kept": [],
                 "choose_at_least_one_from": [],
-                "optional": ["dishwasher"],
+                "optional": ["kitchen_base_cabinet", "dishwasher"],
                 "optional_limits": {
-                    "global": 1,
-                    "by_object": {"dishwasher": 1},
+                    "global": 2,
+                    "by_object": {"kitchen_base_cabinet": 1, "dishwasher": 1},
                 },
             },
             "semantic": {
-                "dominant_anchor_candidates": ["kitchen_base_cabinet"],
+                "dominant_anchor_candidates": ["sink", "fridge", "stove"],
                 "notes": [
-                    "Keep fridge, sink, stove, and prep counter in one wall-led workflow cluster."
+                    "Keep fridge, sink, and stove adjacent in one wall-backed workflow run."
                 ],
             },
             "degradation_hints": {
                 "preserve_first": [
-                    "kitchen_base_cabinet",
                     "fridge",
                     "sink",
                     "stove",
                 ],
                 "shrink_before_drop": ["kitchen_base_cabinet"],
-                "drop_first": ["dishwasher"],
+                "drop_first": ["dishwasher", "kitchen_base_cabinet"],
             },
             "tier_count_hints": {
                 "bundle_class": "indispensable",
@@ -244,13 +240,13 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
                 "object_hints": [
                     {
                         "object_type": "kitchen_base_cabinet",
-                        "min_keep": 1,
+                        "min_keep": 0,
                         "max_keep": 1,
-                        "keep_if_space_surplus": False,
-                        "space_surplus_threshold": 0.0,
-                        "drop_order_bias": "drop_last",
-                        "preserve_level": "highest",
-                        "preferred_size_tier": "M",
+                        "keep_if_space_surplus": True,
+                        "space_surplus_threshold": 0.35,
+                        "drop_order_bias": "drop_late",
+                        "preserve_level": "medium",
+                        "preferred_size_tier": "S",
                     },
                     {
                         "object_type": "fridge",
@@ -469,8 +465,8 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
                 "choose_at_least_one_from": [],
                 "optional": [],
                 "optional_limits": {
-                    "global": 2,
-                    "by_object": {"dining_table": 1, "dining_chair": 2},
+                    "global": 5,
+                    "by_object": {"dining_table": 1, "dining_chair": 4},
                 },
             },
             "semantic": {
@@ -503,12 +499,12 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
                     },
                     {
                         "object_type": "dining_chair",
-                        "min_keep": 1,
-                        "max_keep": 2,
-                        "keep_if_space_surplus": True,
-                        "space_surplus_threshold": 0.45,
-                        "drop_order_bias": "drop_first",
-                        "preserve_level": "medium",
+                        "min_keep": 4,
+                        "max_keep": 4,
+                        "keep_if_space_surplus": False,
+                        "space_surplus_threshold": 0.0,
+                        "drop_order_bias": "drop_last",
+                        "preserve_level": "high",
                         "preferred_size_tier": "S",
                     },
                 ],
@@ -532,8 +528,12 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
                 "max_keep": 1,
             },
             {
-                "objects": ["bar_stool", "dining_chair"],
+                "objects": ["bar_stool"],
                 "max_keep": 2,
+            },
+            {
+                "objects": ["dining_chair"],
+                "max_keep": 4,
             },
         ],
         "group_minimums": [],

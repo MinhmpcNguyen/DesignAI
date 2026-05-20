@@ -43,6 +43,9 @@ SEMANTIC_VARIANT_FAMILIES = frozenset(
         "edge_storage",
         "perimeter_storage",
         "support_edge",
+        "centered_dining",
+        "wall_shifted_dining",
+        "hospitality_open_side",
     }
 ) | frozenset(SLEEP_VARIANT_FAMILIES)
 
@@ -53,6 +56,8 @@ VARIANT_FAMILY_ALIASES = {
     "wall_media_linear": "wall_backed_focal",
     "wall_storage": "storage_wall",
     "wall_storage_linear": "storage_wall",
+    "dining_core": "centered_dining",
+    "dining": "centered_dining",
 }
 
 VARIANT_FAMILY_TOKENS = (
@@ -140,6 +145,15 @@ ROLE_VARIANT_FAMILY_ALLOWLISTS = {
             "perimeter_storage",
             "work_core",
             "workflow",
+        }
+    ),
+    "dining": frozenset(
+        {
+            "centered_dining",
+            "wall_shifted_dining",
+            "hospitality_open_side",
+            "dining_core",
+            "dining",
         }
     ),
     "sleep": frozenset(SLEEP_VARIANT_FAMILIES),

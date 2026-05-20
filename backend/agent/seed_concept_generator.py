@@ -1451,6 +1451,9 @@ def _score_cluster_region(
         score += 1.1 if floating_allowed else -0.8
         reasons.append("floating_allowed" if floating_allowed else "floating_limited")
 
+    if role == "dining" and ("floating" in tags or "center" in tags):
+        score += 2.4
+        reasons.append("dining_center_compatible")
     if role in {"social_anchor", "lounge"} and region.region_id in {
         "primary_focal_wall_zone",
         "floating_support_zone",
@@ -1996,6 +1999,14 @@ def _cluster_zone_assignment(
         candidates[0] if candidates else None,
     )
     zone_assignment = preferred_region_id
+    if cluster.role_kind == "dining" and any(
+        item.region_id == "floating_center_zone" for item in candidates
+    ):
+        preferred_region_id = "floating_center_zone"
+        zone_assignment = "floating_center_zone"
+        candidate = next(
+            item for item in candidates if item.region_id == "floating_center_zone"
+        )
     if candidate is not None and family not in {"open_center", "edge_weighted"}:
         zone_assignment = candidate.region_id
     scenario_role = _scenario_role_for_cluster(
@@ -2032,6 +2043,13 @@ def _cluster_zone_assignment(
             *_cluster_avoid_region_ids(cluster),
         ]
     )
+    if cluster.role_kind == "dining":
+        forbidden_region_ids = [
+            region_id
+            for region_id in forbidden_region_ids
+            if region_id not in {"floating_center_zone", "keep_open_center"}
+            and "corridor" not in region_id
+        ]
     return {
         "cluster_id": cluster.cluster_id,
         "semantic_role": cluster.semantic_role,
@@ -2393,6 +2411,10 @@ def _preferred_region_for_family(
         primary_cluster_id=primary_cluster_id,
         secondary_cluster_id=secondary_cluster_id,
     )
+    if cluster.role_kind == "dining" and bool(
+        cluster.zone_claims.get("floating_allowed")
+    ):
+        return "floating_center_zone"
     if scenario_role == "primary":
         return scenario.primary_zone_id
     if scenario_role == "secondary":
@@ -2701,9 +2723,14 @@ def _allowed_variant_families_for_row(
             families.extend(["daylight_work", "window_oriented"])
         families.extend(["work_core", "workflow"])
     elif role_kind == "kitchen":
+        families.append("workflow")
         if wall_claim in {"strong", "medium"}:
             families.append("storage_wall")
         families.extend(["edge_storage", "perimeter_storage", "workflow"])
+    elif role_kind == "dining":
+        families.extend(
+            ["centered_dining", "wall_shifted_dining", "hospitality_open_side"]
+        )
     elif role_kind == "storage":
         if wall_claim in {"strong", "medium"}:
             families.append("storage_wall")
@@ -2727,7 +2754,9 @@ def _allowed_variant_families_for_row(
         "media",
         "focal",
         "storage",
+        "kitchen",
         "sleep",
+        "dining",
     }:
         families.insert(0, "open_center")
     elif family == "edge_weighted" and role_kind in {"storage", "support"}:
@@ -3985,6 +4014,7 @@ def _semantic_role_from_cluster(cluster_id: str, object_ids: Sequence[str]) -> s
         "focal": "focal_anchor",
         "storage": "secondary_storage",
         "kitchen": "kitchen_workflow",
+        "dining": "dining",
         "work": "work_support",
         "sleep": "rest_anchor",
         "service": "service_support",
@@ -3994,6 +4024,8 @@ def _semantic_role_from_cluster(cluster_id: str, object_ids: Sequence[str]) -> s
 
 def _role_kind(cluster_id: str, object_ids: Sequence[str], semantic_role: str) -> str:
     tokens = " ".join([cluster_id, semantic_role, *object_ids]).lower()
+    if any(token in tokens for token in ("dining", "meal", "breakfast")):
+        return "dining"
     if "kitchen" in tokens or profile_room_type_for_objects(object_ids) == "kitchen":
         return "kitchen"
     if any(token in tokens for token in ("sofa", "sectional", "lounge", "seating")):
@@ -4016,7 +4048,7 @@ def _priority(value: object, role_kind: str) -> Priority:
     text = str(value or "").strip().lower()
     if text in {"core", "support", "optional"}:
         return text  # type: ignore[return-value]
-    if role_kind in {"social_anchor", "media", "sleep", "kitchen"}:
+    if role_kind in {"social_anchor", "media", "sleep", "kitchen", "dining"}:
         return "core"
     if role_kind in {"storage", "work", "support"}:
         return "support"
@@ -4177,6 +4209,12 @@ def _wall_claim_for(
     zone_assignment: str,
     family: ConceptFamily,
 ) -> str:
+    if cluster.role_kind == "dining" and "center" in zone_assignment:
+        return "none"
+    if cluster.role_kind == "kitchen" and (
+        "wall" in zone_assignment or "edge" in zone_assignment
+    ):
+        return "strong"
     if family in {"focal_axis", "edge_weighted"} and (
         cluster.role_kind == "media" or "wall" in zone_assignment
     ):
@@ -4196,6 +4234,10 @@ def _center_usage_for(
     scenario: MacroScenario,
     scenario_role: str,
 ) -> str:
+    if cluster.role_kind == "dining" and bool(
+        cluster.zone_claims.get("floating_allowed")
+    ):
+        return "primary"
     if scenario.center_policy == "floating_primary" and scenario_role == "primary":
         return "primary"
     if family in {"open_center", "edge_weighted"}:

@@ -166,21 +166,47 @@ def kitchen_semantic_placements_for_members(
                 }
             )
 
+    if anchor == "sink":
+        workflow_sequence = [
+            member
+            for member in ("fridge", "stove", "cooktop")
+            if member in members and member != anchor
+        ]
+    else:
+        workflow_sequence = [
+            member
+            for member in ("fridge", "sink", "stove", "cooktop")
+            if member in members and member != anchor
+        ]
     previous_workflow = anchor
-    for member in members:
-        if member == anchor or not is_kitchen_workflow_object(member):
-            continue
-        relative_to = anchor
-        if member in {"stove", "dishwasher"} and "sink" in members:
+    for member in workflow_sequence:
+        relative_to = previous_workflow
+        if anchor == "sink" and member in {"stove", "cooktop"}:
             relative_to = "sink"
-        elif member == "sink":
-            relative_to = anchor
-        elif previous_workflow != anchor:
-            relative_to = previous_workflow
         rows.append(
             {
                 "id": member,
                 "relative_to": relative_to,
+                "kind": "anchor_side",
+                "side_options": ["left", "right"],
+                "gap_min": 0,
+                "gap_max": 20,
+                "support_role": "wall_support",
+                "band_intent": "wall_sequence",
+                "orientation": "same_direction",
+                "proximity": "touching",
+                "selection": "best_fit",
+            }
+        )
+        if member in {"fridge", "sink", "stove", "cooktop"}:
+            previous_workflow = member
+    for member in ("kitchen_base_cabinet", "dishwasher"):
+        if member not in members or member == anchor or "sink" not in members:
+            continue
+        rows.append(
+            {
+                "id": member,
+                "relative_to": "sink",
                 "kind": "anchor_side",
                 "side_options": ["left", "right"],
                 "gap_min": 0,
@@ -192,8 +218,6 @@ def kitchen_semantic_placements_for_members(
                 "selection": "best_fit",
             }
         )
-        if member in {"fridge", "sink", "stove"}:
-            previous_workflow = member
     return rows
 
 

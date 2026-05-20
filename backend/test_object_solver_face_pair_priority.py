@@ -6,6 +6,8 @@ from collections.abc import Mapping
 
 from agent.solver.solver import (
     _anchor_pair_orientation_score,
+    _index_room_regions,
+    _region_index_bbox,
     _relax_protected_regions_for_required_face_pair,
 )
 
@@ -127,6 +129,38 @@ class ObjectSolverFacePairPriorityTest(unittest.TestCase):
         self.assertEqual(rows[1]["enforcement"], "soft")
         self.assertEqual(rows[1]["violation_severity"], "advisory")
         self.assertEqual(relaxations[0]["to_max_overlap_ratio"], 0.32)
+
+    def test_region_index_resolves_hyphenated_ids_from_sanitized_refs(self) -> None:
+        room_model = {
+            "room": {
+                "polygon_ccw": [
+                    {"x": 0, "y": 0},
+                    {"x": 4000, "y": 0},
+                    {"x": 4000, "y": 3000},
+                    {"x": 0, "y": 3000},
+                ],
+            },
+            "affordance_map": {
+                "entry_landing_zones": [
+                    {
+                        "id": "door-alpha_entry_clearance",
+                        "polygon_ccw": [
+                            {"x": 3000, "y": 2200},
+                            {"x": 4000, "y": 2200},
+                            {"x": 4000, "y": 3000},
+                            {"x": 3000, "y": 3000},
+                        ],
+                    }
+                ]
+            },
+        }
+
+        region_index = _index_room_regions(room_model)
+
+        self.assertEqual(
+            _region_index_bbox("door_alpha_entry_clearance", region_index),
+            (3000, 2200, 4000, 3000),
+        )
 
 
 if __name__ == "__main__":

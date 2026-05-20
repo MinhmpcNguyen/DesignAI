@@ -304,6 +304,8 @@ ROOM_SURFACE_GROUPS: dict[str, dict[str, Any]] = {
             "pantry_cabinet",
             "wine_cabinet",
             "bar_cart",
+            "dining_table",
+            "dining_chair",
             "bathroom_stool",
         ],
         "can_stack_or_be_stacked_or_hang_or_soft": {
@@ -324,6 +326,10 @@ ROOM_SURFACE_GROUPS: dict[str, dict[str, Any]] = {
                 "blender",
             ],
             "kitchen_island": [
+                "decor",
+                "vase",
+            ],
+            "dining_table": [
                 "decor",
                 "vase",
             ],

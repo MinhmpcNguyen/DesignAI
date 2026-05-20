@@ -438,11 +438,29 @@ export interface AutoFillOption {
   openings: AutoFillObjectResult[];
 }
 
+export interface AutoFillDebugSplitWall {
+  id: string;
+  startPoint: [number, number];
+  endPoint: [number, number];
+  height?: number | null;
+  thickness?: number | null;
+  source?: string | null;
+}
+
+export interface AutoFillDebugZone {
+  roomId: string;
+  roomType: string;
+  areaM2?: number | null;
+  polygon: [number, number][];
+}
+
 export interface AutoFillResult {
   objects: AutoFillObjectResult[];
   openings: AutoFillObjectResult[];
   selectedOptionId: string | null;
   options: AutoFillOption[];
+  debugSplitWall?: AutoFillDebugSplitWall | null;
+  debugZones?: AutoFillDebugZone[];
 }
 
 // --- Normalize-run async job (backend pipeline) --------------------------------

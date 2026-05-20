@@ -2,13 +2,19 @@ import { createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type { RootState } from "@/states/store";
 import type { FloorSliceType } from "./types";
 import { DEFAULT_FLOOR_MATERIAL_ID } from "@/constant";
-import type { TRoomInfo } from "@/types/api";
+import type {
+  AutoFillDebugSplitWall,
+  AutoFillDebugZone,
+  TRoomInfo,
+} from "@/types/api";
 
 const initialState: FloorSliceType = {
   globalMaterialId: DEFAULT_FLOOR_MATERIAL_ID,
   roomMaterials: {},
   roomNames: {},
   roomDescriptions: {},
+  debugSplitWalls: {},
+  debugSplitZones: {},
   selectedRoomKey: null,
 };
 
@@ -37,6 +43,21 @@ const floorSlice = createSlice({
     ) {
       state.roomDescriptions[action.payload.key] = action.payload.description;
     },
+    setRoomDebugSplit(
+      state,
+      action: PayloadAction<{
+        key: string;
+        wall: AutoFillDebugSplitWall;
+        zones: AutoFillDebugZone[];
+      }>,
+    ) {
+      state.debugSplitWalls[action.payload.key] = action.payload.wall;
+      state.debugSplitZones[action.payload.key] = action.payload.zones;
+    },
+    clearRoomDebugSplit(state, action: PayloadAction<string>) {
+      delete state.debugSplitWalls[action.payload];
+      delete state.debugSplitZones[action.payload];
+    },
     setSelectedRoomKey(state, action: PayloadAction<string | null>) {
       state.selectedRoomKey = action.payload;
     },
@@ -61,6 +82,8 @@ const floorSlice = createSlice({
       state.roomNames = names;
       state.roomMaterials = materials;
       state.roomDescriptions = descriptions;
+      state.debugSplitWalls = {};
+      state.debugSplitZones = {};
       state.selectedRoomKey = null;
     },
   },
@@ -73,6 +96,8 @@ export const floorSelectors = {
   selectRoomMaterials: (state: RootState) => state.floor.roomMaterials,
   selectRoomNames: (state: RootState) => state.floor.roomNames,
   selectRoomDescriptions: (state: RootState) => state.floor.roomDescriptions,
+  selectDebugSplitWalls: (state: RootState) => state.floor.debugSplitWalls,
+  selectDebugSplitZones: (state: RootState) => state.floor.debugSplitZones,
   selectSelectedRoomKey: (state: RootState) => state.floor.selectedRoomKey,
 };
 

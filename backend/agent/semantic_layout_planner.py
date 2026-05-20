@@ -100,7 +100,10 @@ _ADAPTIVE_SEMANTIC_LLM_ENV = "TKNT_SEMANTIC_ADAPTIVE_LLM"
 _REQUEST_CONTRACT_LLM_ENV = "TKNT_REQUEST_CONTRACT_LLM"
 _ADAPTIVE_STAGE_NOTE = (
     "Adaptive semantic LLM mode enabled via "
-    f"{_ADAPTIVE_SEMANTIC_LLM_ENV}; deterministic stage fallbacks are disabled."
+    f"{_ADAPTIVE_SEMANTIC_LLM_ENV}; deterministic validation remains active."
+)
+_ADAPTIVE_ROOM_RULE_FALLBACK_NOTE = (
+    "Adaptive room-rule LLM failed; canonical semantic room rule fallback was used."
 )
 _REQUEST_CONTRACT_STAGE_NOTE = (
     "Request contract LLM mode enabled via "
@@ -339,17 +342,31 @@ _STRING_GROUP_ARRAY_SCHEMA: dict[str, object] = {
         "items": _STRING_SCHEMA,
     },
 }
+_OBJECT_PROGRAM_RESPONSE_PROPERTIES: dict[str, object] = {
+    "required": _STRING_ARRAY_SCHEMA,
+    "required_if_kept": _STRING_ARRAY_SCHEMA,
+    "optional": _STRING_ARRAY_SCHEMA,
+    "choose_exactly_one_from": _STRING_GROUP_ARRAY_SCHEMA,
+    "choose_exactly_one_from_if_kept": _STRING_GROUP_ARRAY_SCHEMA,
+    "choose_at_least_one_from": _STRING_GROUP_ARRAY_SCHEMA,
+    "optional_limits": {"type": "OBJECT"},
+}
 _OBJECT_PROGRAM_RESPONSE_SCHEMA: dict[str, object] = {
     "type": "OBJECT",
-    "properties": {
-        "required": _STRING_ARRAY_SCHEMA,
-        "required_if_kept": _STRING_ARRAY_SCHEMA,
-        "optional": _STRING_ARRAY_SCHEMA,
-        "choose_exactly_one_from": _STRING_GROUP_ARRAY_SCHEMA,
-        "choose_exactly_one_from_if_kept": _STRING_GROUP_ARRAY_SCHEMA,
-        "choose_at_least_one_from": _STRING_GROUP_ARRAY_SCHEMA,
-        "optional_limits": {"type": "OBJECT"},
-    },
+    "properties": _OBJECT_PROGRAM_RESPONSE_PROPERTIES,
+}
+_OBJECT_PROGRAM_FULL_RESPONSE_SCHEMA: dict[str, object] = {
+    "type": "OBJECT",
+    "properties": _OBJECT_PROGRAM_RESPONSE_PROPERTIES,
+    "required": [
+        "required",
+        "required_if_kept",
+        "optional",
+        "choose_exactly_one_from",
+        "choose_exactly_one_from_if_kept",
+        "choose_at_least_one_from",
+        "optional_limits",
+    ],
 }
 _TIER_COUNT_HINT_RESPONSE_SCHEMA: dict[str, object] = {
     "type": "OBJECT",
@@ -384,6 +401,90 @@ _TIER_COUNT_HINT_RESPONSE_SCHEMA: dict[str, object] = {
             },
         },
     },
+}
+_ADAPTIVE_ROOM_RULE_RESPONSE_SCHEMA: dict[str, object] = {
+    "type": "OBJECT",
+    "properties": {
+        "room_rule": {
+            "type": "OBJECT",
+            "properties": {
+                "room_type": _STRING_SCHEMA,
+                "policy": {"type": "OBJECT"},
+                "global_program": {"type": "OBJECT"},
+                "clusters": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "cluster_id": _STRING_SCHEMA,
+                            "priority": _STRING_SCHEMA,
+                            "activation": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "base_rule": _STRING_SCHEMA,
+                                    "always_consider": _BOOLEAN_SCHEMA,
+                                    "requires_usefulness_test": _BOOLEAN_SCHEMA,
+                                    "conditions": {
+                                        "type": "ARRAY",
+                                        "items": {
+                                            "type": "OBJECT",
+                                            "properties": {
+                                                "predicate": _STRING_SCHEMA,
+                                                "effects": (
+                                                    _OBJECT_PROGRAM_RESPONSE_SCHEMA
+                                                ),
+                                            },
+                                            "required": ["predicate", "effects"],
+                                        },
+                                    },
+                                },
+                                "required": [
+                                    "base_rule",
+                                    "always_consider",
+                                    "requires_usefulness_test",
+                                    "conditions",
+                                ],
+                            },
+                            "object_program": _OBJECT_PROGRAM_FULL_RESPONSE_SCHEMA,
+                            "semantic": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "dominant_anchor_candidates": _STRING_ARRAY_SCHEMA,
+                                    "notes": _STRING_ARRAY_SCHEMA,
+                                },
+                            },
+                            "degradation_hints": {
+                                "type": "OBJECT",
+                                "properties": {
+                                    "preserve_first": _STRING_ARRAY_SCHEMA,
+                                    "shrink_before_drop": _STRING_ARRAY_SCHEMA,
+                                    "drop_first": _STRING_ARRAY_SCHEMA,
+                                },
+                                "required": [
+                                    "preserve_first",
+                                    "shrink_before_drop",
+                                    "drop_first",
+                                ],
+                            },
+                            "tier_count_hints": _TIER_COUNT_HINT_RESPONSE_SCHEMA,
+                        },
+                        "required": [
+                            "cluster_id",
+                            "priority",
+                            "activation",
+                            "object_program",
+                            "semantic",
+                            "degradation_hints",
+                            "tier_count_hints",
+                        ],
+                    },
+                },
+            },
+            "required": ["room_type", "policy", "global_program", "clusters"],
+        },
+        "notes": _STRING_ARRAY_SCHEMA,
+    },
+    "required": ["room_rule", "notes"],
 }
 _ADAPTIVE_REQUEST_CONTRACT_RESPONSE_SCHEMA: dict[str, object] = {
     "type": "OBJECT",
@@ -563,18 +664,26 @@ class SemanticLayoutPlanner:
                 "SemanticLayoutPlanner adaptive LLM mode enabled via %s",
                 _ADAPTIVE_SEMANTIC_LLM_ENV,
             )
-            room_rules, room_rule_notes = self._generate_adaptive_room_rules(
-                room_type=room_type,
-                brief_text=brief_text,
-                room_rules=room_rules,
-                affordance_summary=affordance_summary,
-                inventory_catalog=inventory,
-                style_policy=style_policy,
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-            )
-            adaptive_notes.extend(room_rule_notes)
+            try:
+                room_rules, room_rule_notes = self._generate_adaptive_room_rules(
+                    room_type=room_type,
+                    brief_text=brief_text,
+                    room_rules=room_rules,
+                    affordance_summary=affordance_summary,
+                    inventory_catalog=inventory,
+                    style_policy=style_policy,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_tokens=max_tokens,
+                )
+            except (ConnectionError, RuntimeError, TimeoutError, ValueError) as exc:
+                logger.warning(
+                    "Adaptive room-rule stage failed; using canonical room rules: %s",
+                    exc,
+                )
+                adaptive_notes.append(_ADAPTIVE_ROOM_RULE_FALLBACK_NOTE)
+            else:
+                adaptive_notes.extend(room_rule_notes)
             inventory = _normalize_inventory_catalog(inventory_catalog, room_rules)
             candidate_overrides, candidate_notes = (
                 self._generate_adaptive_candidate_overrides(
@@ -2543,6 +2652,8 @@ def _adaptive_stage_model_chain(stage_name: str) -> list[str]:
 def _adaptive_stage_response_schema(stage_name: str) -> Mapping[str, object] | None:
     if stage_name == "adaptive_request_contract":
         return _ADAPTIVE_REQUEST_CONTRACT_RESPONSE_SCHEMA
+    if stage_name == "adaptive_room_rule":
+        return _ADAPTIVE_ROOM_RULE_RESPONSE_SCHEMA
     if stage_name == "adaptive_candidate_overrides":
         return _ADAPTIVE_CANDIDATE_OVERRIDES_RESPONSE_SCHEMA
     if stage_name == "adaptive_cluster_semantics":

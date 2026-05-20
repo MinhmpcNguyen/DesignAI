@@ -21,6 +21,7 @@ import MouseDragSelect from "@/components/drag-n-drop/MouseDragSelect";
 import WallDrawingTool from "@/components/tools/WallDrawingTool";
 import MeasureToolScene from "@/components/tools/MeasureToolScene";
 import Walls from "@/components/scene/Walls";
+import DebugSplitOverlay from "@/components/scene/DebugSplitOverlay";
 import DoorPlanSymbols from "@/components/scene/DoorPlanSymbols";
 import PerformanceMonitor from "@/components/dev/PerformanceMonitor";
 import CameraMovement from "@/components/camera/CameraMovement";
@@ -148,6 +149,9 @@ export default function Scene({
 
       {/* Walls - rendered outside Physics to avoid coordinate transform issues */}
       <Walls />
+
+      {/* Temporary normalize-run split marker, shown only when backend debug is enabled */}
+      <DebugSplitOverlay />
 
       {/* 2D-only door swing / open-leaf plan symbols */}
       <DoorPlanSymbols />

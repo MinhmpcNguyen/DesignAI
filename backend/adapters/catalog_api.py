@@ -89,24 +89,183 @@ _SEMANTIC_OBJECT_TYPE_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("desk", "work_desk", "study_desk", "ban_lam_viec", "ban_go_lam_viec"),
     ),
     (
+        "kitchen_base_cabinet",
+        (
+            "kitchen_base_cabinet",
+            "base_cabinet",
+            "counter",
+            "countertop",
+            "prep_counter",
+            "worktop",
+            "kitchen_counter",
+            "tu_bep",
+            "tu_bep_go",
+            "ban_bep",
+            "ke_bep",
+        ),
+    ),
+    (
+        "kitchen_tall_cabinet",
+        ("kitchen_tall_cabinet", "tall_cabinet", "tu_bep_cao", "tu_kho"),
+    ),
+    (
+        "kitchen_wall_cabinet",
+        (
+            "kitchen_wall_cabinet",
+            "wall_cabinet",
+            "upper_cabinet",
+            "tu_bep_treo",
+            "tu_bep_tren",
+        ),
+    ),
+    (
+        "fridge",
+        (
+            "fridge",
+            "refrigerator",
+            "fridge_freezer",
+            "freezer",
+            "tu_lanh",
+            "tu_lanh_2_cua",
+        ),
+    ),
+    (
+        "sink",
+        (
+            "sink",
+            "kitchen_sink",
+            "wash_sink",
+            "bon_rua",
+            "bon_rua_bat",
+            "bon_rua_chen",
+            "chau_rua",
+            "chau_rua_bat",
+            "chau_rua_chen",
+        ),
+    ),
+    (
+        "stove",
+        (
+            "stove",
+            "range",
+            "oven_range",
+            "cooker",
+            "bep_ga",
+            "bep_dien",
+            "bep_tu",
+        ),
+    ),
+    (
+        "kitchen_island",
+        ("kitchen_island", "island", "prep_island", "dao_bep", "ban_dao"),
+    ),
+    (
         "dining_table",
         ("dining_table", "ban_an"),
     ),
     (
+        "side_table",
+        (
+            "side_table",
+            "end_table",
+            "ban_phu",
+            "ban_ben",
+            "ban_canh_sofa",
+            "ban_don",
+        ),
+    ),
+    (
         "coffee_table",
-        ("coffee_table", "ban_tra", "ban_cafe"),
+        (
+            "coffee_table",
+            "ban_tra",
+            "ban_cafe",
+            "ban_ca_phe",
+            "ban_nuoc",
+            "ban_go",
+            "ban",
+        ),
+    ),
+    (
+        "rug",
+        ("rug", "carpet", "tham", "tham_trai_san", "tham_giuong"),
     ),
     (
         "bed",
         ("bed", "giuong", "giuong_ngu"),
     ),
     (
+        "armchair",
+        (
+            "armchair",
+            "lounge_chair",
+            "reading_chair",
+            "ghe_sofa_don",
+            "sofa_don",
+            "ghe_don",
+            "ghe_thu_gian",
+            "ghe_doc_sach",
+        ),
+    ),
+    (
+        "sofa",
+        (
+            "sofa",
+            "couch",
+            "loveseat",
+            "sectional",
+            "ghe_sofa",
+            "ghe_bang",
+            "ghe_dai",
+        ),
+    ),
+    (
         "chair",
         ("chair", "desk_chair", "dining_chair", "ghe", "ghe_tua"),
     ),
     (
-        "sofa",
-        ("sofa", "couch", "ghe_sofa"),
+        "floor_lamp",
+        ("floor_lamp", "standing_lamp", "den_cay", "den_san"),
+    ),
+    (
+        "table_lamp",
+        ("table_lamp", "desk_lamp", "den_ban", "den_de_ban"),
+    ),
+    (
+        "ceiling_light",
+        (
+            "ceiling_light",
+            "ceiling_lamp",
+            "pendant_light",
+            "den_tran",
+            "den_treo",
+            "den_tha",
+            "den_am_tran",
+        ),
+    ),
+    (
+        "wall_art",
+        ("wall_art", "painting", "art", "tranh", "tranh_treo_tuong"),
+    ),
+    (
+        "plant",
+        ("plant", "potted_plant", "cay_canh", "chau_hoa", "chau_cay"),
+    ),
+    (
+        "speaker",
+        ("speaker", "smart_speaker", "loa"),
+    ),
+    (
+        "vase",
+        ("vase", "binh_hoa", "lo_hoa"),
+    ),
+    (
+        "cushion",
+        ("cushion", "throw_pillow", "goi_tua", "goi_om"),
+    ),
+    (
+        "curtain",
+        ("curtain", "blind", "rem", "man_cua"),
     ),
     (
         "tv_console",
@@ -263,10 +422,45 @@ class CatalogItem(BaseModel):
         )
         if inferred_type is not None:
             return inferred_type
+        placement_inferred_type = self._placement_inferred_type()
+        if placement_inferred_type is not None:
+            return placement_inferred_type
         for value in (category_slug, self.category_id, self.name):
             if isinstance(value, str) and value.strip():
                 return _norm_key(value)
         return "unknown"
+
+    def _placement_inferred_type(self) -> str | None:
+        text = _ascii_norm_key(
+            " ".join(
+                value
+                for value in (self.name, self.name_vn, self.slug, self.sku_slug)
+                if isinstance(value, str) and value.strip()
+            )
+        )
+        if not text:
+            return None
+        placement = _norm_key(self.placement_type)
+        has_light = any(
+            _token_in_haystack(token, text) for token in ("den", "light", "lamp")
+        )
+        if has_light:
+            if placement == "ceiling":
+                return "ceiling_light"
+            if placement == "wall":
+                return "wall_sconce"
+            if placement == "floor":
+                if any(
+                    _token_in_haystack(token, text)
+                    for token in ("ban", "desk", "table")
+                ):
+                    return "table_lamp"
+                return "floor_lamp"
+        if any(_token_in_haystack(token, text) for token in ("tranh", "painting")):
+            return "wall_art"
+        if any(_token_in_haystack(token, text) for token in ("chau_hoa", "plant")):
+            return "plant"
+        return None
 
     def matches_types(
         self,

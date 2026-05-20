@@ -1,11 +1,18 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
+import os
 import unittest
 from collections.abc import Mapping, Sequence
 from typing import cast
+from unittest.mock import patch
 
-from agent.semantic_layout_planner import build_cluster_candidates
+from agent.semantic_layout_planner import (
+    _ADAPTIVE_ROOM_RULE_FALLBACK_NOTE,
+    SemanticLayoutPlanner,
+    _adaptive_stage_response_schema,
+    build_cluster_candidates,
+)
 from stylist.semantic_program_rules import get_compiled_semantic_room_rule
 
 
@@ -35,6 +42,12 @@ def _mapping(value: object, *, name: str) -> Mapping[str, object]:
     return cast(Mapping[str, object], value)
 
 
+def _sequence(value: object, *, name: str) -> Sequence[object]:
+    if not isinstance(value, Sequence) or isinstance(value, str):
+        raise TypeError(f"{name} must be a non-string sequence.")
+    return value
+
+
 def _inventory() -> dict[str, dict[str, object]]:
     return {
         object_type: {
@@ -59,7 +72,89 @@ def _inventory() -> dict[str, dict[str, object]]:
     }
 
 
+def _room_model() -> dict[str, object]:
+    return {
+        "room": {
+            "polygon_ccw": [
+                {"x": 0, "y": 0},
+                {"x": 3500, "y": 0},
+                {"x": 3500, "y": 3400},
+                {"x": 0, "y": 3400},
+            ],
+        },
+        "openings": {"doors": [], "windows": []},
+        "obstacles": [],
+    }
+
+
 class SemanticLayoutPlannerMediaOptionalTest(unittest.TestCase):
+    def test_adaptive_room_rule_schema_requires_cluster_object_program(self) -> None:
+        schema = _mapping(
+            _adaptive_stage_response_schema("adaptive_room_rule"),
+            name="adaptive_room_rule_schema",
+        )
+        properties = _mapping(schema.get("properties"), name="schema.properties")
+        room_rule = _mapping(properties.get("room_rule"), name="room_rule")
+        room_rule_properties = _mapping(
+            room_rule.get("properties"),
+            name="room_rule.properties",
+        )
+        clusters = _mapping(room_rule_properties.get("clusters"), name="clusters")
+        cluster_item = _mapping(clusters.get("items"), name="cluster_item")
+
+        self.assertIn(
+            "object_program",
+            _sequence(cluster_item.get("required"), name="cluster required fields"),
+        )
+
+    def test_adaptive_room_rule_failure_falls_back_to_canonical_rule(self) -> None:
+        def passthrough_cluster_semantics(
+            **kwargs: object,
+        ) -> tuple[dict[str, object], list[str]]:
+            deterministic_program = _mapping(
+                kwargs.get("deterministic_program"),
+                name="deterministic_program",
+            )
+            return dict(deterministic_program), []
+
+        with (
+            patch.dict(
+                os.environ,
+                {"TKNT_SEMANTIC_ADAPTIVE_LLM": "1"},
+            ),
+            patch.object(
+                SemanticLayoutPlanner,
+                "_generate_adaptive_room_rules",
+                side_effect=ValueError(
+                    "adaptive_room_rule cluster `sleep_cluster` has no usable "
+                    + "object_program"
+                ),
+            ),
+            patch.object(
+                SemanticLayoutPlanner,
+                "_generate_adaptive_candidate_overrides",
+                return_value=({}, []),
+            ),
+            patch.object(
+                SemanticLayoutPlanner,
+                "_apply_llm_cluster_semantics",
+                side_effect=passthrough_cluster_semantics,
+            ),
+        ):
+            program = SemanticLayoutPlanner().generate(
+                room_model_json=_room_model(),
+                room_type="bedroom",
+                brief_text="phong ngu co giuong, tu dau giuong va ke tv",
+                inventory_catalog=list(_inventory().values()),
+                use_llm=True,
+            )
+
+        self.assertIn(_ADAPTIVE_ROOM_RULE_FALLBACK_NOTE, program.notes)
+        self.assertIn(
+            "sleep_core",
+            {cluster.cluster_id for cluster in program.active_clusters},
+        )
+
     def test_bedroom_media_rule_is_llm_decided_optional_group(self) -> None:
         media = _media_cluster(_bedroom_rule())
         activation = _mapping(media.get("activation"), name="activation")

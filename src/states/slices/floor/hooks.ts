@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useAppDispatch, useAppSelector } from "@/states/reduxHooks";
 import { floorActions, floorSelectors } from "./state";
+import type { AutoFillDebugSplitWall, AutoFillDebugZone } from "@/types/api";
 
 export const useGlobalMaterialId = () =>
   useAppSelector(floorSelectors.selectGlobalMaterialId);
@@ -13,6 +14,12 @@ export const useRoomNames = () =>
 
 export const useRoomDescriptions = () =>
   useAppSelector(floorSelectors.selectRoomDescriptions);
+
+export const useDebugSplitWalls = () =>
+  useAppSelector(floorSelectors.selectDebugSplitWalls);
+
+export const useDebugSplitZones = () =>
+  useAppSelector(floorSelectors.selectDebugSplitZones);
 
 export const useSelectedRoomKey = () =>
   useAppSelector(floorSelectors.selectSelectedRoomKey);
@@ -56,6 +63,26 @@ export const useSetRoomDescription = () => {
   return useCallback(
     (key: string, description: string) =>
       dispatch(floorActions.setRoomDescription({ key, description })),
+    [dispatch],
+  );
+};
+
+export const useSetRoomDebugSplit = () => {
+  const dispatch = useAppDispatch();
+  return useCallback(
+    (
+      key: string,
+      wall: AutoFillDebugSplitWall,
+      zones: AutoFillDebugZone[],
+    ) => dispatch(floorActions.setRoomDebugSplit({ key, wall, zones })),
+    [dispatch],
+  );
+};
+
+export const useClearRoomDebugSplit = () => {
+  const dispatch = useAppDispatch();
+  return useCallback(
+    (key: string) => dispatch(floorActions.clearRoomDebugSplit(key)),
     [dispatch],
   );
 };

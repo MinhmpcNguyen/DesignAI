@@ -55,6 +55,144 @@ class CatalogApiObjectTypeInferenceTest(unittest.TestCase):
         )
         self.assertFalse(tv_console.matches_types({"tv"}, category_slug="storage"))
 
+    def test_infers_living_room_vietnamese_names(self) -> None:
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Ghế sofa đơn Rustic 1"),
+            "armchair",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Ghế sofa forest"),
+            "sofa",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Bàn"),
+            "coffee_table",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Bàn trà forest"),
+            "coffee_table",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Bàn ăn forest"),
+            "dining_table",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Bàn đôn Rustic 1"),
+            "side_table",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Thảm phòng khách forest"),
+            "rug",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Tranh forest 1"),
+            "wall_art",
+        )
+
+    def test_catalog_items_infer_living_decor_from_placement(self) -> None:
+        floor_lamp = CatalogItem.model_validate(
+            {
+                "id": "lamp-1",
+                "slug": "forest-khach-mod142fl01b",
+                "name": "đèn forest",
+                "nameVn": "đèn forest",
+                "modelUrl": "/catalog/models/floor-lamp.glb",
+                "placementType": "floor",
+            }
+        )
+        ceiling_light = CatalogItem.model_validate(
+            {
+                "id": "ceiling-1",
+                "slug": "forest-khach-group2132577650",
+                "name": "đèn trần forest 10",
+                "nameVn": "đèn trần forest 10",
+                "modelUrl": "/catalog/models/ceiling-light.glb",
+                "placementType": "ceiling",
+            }
+        )
+        plant = CatalogItem.model_validate(
+            {
+                "id": "plant-1",
+                "slug": "forest-khach-group2132577681",
+                "name": "Chậu hoa nhỏ forest 3",
+                "nameVn": "Chậu hoa nhỏ forest 3",
+                "modelUrl": "/catalog/models/plant.glb",
+                "placementType": "floor",
+            }
+        )
+
+        self.assertEqual(floor_lamp.inventory_type(category_slug=None), "floor_lamp")
+        self.assertEqual(
+            ceiling_light.inventory_type(category_slug=None), "ceiling_light"
+        )
+        self.assertEqual(plant.inventory_type(category_slug=None), "plant")
+
+    def test_infers_kitchen_vietnamese_names_before_generic_table(self) -> None:
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Tủ bếp forest 12"),
+            "kitchen_base_cabinet",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Bàn bếp forest 1"),
+            "kitchen_base_cabinet",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Tủ lạnh 2 cửa Rustic"),
+            "fridge",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Bồn rửa bát forest"),
+            "sink",
+        )
+        self.assertEqual(
+            infer_catalog_object_type(name_vn="Bồn rửa chén Rustic"),
+            "sink",
+        )
+
+    def test_catalog_items_match_vietnamese_living_and_kitchen_types(self) -> None:
+        coffee_table = CatalogItem.model_validate(
+            {
+                "id": "coffee-table-1",
+                "slug": "forest-khach-table",
+                "name": "Forest table",
+                "nameVn": "Bàn",
+                "modelUrl": "/catalog/models/coffee-table.glb",
+            }
+        )
+        kitchen_counter = CatalogItem.model_validate(
+            {
+                "id": "kitchen-counter-1",
+                "slug": "forest-khach-box2131645502",
+                "name": "Forest kitchen counter",
+                "nameVn": "Bàn bếp forest 1",
+                "modelUrl": "/catalog/models/kitchen-counter.glb",
+            }
+        )
+        sink = CatalogItem.model_validate(
+            {
+                "id": "sink-1",
+                "slug": "forest-khach-sink",
+                "name": "Forest sink",
+                "nameVn": "Bồn rửa bát forest",
+                "modelUrl": "/catalog/models/sink.glb",
+            }
+        )
+
+        self.assertTrue(
+            coffee_table.matches_types({"coffee_table"}, category_slug="living-room")
+        )
+        self.assertFalse(
+            coffee_table.matches_types(
+                {"kitchen_base_cabinet"}, category_slug="living-room"
+            )
+        )
+        self.assertTrue(
+            kitchen_counter.matches_types(
+                {"kitchen_base_cabinet"}, category_slug="kitchen"
+            )
+        )
+        self.assertTrue(sink.matches_types({"sink"}, category_slug="kitchen"))
+
     def test_tv_dimensions_use_thin_depth_and_vertical_screen_axis(self) -> None:
         tv = CatalogItem.model_validate(
             {

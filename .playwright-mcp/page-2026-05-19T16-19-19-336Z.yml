@@ -1,0 +1,33 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - img "Login image" [ref=e4]
+    - generic [ref=e6]:
+      - img [ref=e8]
+      - heading "Welcome to Auto Furniture" [level=1] [ref=e13]
+      - paragraph [ref=e14]: Kindly fill in your details below to sign in
+      - button "Log in with Google" [disabled] [ref=e15]:
+        - text: Log in with Google
+        - img [ref=e16]
+      - generic [ref=e23]: Or
+      - generic [ref=e25]:
+        - generic [ref=e26]:
+          - generic [ref=e27]: Email Address
+          - textbox "Email Address" [ref=e28]:
+            - /placeholder: Enter your email address
+            - text: test123@gmail.com
+        - generic [ref=e29]:
+          - generic [ref=e30]: Password
+          - textbox "Password" [ref=e32]:
+            - /placeholder: Enter your password
+            - text: test123
+        - button "Login" [ref=e33] [cursor=pointer]
+      - paragraph [ref=e34]:
+        - link "Forgot your password?" [ref=e35] [cursor=pointer]:
+          - /url: "#"
+      - paragraph [ref=e36]:
+        - text: Don't have an account?
+        - link "Sign up" [ref=e37] [cursor=pointer]:
+          - /url: /signup
+  - button "Open Next.js Dev Tools" [ref=e43] [cursor=pointer]:
+    - img [ref=e44]
+  - alert [ref=e47]

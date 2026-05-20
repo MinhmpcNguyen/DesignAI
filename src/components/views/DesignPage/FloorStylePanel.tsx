@@ -26,6 +26,8 @@ import {
   useSetRoomName,
   useRoomDescriptions,
   useSetRoomDescription,
+  useSetRoomDebugSplit,
+  useClearRoomDebugSplit,
 } from "@/states/slices/floor/hooks";
 import { useWalls } from "@/states/slices/walls/hooks";
 import {
@@ -328,6 +330,8 @@ export default function FloorStylePanel({
   const setRoomName = useSetRoomName();
   const roomDescriptions = useRoomDescriptions();
   const setRoomDescription = useSetRoomDescription();
+  const setRoomDebugSplit = useSetRoomDebugSplit();
+  const clearRoomDebugSplit = useClearRoomDebugSplit();
   const addMultipleObjects = useAddMultipleObjects();
   const removeMultipleObjects = useRemoveMultipleObjects();
   const {
@@ -449,6 +453,11 @@ export default function FloorStylePanel({
           }));
         },
       );
+      if (data.debugSplitWall) {
+        setRoomDebugSplit(key, data.debugSplitWall, data.debugZones ?? []);
+      } else {
+        clearRoomDebugSplit(key);
+      }
 
       // Bước 3: place best valid option only
       const bestOption =
@@ -503,6 +512,7 @@ export default function FloorStylePanel({
         },
       }));
     } catch (err) {
+      clearRoomDebugSplit(key);
       setFillState((prev) => ({
         ...prev,
         [key]: {

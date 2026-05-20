@@ -410,17 +410,13 @@ def profile_zone_claims_for_objects(
     ):
         return {
             "preferred_regions": _profile_regions(
-                _profile_regions(affordance_summary.get("daylight_regions"))
-                + _profile_regions(affordance_summary.get("floating_zone_candidates"))
+                affordance_summary.get("floating_zone_candidates")
             ),
             "avoid_regions": _profile_regions(
-                _profile_regions(affordance_summary.get("entry_landing_zones"))
-                + _profile_regions(
-                    affordance_summary.get("primary_circulation_corridors")
-                )
+                affordance_summary.get("entry_landing_zones")
             ),
-            "wall_affinity": "medium",
-            "daylight_affinity": "high",
+            "wall_affinity": "low",
+            "daylight_affinity": "low",
             "privacy_affinity": "none",
             "floating_allowed": True,
         }

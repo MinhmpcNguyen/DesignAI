@@ -20,6 +20,7 @@ class BaretvDisplayTest(unittest.TestCase):
     def test_tv_console_is_not_bare_display(self) -> None:
         self.assertFalse(_is_bare_tv_display("tv_console"))
         self.assertFalse(_is_bare_tv_display("TV_Console"))
+        self.assertFalse(_is_bare_tv_display("tv_stand"))
 
     def test_unrelated_objects_are_not_bare_display(self) -> None:
         self.assertFalse(_is_bare_tv_display("bed"))
@@ -31,6 +32,10 @@ class PromoteTvConsoleAnchorTest(unittest.TestCase):
     def test_replaces_bare_tv_with_console(self) -> None:
         result = _promote_tv_console_anchor(["tv"], ["tv", "tv_console"])
         self.assertEqual(result, ["tv_console"])
+
+    def test_replaces_bare_tv_with_stand_alias(self) -> None:
+        result = _promote_tv_console_anchor(["tv"], ["tv", "tv_stand"])
+        self.assertEqual(result, ["tv_stand"])
 
     def test_noop_when_no_console_candidate(self) -> None:
         result = _promote_tv_console_anchor(["tv"], ["tv"])

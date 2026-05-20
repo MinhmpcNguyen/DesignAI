@@ -187,12 +187,30 @@ class PipelineNormalizeRunOption(BaseModel):
     openings: list[FrontendOpeningPayload] = Field(default_factory=list)
 
 
+class PipelineNormalizeRunDebugSplitWall(BaseModel):
+    id: str
+    startPoint: tuple[float, float]
+    endPoint: tuple[float, float]
+    height: float | None = None
+    thickness: float | None = None
+    source: str | None = None
+
+
+class PipelineNormalizeRunDebugZone(BaseModel):
+    roomId: str
+    roomType: str
+    areaM2: float | None = None
+    polygon: list[tuple[float, float]] = Field(default_factory=list)
+
+
 class PipelineNormalizeRunResponse(BaseModel):
     objects: list[PipelineNormalizeRunObject] = Field(default_factory=list)
     openings: list[FrontendOpeningPayload] = Field(default_factory=list)
     selectedOptionId: str | None = None
     options: list[PipelineNormalizeRunOption] = Field(default_factory=list)
     selectionSummary: JsonObject | None = None
+    debugSplitWall: PipelineNormalizeRunDebugSplitWall | None = None
+    debugZones: list[PipelineNormalizeRunDebugZone] = Field(default_factory=list)
 
 
 class PipelineNormalizeRunJobResponse(BaseModel):

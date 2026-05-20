@@ -6,13 +6,13 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 
+from agent.request_contract import attach_request_contract_to_semantic_program
 from agent.semantic_layout_planner import (
     SemanticLayoutPlanner,
     _normalize_profile_semantic_program,
     semantic_program_to_cluster_forge_payload,
     summarize_room_affordance,
 )
-from agent.request_contract import attach_request_contract_to_semantic_program
 from agent_schema.clusterF_schema import ClusterForgeOutput
 from clients.base_client import ChatMessage
 from clients.llm_client import get_llm_client
@@ -1397,7 +1397,7 @@ def _anchor_priority_score(*, cluster_tag: str, member: str) -> int:
             score += 850
         elif is_seat_like(member):
             score += 700
-        elif "tv_console" in key:
+        elif _is_media_console_anchor(member):
             score += 600
     elif cluster_tag == "dining":
         if "dining_table" in key or "table" in key:
@@ -1413,7 +1413,7 @@ def _anchor_priority_score(*, cluster_tag: str, member: str) -> int:
             score += 1_080
         elif "media_shelf" in key or "bookshelf" in key:
             score += 1_060
-        elif "tv_console" in key:
+        elif _is_media_console_anchor(member):
             score += 1_040
         elif "console_table" in key:
             score += 1_000
@@ -1473,6 +1473,8 @@ def _cohere_primary_anchor_members(
 
 def _is_media_display_like(member: str) -> bool:
     key = member.lower()
+    if _is_media_console_anchor(member):
+        return True
     return any(
         token in key
         for token in ("tv_console", "television", "monitor", "projector", "screen")
@@ -1487,7 +1489,21 @@ def _is_media_side_support_like(member: str) -> bool:
 def _is_bare_tv_display(member: str) -> bool:
     """True for plain TV screen objects that are not console/stand furniture."""
     key = member.lower()
-    return "tv_console" not in key and (key == "tv" or key == "television")
+    if any(
+        token in key
+        for token in (
+            "ke_tv",
+            "ke_tivi",
+            "media_console",
+            "tv_cabinet",
+            "tv_console",
+            "tv_stand",
+            "tu_tv",
+            "tu_tivi",
+        )
+    ):
+        return False
+    return key in {"smart_tv", "television", "ti_vi", "tivi", "tv"}
 
 
 def _promote_tv_console_anchor(
@@ -1500,13 +1516,32 @@ def _promote_tv_console_anchor(
     A bare 'tv' is a wall display that should be placed relative to the console, not
     used as the spatial anchor that everything else orbits.
     """
-    console_candidates = [c for c in valid_anchor_candidates if "tv_console" in c.lower()]
+    console_candidates = [
+        c for c in valid_anchor_candidates if _is_media_console_anchor(c)
+    ]
     if not console_candidates:
         return kept
     if not any(_is_bare_tv_display(k) for k in kept):
         return kept
     corrected = [k for k in kept if not _is_bare_tv_display(k)]
     return corrected if corrected else [console_candidates[0]]
+
+
+def _is_media_console_anchor(member: str) -> bool:
+    key = member.lower()
+    return any(
+        token in key
+        for token in (
+            "ke_tv",
+            "ke_tivi",
+            "media_console",
+            "tv_cabinet",
+            "tv_console",
+            "tv_stand",
+            "tu_tv",
+            "tu_tivi",
+        )
+    )
 
 
 def _is_low_center_surface_like(member: str) -> bool:

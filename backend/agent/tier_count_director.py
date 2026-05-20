@@ -57,6 +57,29 @@ _COMPACT_BEDROOM_RELAXED_TYPES = frozenset(
 )
 _COMPACT_BEDROOM_DEFAULT_SUPPORT_TYPES = frozenset({"nightstand"})
 _COMPACT_BEDROOM_SUPPORT_TRIAL_MAX_FOOTPRINT_M2 = 0.6
+_MEDIA_CONSOLE_TYPES = frozenset(
+    {
+        "ke_ti_vi",
+        "ke_tivi",
+        "ke_tv",
+        "media_console",
+        "tv_cabinet",
+        "tv_console",
+        "tv_stand",
+        "tu_ti_vi",
+        "tu_tivi",
+        "tu_tv",
+    }
+)
+_BARE_TV_DISPLAY_TYPES = frozenset({"smart_tv", "television", "ti_vi", "tivi", "tv"})
+_FOOTPRINT_EXEMPT_TYPES = frozenset({"dining_chair"})
+_COMPACT_KITCHEN_DINING_PROFILE_TYPES = frozenset({"dining_table", "dining_chair"})
+
+
+def _is_footprint_exempt_type(object_type: object) -> bool:
+    if object_type is None:
+        return False
+    return _profile_category_for_member(str(object_type)) in _FOOTPRINT_EXEMPT_TYPES
 
 
 def _layout_speed_mode() -> str:
@@ -314,6 +337,7 @@ def _run_hardcoded_tier_count(
         required_types=required_types,
         tenant_id=context.get("tenant_id"),
         existing=size_profiles_by_category,
+        room_type=room_type,
     )
 
     bundles = _build_candidate_decision_set(
@@ -757,6 +781,11 @@ def _bundles_from_semantic_cluster(
                 [],
             )
             for member in matched_members:
+                if _is_floor_media_display_redundant(
+                    member=member,
+                    members=members,
+                ):
+                    continue
                 object_hint = _tier_count_object_hint(
                     member=member,
                     cluster_hints=tier_count_hints,
@@ -880,7 +909,10 @@ def _fallback_bundle_from_cluster(
     cluster_id = str(cluster.get("cluster_id") or "cluster")
     tag = str(cluster.get("tag") or "").strip().lower()
     objects: list[dict[str, Any]] = []
-    for member in _string_list_from_any(cluster.get("members")):
+    members = _string_list_from_any(cluster.get("members"))
+    for member in members:
+        if _is_floor_media_display_redundant(member=member, members=members):
+            continue
         role = _resolved_object_role(
             member=member,
             anchors=anchors,
@@ -1193,6 +1225,11 @@ def _apply_request_contract_to_object(
         str(obj.get("base_type") or obj.get("object_type") or ""),
     )
     if item is None:
+        return obj
+    if (
+        _is_bare_tv_display_type(str(obj.get("object_type") or ""))
+        and str(item.get("object_type") or "") == "tv_console"
+    ):
         return obj
 
     intent = contract_intent(item)
@@ -1597,6 +1634,35 @@ def _members_by_base_type(members: list[str]) -> dict[str, list[str]]:
     for member in members:
         out.setdefault(_profile_category_for_member(member), []).append(member)
     return out
+
+
+def _is_floor_media_display_redundant(
+    *,
+    member: str,
+    members: list[str],
+) -> bool:
+    if not _is_bare_tv_display_type(member):
+        return False
+    return any(_is_media_console_type(candidate) for candidate in members)
+
+
+def _is_bare_tv_display_type(value: str) -> bool:
+    key = _norm_key(value)
+    if _is_media_console_type(key):
+        return False
+    if key in _BARE_TV_DISPLAY_TYPES:
+        return True
+    tokens = set(key.split("_"))
+    return bool(tokens & {"television", "tivi", "tv"}) and not bool(
+        tokens & {"cabinet", "console", "ke", "stand", "tu"}
+    )
+
+
+def _is_media_console_type(value: str) -> bool:
+    key = _norm_key(value)
+    if key in _MEDIA_CONSOLE_TYPES:
+        return True
+    return canonical_profile_object_type(key) == "tv_console"
 
 
 def _dedupe_bundle_objects(
@@ -3230,6 +3296,10 @@ def _footprint_for_object(
 ) -> float:
     if quantity <= 0:
         return 0.0
+    object_type = str(obj.get("object_type") or obj.get("category") or "")
+    base_type = str(obj.get("base_type") or _profile_category_for_member(object_type))
+    if _is_footprint_exempt_type(base_type):
+        return 0.0
     profile = _profile_for_object(obj, size_profiles_by_category)
     rep_dims = profile.get("rep_dims_m") if isinstance(profile, dict) else None
     rep = rep_dims.get(size_tier.upper()) if isinstance(rep_dims, dict) else None
@@ -3240,8 +3310,6 @@ def _footprint_for_object(
         if area > 0:
             return area * quantity
 
-    object_type = str(obj.get("object_type") or "")
-    base_type = str(obj.get("base_type") or _profile_category_for_member(object_type))
     fallback = {
         "bed": 3.6,
         "sofa": 2.1,
@@ -3768,6 +3836,7 @@ def _ensure_size_profiles(
     required_types: list[str],
     tenant_id: str | None,
     existing: dict[str, Any] | None,
+    room_type: str,
 ) -> dict[str, Any]:
     tool_registry = _get_tool_registry()
 
@@ -3776,6 +3845,11 @@ def _ensure_size_profiles(
         _enrich_profiles_for_required_types(
             profiles=profiles,
             required_types=required_types,
+        )
+        _apply_room_profile_overrides(
+            profiles=profiles,
+            required_types=required_types,
+            room_type=room_type,
         )
         return profiles
 
@@ -3798,6 +3872,11 @@ def _ensure_size_profiles(
     _enrich_profiles_for_required_types(
         profiles=profiles,
         required_types=required_types,
+    )
+    _apply_room_profile_overrides(
+        profiles=profiles,
+        required_types=required_types,
+        room_type=room_type,
     )
     return profiles
 
@@ -3995,6 +4074,25 @@ def _enrich_profiles_for_required_types(
         if profile_size is not None:
             profiles.setdefault(alias, profile_size)
             profiles[member] = profile_size
+
+
+def _apply_room_profile_overrides(
+    *,
+    profiles: dict[str, Any],
+    required_types: list[str],
+    room_type: str,
+) -> None:
+    if _norm_key(room_type) != "kitchen":
+        return
+    for member in required_types:
+        category = _profile_category_for_member(member)
+        if category not in _COMPACT_KITCHEN_DINING_PROFILE_TYPES:
+            continue
+        profile_size = fallback_profile_size(category)
+        if profile_size is None:
+            continue
+        profiles[category] = profile_size
+        profiles[member] = profile_size
 
 
 def _select_next_budget_decisions(
@@ -5752,9 +5850,11 @@ def _decision_footprint_m2_for_trial(
     existing = _decision_footprint_m2(row)
     if existing > 0.0:
         return existing
+    object_type = str(row.get("object_type") or row.get("category") or "")
+    if _is_footprint_exempt_type(object_type):
+        return 0.0
     if not isinstance(size_profiles_by_category, dict):
         return 0.0
-    object_type = str(row.get("object_type") or row.get("category") or "")
     category = _profile_category_for_member(object_type)
     profile = (
         size_profiles_by_category.get(object_type)
@@ -5930,6 +6030,9 @@ def _sync_cluster_decisions_with_final_decisions(
 def _decision_footprint_m2(decision: dict[str, Any]) -> float:
     quantity = _decision_quantity(decision)
     if quantity <= 0:
+        return 0.0
+    object_type = str(decision.get("object_type") or decision.get("category") or "")
+    if _is_footprint_exempt_type(object_type):
         return 0.0
     rep_dims = decision.get("rep_dims_m")
     if not isinstance(rep_dims, dict):

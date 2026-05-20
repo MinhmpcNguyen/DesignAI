@@ -7,8 +7,12 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
+import unicodedata
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -22,6 +26,8 @@ from api.errors import api_exception, raise_api_error
 from domain.normalize_run import (
     ApiErrorDetail,
     ApiErrorReason,
+    PipelineNormalizeRunDebugSplitWall,
+    PipelineNormalizeRunDebugZone,
     PipelineNormalizeRunJobResponse,
     PipelineNormalizeRunObject,
     PipelineNormalizeRunOption,
@@ -51,13 +57,63 @@ _SIZE_VECTOR_LENGTH = 3
 _QUATERNION_LENGTH = 4
 _MIN_QUATERNION_NORM = 1e-12
 _QUARTER_TURN_THRESHOLD = 0.15
+_DEBUG_POINT_PAIR_LENGTH = 2
+_DEBUG_ZERO_EPSILON = 1e-9
 _TV_UPRIGHT_DEFAULT_ROTATION: list[float] = [
     -0.707106781187,
     0.0,
     0.0,
     0.707106781187,
 ]
-_CATALOG_TYPE_FALLBACKS: dict[str, tuple[str, ...]] = {}
+_MEDIA_CONSOLE_TYPES = frozenset(
+    {
+        "ke_ti_vi",
+        "ke_tivi",
+        "ke_tv",
+        "media_console",
+        "tv_cabinet",
+        "tv_console",
+        "tv_stand",
+        "tu_ti_vi",
+        "tu_tivi",
+        "tu_tv",
+    }
+)
+_CATALOG_TYPE_FALLBACKS: dict[str, tuple[str, ...]] = {
+    "dining_table": ("coffee_table", "table"),
+    "dining_chair": ("chair",),
+}
+_NORMALIZE_RUN_MAX_PARALLEL_ROOMS = 4
+_NORMALIZE_RUN_DEBUG_SPLIT_ENV = "TKNT_NORMALIZE_RUN_DEBUG_SPLIT"
+_NORMALIZE_RUN_OBJECT_COUNT_SELECTION_WEIGHT = 220
+_LIVING_ROOM_TERMS = (
+    "khach",
+    "living",
+    "living room",
+    "sinh hoat",
+    "khong gian chung",
+    "common",
+    "shared",
+)
+_KITCHEN_ROOM_TERMS = ("bep", "kitchen", "nha bep")
+
+
+@dataclass(frozen=True)
+class _NormalizeRoomRunInput:
+    index: int
+    room_id: str
+    room_case_id: str
+    input_payload: dict[str, Any]
+    pipeline_request: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _NormalizeRoomRunResult:
+    index: int
+    room_id: str
+    room_case_id: str
+    options: list[dict[str, Any]]
+    selection_summary: dict[str, Any] | None
 
 
 def _enrich_rotation_ccw(
@@ -258,6 +314,69 @@ def _normalize_run_floorplan_payload(
         exclude=_NORMALIZE_RUN_CONTROL_FIELDS,
         exclude_none=True,
     )
+
+
+def _is_combined_living_kitchen_request(
+    req: PipelineNormalizeRunRequest,
+    payload: Mapping[str, Any],
+) -> bool:
+    text_parts: list[str] = []
+    for value in (req.description, req.special_notes, req.style):
+        clean = _string_or_none(value)
+        if clean is not None:
+            text_parts.append(clean)
+
+    room_payload = payload.get("room")
+    if isinstance(room_payload, Mapping):
+        text_parts.extend(_room_search_text_parts(room_payload))
+    elif isinstance(payload.get("rooms"), list):
+        rooms = payload.get("rooms")
+        if (
+            isinstance(rooms, list)
+            and len(rooms) == 1
+            and isinstance(rooms[0], Mapping)
+        ):
+            text_parts.extend(_room_search_text_parts(rooms[0]))
+    elif any(key in payload for key in ("polygons", "polygon", "polygon_ccw")):
+        text_parts.extend(_room_search_text_parts(payload))
+
+    text = _normalize_search_text(" ".join(text_parts))
+    return any(term in text for term in _LIVING_ROOM_TERMS) and any(
+        term in text for term in _KITCHEN_ROOM_TERMS
+    )
+
+
+def _room_search_text_parts(room_payload: Mapping[str, Any]) -> list[str]:
+    out: list[str] = []
+    for key in (
+        "name",
+        "title",
+        "roomType",
+        "room_type",
+        "description",
+        "special_notes",
+    ):
+        clean = _string_or_none(room_payload.get(key))
+        if clean is not None:
+            out.append(clean)
+    return out
+
+
+def _normalize_search_text(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    without_marks = "".join(
+        char for char in decomposed if not unicodedata.combining(char)
+    )
+    return without_marks.casefold()
+
+
+def _normalize_run_debug_split_enabled() -> bool:
+    return os.getenv(_NORMALIZE_RUN_DEBUG_SPLIT_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _coerce_normalize_run_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -712,6 +831,120 @@ def _normalize_run_restored_objects(
     )
 
 
+def _normalize_run_debug_split_payload(
+    normalized: Mapping[str, Any],
+) -> tuple[
+    PipelineNormalizeRunDebugSplitWall | None,
+    list[PipelineNormalizeRunDebugZone],
+]:
+    if not _normalize_run_debug_split_enabled():
+        return None, []
+
+    room_split = _mapping(normalized.get("room_split"))
+    if room_split.get("applied") is not True:
+        return None, []
+
+    transform = _mapping(normalized.get("transform"))
+    source_scale = _number(transform.get("source_scale_to_mm")) or 1.0
+    if source_scale <= 0:
+        source_scale = 1.0
+
+    split_wall = _debug_split_wall_from_payload(
+        _mapping(room_split.get("partition_wall")),
+        source_scale=source_scale,
+    )
+    debug_zones = _debug_zones_from_room_split(
+        room_split,
+        source_scale=source_scale,
+    )
+    return split_wall, debug_zones
+
+
+def _debug_split_wall_from_payload(
+    wall_payload: Mapping[str, Any],
+    *,
+    source_scale: float,
+) -> PipelineNormalizeRunDebugSplitWall | None:
+    start_point = _debug_plan_point(wall_payload.get("startPoint"), source_scale)
+    end_point = _debug_plan_point(wall_payload.get("endPoint"), source_scale)
+    wall_id = _string_or_none(wall_payload.get("id"))
+    if wall_id is None or start_point is None or end_point is None:
+        return None
+
+    return PipelineNormalizeRunDebugSplitWall(
+        id=wall_id,
+        startPoint=start_point,
+        endPoint=end_point,
+        height=_scaled_debug_number(wall_payload.get("height"), source_scale),
+        thickness=_scaled_debug_number(wall_payload.get("thickness"), source_scale),
+        source=_string_or_none(wall_payload.get("generatedBy")),
+    )
+
+
+def _debug_zones_from_room_split(
+    room_split: Mapping[str, Any],
+    *,
+    source_scale: float,
+) -> list[PipelineNormalizeRunDebugZone]:
+    children = room_split.get("children")
+    if not isinstance(children, list):
+        return []
+
+    zones: list[PipelineNormalizeRunDebugZone] = []
+    for index, child in enumerate(children, start=1):
+        if not isinstance(child, Mapping):
+            continue
+        raw_polygon = child.get("polygon")
+        polygon_values = raw_polygon if isinstance(raw_polygon, list) else []
+        polygon = [
+            point
+            for raw_point in polygon_values
+            if (point := _debug_plan_point(raw_point, source_scale)) is not None
+        ]
+        zones.append(
+            PipelineNormalizeRunDebugZone(
+                roomId=_string_or_none(child.get("room_id")) or f"room_{index}",
+                roomType=_string_or_none(child.get("room_type")) or "room",
+                areaM2=_number(child.get("area_m2")),
+                polygon=polygon,
+            )
+        )
+    return zones
+
+
+def _debug_plan_point(value: Any, source_scale: float) -> tuple[float, float] | None:
+    if isinstance(value, Mapping):
+        x = _number(value.get("x"))
+        y = _number(value.get("y") if "y" in value else value.get("z"))
+    elif isinstance(value, list) and len(value) >= _DEBUG_POINT_PAIR_LENGTH:
+        x = _number(value[0])
+        y = _number(value[1])
+    else:
+        return None
+
+    if x is None or y is None:
+        return None
+    return (
+        _scaled_debug_coordinate(x, source_scale),
+        _scaled_debug_coordinate(y, source_scale),
+    )
+
+
+def _scaled_debug_number(value: Any, source_scale: float) -> float | None:
+    number = _number(value)
+    if number is None:
+        return None
+    return _scaled_debug_coordinate(number, source_scale)
+
+
+def _scaled_debug_coordinate(value: float, source_scale: float) -> float:
+    scaled = value / source_scale
+    rounded = round(scaled, 6)
+    if abs(rounded) <= _DEBUG_ZERO_EPSILON:
+        return 0.0
+    return rounded
+
+
 def _bbox_from_object(obj: dict[str, Any]) -> dict[str, float] | None:
     bbox = _mapping(obj.get("bbox"))
     values = {
@@ -845,7 +1078,7 @@ def _is_bare_tv_display(
         if not isinstance(value, str):
             continue
         key = value.strip().lower().replace("-", "_").replace(" ", "_")
-        if not key or any(token in key for token in ("tv_console", "ke_tv", "ke_tivi")):
+        if not key or key in _MEDIA_CONSOLE_TYPES:
             continue
         if key in {"tv", "tivi", "ti_vi", "television", "smart_tv"}:
             return True
@@ -1219,6 +1452,10 @@ def _execute_normalize_run_pipeline(
             key in floorplan_payload for key in ("polygons", "polygon", "polygon_ccw")
         )
     )
+    combined_living_kitchen_room = _is_combined_living_kitchen_request(
+        req,
+        floorplan_payload,
+    )
     try:
         normalized = coordinate_service.normalize_input(
             _coerce_normalize_run_payload(floorplan_payload),
@@ -1228,7 +1465,8 @@ def _execute_normalize_run_pipeline(
             description=req.description,
             special_notes=req.special_notes,
             style=req.style,
-            split_largest_room=req.split_largest_room and not single_room_payload,
+            split_largest_room=req.split_largest_room
+            and (not single_room_payload or combined_living_kitchen_room),
         )
     except ValueError as exc:
         raise api_exception(
@@ -1256,118 +1494,45 @@ def _execute_normalize_run_pipeline(
         )
 
     base_case_id = job_id or _make_case_id(req.user_id or "normalize_run")
-    room_options: list[tuple[str, list[dict[str, Any]]]] = []
-    selection_summary: dict[str, Any] | None = None
-    for index, item in enumerate(system_inputs, start=1):
-        if not isinstance(item, dict):
-            continue
-        room_id = _string_or_none(item.get("room_id")) or f"room_{index}"
-        pipeline_request = _mapping(item.get("pipeline_run_request"))
-        input_payload = _mapping(pipeline_request.get("input_payload"))
-        if not input_payload:
-            continue
-
-        input_payload = deepcopy(input_payload)
-        user_input = dict(_mapping(input_payload.get("user_input")))
-        user_input["allow_generated_accessories"] = req.allow_generated_accessories
-        user_input[
-            "disable_generated_accessories"
-        ] = not req.allow_generated_accessories
-        input_payload["user_input"] = user_input
-        room_case_id = (
-            f"{base_case_id}_{index:02d}_{_safe_case_segment(room_id, 'room')}"
-        )
-        if job_id is not None and job_manager is not None:
-            job_manager.update(
-                job_id,
-                status="running",
-                stage="running_pipeline",
-                message=f"Running pipeline for room {index}/{len(system_inputs)}.",
-                progress_current=index - 1,
-                progress_total=len(system_inputs),
-                case_ids=[room_case_id],
-                current_case_id=room_case_id,
-            )
-
-        try:
-            result = run_case(
-                input_payload=input_payload,
-                user_id=_string_or_none(pipeline_request.get("user_id"))
-                or req.user_id
-                or "normalize_run",
-                description=_string_or_none(pipeline_request.get("description"))
-                or req.description,
-                special_notes=_string_or_none(pipeline_request.get("special_notes"))
-                or req.special_notes,
-                case_id=room_case_id,
-            )
-        except (RuntimeError, ValueError) as exc:
-            paths = case_paths(room_case_id)
-            logger.exception(
-                "normalize-run pipeline failed: case_id=%s room_id=%s",
-                room_case_id,
-                room_id,
-            )
-            raise api_exception(
-                502,
-                ApiErrorReason.NORMALIZE_RUN_PIPELINE_FAILED,
-                "Normalize-run pipeline failed.",
-                context=json_object_from_mapping(
-                    _record_pipeline_error(paths=paths, error=exc)
-                ),
-            ) from exc
-
-        if result.get("error"):
-            paths = case_paths(room_case_id)
-            raise_api_error(
-                502,
-                ApiErrorReason.NORMALIZE_RUN_PIPELINE_FAILED,
-                "Normalize-run pipeline returned an error.",
-                context=json_object_from_mapping(
-                    _record_pipeline_error(paths=paths, error=str(result["error"]))
-                ),
-            )
-
-        try:
-            if job_id is not None and job_manager is not None:
-                job_manager.update(
-                    job_id,
-                    status="running",
-                    stage="enriching_room",
-                    message=f"Enriching room {index}/{len(system_inputs)} output.",
-                    progress_current=index,
-                    progress_total=len(system_inputs),
-                    current_case_id=room_case_id,
-                )
-            enriched_options = _enriched_case_options(
-                room_case_id,
-                result.get("final_output"),
-            )
-        except RuntimeError as exc:
-            paths = case_paths(room_case_id)
-            logger.exception(
-                "normalize-run response enrichment failed: case_id=%s room_id=%s",
-                room_case_id,
-                room_id,
-            )
-            raise api_exception(
-                502,
-                ApiErrorReason.NORMALIZE_RUN_RESPONSE_ENRICHMENT_FAILED,
-                "Normalize-run response enrichment failed.",
-                context=json_object_from_mapping(
-                    _record_pipeline_error(paths=paths, error=exc)
-                ),
-            ) from exc
-        if selection_summary is None:
-            selection_summary = _case_selection_summary(room_case_id)
-        room_options.append((room_id, enriched_options))
-
-    if not room_options:
+    room_run_inputs = _build_normalize_room_run_inputs(
+        system_inputs=system_inputs,
+        base_case_id=base_case_id,
+        allow_generated_accessories=req.allow_generated_accessories,
+    )
+    if not room_run_inputs:
         raise_api_error(
             422,
             ApiErrorReason.NORMALIZE_RUN_NO_RUNNABLE_ROOMS,
             "No runnable room pipeline inputs were produced from the payload.",
         )
+    total_rooms = len(room_run_inputs)
+    if job_id is not None and job_manager is not None:
+        job_manager.update(
+            job_id,
+            status="running",
+            stage="running_pipeline",
+            message=f"Running {total_rooms} room pipeline(s) in parallel.",
+            progress_current=0,
+            progress_total=total_rooms,
+            case_ids=[item.room_case_id for item in room_run_inputs],
+            current_case_id=room_run_inputs[0].room_case_id,
+        )
+
+    room_results = _run_normalize_room_cases(
+        req=req,
+        room_run_inputs=room_run_inputs,
+        job_id=job_id,
+        job_manager=job_manager,
+    )
+    room_options = [(item.room_id, item.options) for item in room_results]
+    selection_summary = next(
+        (
+            item.selection_summary
+            for item in room_results
+            if item.selection_summary is not None
+        ),
+        None,
+    )
 
     if job_id is not None and job_manager is not None:
         job_manager.update(
@@ -1375,8 +1540,8 @@ def _execute_normalize_run_pipeline(
             status="running",
             stage="loading_catalog",
             message="Loading catalog model data for normalized objects.",
-            progress_current=len(room_options),
-            progress_total=len(system_inputs),
+            progress_current=total_rooms,
+            progress_total=total_rooms,
         )
     styled_payloads = [
         styled_payload
@@ -1397,8 +1562,8 @@ def _execute_normalize_run_pipeline(
             status="running",
             stage="restoring_output",
             message="Restoring normalized objects into frontend coordinates.",
-            progress_current=len(room_options),
-            progress_total=len(system_inputs),
+            progress_current=total_rooms,
+            progress_total=total_rooms,
         )
     response_options = _restore_normalize_run_options(
         coordinate_service=coordinate_service,
@@ -1407,14 +1572,7 @@ def _execute_normalize_run_pipeline(
         transform=_mapping(normalized.get("transform")),
         openings=frontend_openings,
     )
-    selected_option = next(
-        (
-            option
-            for option in response_options
-            if _response_option_is_applicable(option)
-        ),
-        None,
-    )
+    selected_option = _select_normalize_run_response_option(response_options)
     selected_objects = (
         selected_option.get("objects", []) if selected_option is not None else []
     )
@@ -1423,6 +1581,7 @@ def _execute_normalize_run_pipeline(
         if selected_option is not None
         else None
     )
+    debug_split_wall, debug_zones = _normalize_run_debug_split_payload(normalized)
     return PipelineNormalizeRunResponse(
         objects=[
             PipelineNormalizeRunObject.model_validate(item) for item in selected_objects
@@ -1435,6 +1594,185 @@ def _execute_normalize_run_pipeline(
         selectionSummary=json_object_from_mapping(selection_summary)
         if selection_summary is not None
         else None,
+        debugSplitWall=debug_split_wall,
+        debugZones=debug_zones,
+    )
+
+
+def _build_normalize_room_run_inputs(
+    *,
+    system_inputs: list[Any],
+    base_case_id: str,
+    allow_generated_accessories: bool,
+) -> list[_NormalizeRoomRunInput]:
+    out: list[_NormalizeRoomRunInput] = []
+    for index, item in enumerate(system_inputs, start=1):
+        if not isinstance(item, dict):
+            continue
+        room_id = _string_or_none(item.get("room_id")) or f"room_{index}"
+        pipeline_request = _mapping(item.get("pipeline_run_request"))
+        input_payload = _mapping(pipeline_request.get("input_payload"))
+        if not input_payload:
+            continue
+
+        prepared_input_payload = deepcopy(input_payload)
+        user_input = dict(_mapping(prepared_input_payload.get("user_input")))
+        user_input["allow_generated_accessories"] = allow_generated_accessories
+        user_input["disable_generated_accessories"] = not allow_generated_accessories
+        prepared_input_payload["user_input"] = user_input
+        room_case_id = (
+            f"{base_case_id}_{index:02d}_{_safe_case_segment(room_id, 'room')}"
+        )
+        out.append(
+            _NormalizeRoomRunInput(
+                index=index,
+                room_id=room_id,
+                room_case_id=room_case_id,
+                input_payload=prepared_input_payload,
+                pipeline_request=pipeline_request,
+            )
+        )
+    return out
+
+
+def _run_normalize_room_cases(
+    *,
+    req: PipelineNormalizeRunRequest,
+    room_run_inputs: list[_NormalizeRoomRunInput],
+    job_id: str | None,
+    job_manager: NormalizeRunJobManager | None,
+) -> list[_NormalizeRoomRunResult]:
+    if len(room_run_inputs) == 1:
+        result = _run_normalize_room_case(req=req, run_input=room_run_inputs[0])
+        _update_normalize_room_progress(
+            job_id=job_id,
+            job_manager=job_manager,
+            completed_count=1,
+            total_count=1,
+            room_case_id=result.room_case_id,
+        )
+        return [result]
+
+    results: list[_NormalizeRoomRunResult] = []
+    max_workers = min(len(room_run_inputs), _NORMALIZE_RUN_MAX_PARALLEL_ROOMS)
+    with ThreadPoolExecutor(
+        max_workers=max_workers,
+        thread_name_prefix="normalize-run-room",
+    ) as executor:
+        future_by_input = {
+            executor.submit(_run_normalize_room_case, req=req, run_input=item): item
+            for item in room_run_inputs
+        }
+        for completed_count, future in enumerate(
+            as_completed(future_by_input), start=1
+        ):
+            run_input = future_by_input[future]
+            result = future.result()
+            results.append(result)
+            _update_normalize_room_progress(
+                job_id=job_id,
+                job_manager=job_manager,
+                completed_count=completed_count,
+                total_count=len(room_run_inputs),
+                room_case_id=run_input.room_case_id,
+            )
+    return sorted(results, key=lambda item: item.index)
+
+
+def _run_normalize_room_case(
+    *,
+    req: PipelineNormalizeRunRequest,
+    run_input: _NormalizeRoomRunInput,
+) -> _NormalizeRoomRunResult:
+    try:
+        result = run_case(
+            input_payload=run_input.input_payload,
+            user_id=_string_or_none(run_input.pipeline_request.get("user_id"))
+            or req.user_id
+            or "normalize_run",
+            description=_string_or_none(run_input.pipeline_request.get("description"))
+            or req.description,
+            special_notes=_string_or_none(
+                run_input.pipeline_request.get("special_notes")
+            )
+            or req.special_notes,
+            case_id=run_input.room_case_id,
+        )
+    except (RuntimeError, ValueError) as exc:
+        paths = case_paths(run_input.room_case_id)
+        logger.exception(
+            "normalize-run pipeline failed: case_id=%s room_id=%s",
+            run_input.room_case_id,
+            run_input.room_id,
+        )
+        raise api_exception(
+            502,
+            ApiErrorReason.NORMALIZE_RUN_PIPELINE_FAILED,
+            "Normalize-run pipeline failed.",
+            context=json_object_from_mapping(
+                _record_pipeline_error(paths=paths, error=exc)
+            ),
+        ) from exc
+
+    if result.get("error"):
+        paths = case_paths(run_input.room_case_id)
+        raise_api_error(
+            502,
+            ApiErrorReason.NORMALIZE_RUN_PIPELINE_FAILED,
+            "Normalize-run pipeline returned an error.",
+            context=json_object_from_mapping(
+                _record_pipeline_error(paths=paths, error=str(result["error"]))
+            ),
+        )
+
+    try:
+        enriched_options = _enriched_case_options(
+            run_input.room_case_id,
+            result.get("final_output"),
+        )
+    except RuntimeError as exc:
+        paths = case_paths(run_input.room_case_id)
+        logger.exception(
+            "normalize-run response enrichment failed: case_id=%s room_id=%s",
+            run_input.room_case_id,
+            run_input.room_id,
+        )
+        raise api_exception(
+            502,
+            ApiErrorReason.NORMALIZE_RUN_RESPONSE_ENRICHMENT_FAILED,
+            "Normalize-run response enrichment failed.",
+            context=json_object_from_mapping(
+                _record_pipeline_error(paths=paths, error=exc)
+            ),
+        ) from exc
+
+    return _NormalizeRoomRunResult(
+        index=run_input.index,
+        room_id=run_input.room_id,
+        room_case_id=run_input.room_case_id,
+        options=enriched_options,
+        selection_summary=_case_selection_summary(run_input.room_case_id),
+    )
+
+
+def _update_normalize_room_progress(
+    *,
+    job_id: str | None,
+    job_manager: NormalizeRunJobManager | None,
+    completed_count: int,
+    total_count: int,
+    room_case_id: str,
+) -> None:
+    if job_id is None or job_manager is None:
+        return
+    job_manager.update(
+        job_id,
+        status="running",
+        stage="running_pipeline",
+        message=f"Finished room pipeline {completed_count}/{total_count}.",
+        progress_current=completed_count,
+        progress_total=total_count,
+        current_case_id=room_case_id,
     )
 
 
@@ -1474,13 +1812,11 @@ def _restore_normalize_run_options(
                 )
             )
         all_options_for_reason = [option for _, option in selected_room_options]
-        has_hard_invalid = any(
-            opt.get("hard_valid") is False for opt in all_options_for_reason
+        has_unpublishable = any(
+            not _normalize_run_option_is_publishable(option)
+            for option in all_options_for_reason
         )
-        has_incomplete = any(
-            opt.get("complete") is False for opt in all_options_for_reason
-        )
-        if has_hard_invalid or has_incomplete:
+        if has_unpublishable:
             disabled_reason: str | None = _normalize_run_option_disabled_reason(
                 all_options_for_reason
             )
@@ -1527,6 +1863,25 @@ def _response_option_is_applicable(option: Mapping[str, Any]) -> bool:
         return False
     disabled_reason = _string_or_none(option.get("disabledReason"))
     return disabled_reason is None
+
+
+def _select_normalize_run_response_option(
+    response_options: Sequence[Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
+    applicable_options = [
+        option for option in response_options if _response_option_is_applicable(option)
+    ]
+    if not applicable_options:
+        return None
+    return max(applicable_options, key=_response_option_selection_score)
+
+
+def _response_option_selection_score(option: Mapping[str, Any]) -> tuple[int, int, int]:
+    layout_score = int(_number(option.get("layoutScore")) or 0)
+    objects = option.get("objects")
+    object_count = len(objects) if isinstance(objects, list) else 0
+    richness_bonus = object_count * _NORMALIZE_RUN_OBJECT_COUNT_SELECTION_WEIGHT
+    return (layout_score + richness_bonus, layout_score, object_count)
 
 
 def _normalize_run_option_is_publishable(option: Mapping[str, Any]) -> bool:

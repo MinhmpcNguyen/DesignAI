@@ -49,6 +49,18 @@ WALL_MOUNTED_TYPES = {
     "range_hood",
 }
 FLOOR_SIDE_TYPES = {"pet_bed", "dehumidifier", "heater"}
+MEDIA_CONSOLE_TYPES = {
+    "ke_ti_vi",
+    "ke_tivi",
+    "ke_tv",
+    "media_console",
+    "tv_cabinet",
+    "tv_console",
+    "tv_stand",
+    "tu_ti_vi",
+    "tu_tivi",
+    "tu_tv",
+}
 
 MAX_ITEMS_BY_ANCHOR: dict[str, int] = {
     "bed": 2,
@@ -336,7 +348,7 @@ def _collect_candidate_types(
     supports: list[_Support],
     openings: dict[str, list[dict[str, Any]]],
 ) -> list[str]:
-    active_anchors = {support.object_type for support in supports}
+    active_anchors = {_surface_anchor_key(support.object_type) for support in supports}
     if openings.get("doors") or openings.get("windows"):
         active_anchors.add("__opening__")
     if "__wall__" in anchor_map:
@@ -349,7 +361,10 @@ def _collect_candidate_types(
     out: list[str] = []
     seen: set[str] = set()
     for anchor in active_anchors:
-        for value in anchor_map.get(anchor, []):
+        candidates = anchor_map.get(anchor, [])
+        if not candidates and anchor == "tv_console":
+            candidates = ["tv"]
+        for value in candidates:
             if value in seen:
                 continue
             seen.add(value)
@@ -461,7 +476,7 @@ def _is_bare_tv_inventory_row(row: dict[str, Any]) -> bool:
         if not isinstance(value, str):
             continue
         key = value.strip().lower().replace("-", "_").replace(" ", "_")
-        if not key or any(token in key for token in ("tv_console", "ke_tv", "ke_tivi")):
+        if not key or _is_media_console_type(key):
             continue
         if key in {"tv", "tivi", "ti_vi", "television", "smart_tv"}:
             return True
@@ -581,11 +596,14 @@ def _build_generated_objects(
     room_center = (room_rect.center_x, room_rect.center_y)
 
     for support in supports:
-        candidates = anchor_map.get(support.object_type)
+        anchor_key = _surface_anchor_key(support.object_type)
+        candidates = anchor_map.get(anchor_key)
+        if not candidates and anchor_key == "tv_console":
+            candidates = ["tv"]
         if not candidates:
             continue
         selected = _select_anchor_candidates(
-            anchor=support.object_type,
+            anchor=anchor_key,
             room_type=room_type,
             candidates=candidates,
         )
@@ -721,6 +739,8 @@ def _filter_already_present_item_families(
 
 def _object_family(object_type: str) -> str:
     normalized = object_type.strip().lower().replace("-", "_").replace(" ", "_")
+    if _is_media_console_type(normalized):
+        return "tv_console"
     if normalized in {"ceiling_lamp", "ceiling_light", "overhead_light"}:
         return "ceiling_lamp"
     if normalized in {"rug", "carpet"}:
@@ -732,6 +752,17 @@ def _object_family(object_type: str) -> str:
     if normalized in {"kitchen_wall_cabinet", "wall_cabinet", "upper_cabinet"}:
         return "kitchen_wall_cabinet"
     return normalized
+
+
+def _surface_anchor_key(object_type: str) -> str:
+    if _is_media_console_type(object_type):
+        return "tv_console"
+    return object_type
+
+
+def _is_media_console_type(value: str) -> bool:
+    key = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return key in MEDIA_CONSOLE_TYPES
 
 
 def _select_anchor_candidates(
@@ -803,7 +834,7 @@ def _place_support_attached_items(
     on_top_types: list[str] = []
 
     for item_type in item_types:
-        if support.object_type == "tv_console" and item_type == "tv":
+        if _is_media_console_type(support.object_type) and item_type == "tv":
             row = _place_tv_on_console_item(
                 support=support,
                 item_type=item_type,

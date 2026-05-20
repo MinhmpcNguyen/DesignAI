@@ -41,6 +41,38 @@ _SOFT_REQUEST_CONTRACT_INTENTS = {
     "preferred_if_fit",
     "optional_if_surplus",
 }
+_FOOTPRINT_EXEMPT_CATEGORIES = frozenset({"dining_chair"})
+_SIZE_PROFILE_CATALOG_TYPE_FALLBACKS: dict[str, tuple[str, ...]] = {
+    "dining_table": ("coffee_table", "table"),
+    "dining_chair": ("chair",),
+}
+
+
+def _is_footprint_exempt_category(category: object) -> bool:
+    normalized = _norm_key(str(category or ""))
+    canonical = re.sub(r"(?:_\d+)+$", "", normalized)
+    return canonical in _FOOTPRINT_EXEMPT_CATEGORIES
+
+
+def _catalog_query_categories(categories: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for category in categories:
+        normalized = _norm_key(category)
+        for candidate in (
+            normalized,
+            *_SIZE_PROFILE_CATALOG_TYPE_FALLBACKS.get(normalized, ()),
+        ):
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            out.append(candidate)
+    return out
+
+
+def _profile_fallback_categories(category: str) -> tuple[str, ...]:
+    normalized = _norm_key(category)
+    return _SIZE_PROFILE_CATALOG_TYPE_FALLBACKS.get(normalized, ())
 
 
 # ============================================================
@@ -396,11 +428,17 @@ def _build_size_profiles(
 
 
 def _load_inventory_from_catalog_api(categories: list[str]) -> list[dict[str, Any]]:
-    requested_types = [
-        category.strip()
-        for category in categories
-        if isinstance(category, str) and category.strip() and category != "__generic__"
-    ]
+    requested_types = _catalog_query_categories(
+        [
+            category.strip()
+            for category in categories
+            if (
+                isinstance(category, str)
+                and category.strip()
+                and category != "__generic__"
+            )
+        ]
+    )
     return [
         dict(payload)
         for payload in load_catalog_inventory_payloads(
@@ -502,6 +540,56 @@ def _build_generic_profile_from_profiles(
     }
 
 
+def _profile_s_area(profile: Any) -> float:
+    if not isinstance(profile, dict):
+        return float("inf")
+    rep_dims = profile.get("rep_dims_m")
+    rep = rep_dims.get("S") if isinstance(rep_dims, dict) else None
+    if not isinstance(rep, dict):
+        return float("inf")
+    try:
+        area = float(rep.get("A") or 0.0)
+        if area <= 0.0:
+            area = float(rep.get("L") or 0.0) * float(rep.get("W") or 0.0)
+    except (TypeError, ValueError):
+        return float("inf")
+    return area if area > 0.0 else float("inf")
+
+
+def _fallback_requested_profile(
+    category: str,
+    profiles_by_category: dict[str, Any],
+) -> dict[str, Any] | None:
+    normalized_lookup = {_norm_key(k): v for k, v in profiles_by_category.items()}
+    for fallback_category in _profile_fallback_categories(category):
+        profile = normalized_lookup.get(_norm_key(fallback_category))
+        if isinstance(profile, dict):
+            return profile
+    return None
+
+
+def _select_requested_profile(
+    category: str,
+    profiles_by_category: dict[str, Any],
+) -> dict[str, Any]:
+    normalized_lookup = {_norm_key(k): v for k, v in profiles_by_category.items()}
+    normalized = _norm_key(category)
+    candidates = [
+        profile
+        for profile in (
+            normalized_lookup.get(normalized),
+            *(
+                normalized_lookup.get(_norm_key(fallback_category))
+                for fallback_category in _profile_fallback_categories(category)
+            ),
+        )
+        if isinstance(profile, dict)
+    ]
+    if not candidates:
+        raise ValueError(f"Missing size profile for category={category}")
+    return min(candidates, key=_profile_s_area)
+
+
 def get_size_profiles(
     *, categories: list[str], tenant_id: str | None = None
 ) -> dict[str, Any]:
@@ -531,12 +619,23 @@ def get_size_profiles(
 
     for category in categories:
         if category in profiles_by_category:
-            requested[category] = profiles_by_category[category]
+            requested[category] = _select_requested_profile(
+                category,
+                profiles_by_category,
+            )
             continue
 
         nk = _norm_key(category)
         if nk in normalized_lookup:
-            requested[category] = normalized_lookup[nk]
+            requested[category] = _select_requested_profile(
+                category,
+                profiles_by_category,
+            )
+        elif fallback_profile := _fallback_requested_profile(
+            category,
+            profiles_by_category,
+        ):
+            requested[category] = fallback_profile
         else:
             missing.append(category)
 
@@ -833,10 +932,22 @@ def _estimate_decision_footprint_detail(
         generic_profile,
     )
 
-    needs_access = _decision_needs_access(decision, access_requirements)
+    footprint_exempt = _is_footprint_exempt_category(category)
+    needs_access = (
+        _decision_needs_access(decision, access_requirements)
+        if not footprint_exempt
+        else False
+    )
 
     footprint_options_by_tier: dict[str, dict[str, float]] = {}
     for cand_tier in ("S", "M", "L"):
+        if footprint_exempt:
+            footprint_options_by_tier[cand_tier] = {
+                "base_footprint_m2_per_item": 0.0,
+                "effective_footprint_m2_per_item": 0.0,
+                "clearance_depth_m": 0.0,
+            }
+            continue
         try:
             base_fp_per_item, effective_fp_per_item, clearance_depth_m = (
                 _effective_footprint_m2_from_profile(
@@ -884,6 +995,7 @@ def _estimate_decision_footprint_detail(
         "request_contract_evidence": str(decision.get("request_contract_evidence", "")),
         "needs_front_clearance": needs_access,
         "profile_source": profile_source,
+        "footprint_exempt": footprint_exempt,
         "clearance_depth_m": float(chosen["clearance_depth_m"]),
         "base_footprint_m2_per_item": float(chosen["base_footprint_m2_per_item"]),
         "effective_footprint_m2_per_item": float(
