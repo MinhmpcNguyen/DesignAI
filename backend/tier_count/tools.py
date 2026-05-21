@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -41,6 +42,8 @@ _SOFT_REQUEST_CONTRACT_INTENTS = {
     "preferred_if_fit",
     "optional_if_surplus",
 }
+_KITCHEN_NO_STOVE_SINK_ENV = "TKNT_KITCHEN_NO_STOVE_SINK"
+_RUSTIC_KITCHEN_CABINET_TEXT = "tu bep rustic"
 _FOOTPRINT_EXEMPT_CATEGORIES = frozenset({"dining_chair"})
 _SIZE_PROFILE_CATALOG_TYPE_FALLBACKS: dict[str, tuple[str, ...]] = {
     "dining_table": ("coffee_table", "table"),
@@ -164,6 +167,38 @@ def _catalog_identity_text(item: dict[str, Any]) -> str:
         attrs.get("modelUrl"),
     ]
     return " ".join(_normalize_catalog_text(value) for value in values)
+
+
+def _env_flag_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _preferred_no_stove_sink_rep(
+    category: str,
+    items_cat: list[_NormItem],
+) -> _NormItem | None:
+    if _norm_key(category) != "kitchen_base_cabinet" or not _env_flag_enabled(
+        _KITCHEN_NO_STOVE_SINK_ENV
+    ):
+        return None
+    for item in items_cat:
+        if _RUSTIC_KITCHEN_CABINET_TEXT in _catalog_identity_text(item.raw):
+            return item
+    return None
+
+
+def _no_stove_sink_kitchen_base_cabinet_dims(
+    preferred_rep: _NormItem,
+) -> dict[str, dict[str, float | str]]:
+    rep = _rep_dict(preferred_rep)
+    if rep is None:
+        return {}
+    out: dict[str, dict[str, float | str]] = {}
+    for tier in ("S", "M", "L"):
+        row = dict(rep)
+        row["source_id"] = preferred_rep.inventory_id
+        out[tier] = row
+    return out
 
 
 def _catalog_item_allowed_for_category(category: str, item: dict[str, Any]) -> bool:
@@ -373,6 +408,13 @@ def _build_size_profiles(
                 rep = _rep_from_items_for_tier(items_cat, t)
                 backfilled[t] = True
             rep_dims[t] = _rep_dict(rep)
+
+        preferred_rep = _preferred_no_stove_sink_rep(cat, items_cat)
+        if preferred_rep is not None:
+            rep_dims = _no_stove_sink_kitchen_base_cabinet_dims(
+                preferred_rep,
+            )
+            backfilled = {"S": False, "M": False, "L": False}
 
         profiles[cat] = {
             "metric": "footprint_area_m2",

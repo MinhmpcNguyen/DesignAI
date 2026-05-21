@@ -44,6 +44,21 @@ interface AxisInputProps {
   onCommit: (value: number) => void;
 }
 
+const SIZE_MATCH_EPSILON = 0.001;
+
+function sizesAlmostEqual(
+  candidate: readonly number[] | undefined,
+  target: readonly number[],
+) {
+  return (
+    candidate != null &&
+    candidate.length === 3 &&
+    Math.abs(candidate[0] - target[0]) < SIZE_MATCH_EPSILON &&
+    Math.abs(candidate[1] - target[1]) < SIZE_MATCH_EPSILON &&
+    Math.abs(candidate[2] - target[2]) < SIZE_MATCH_EPSILON
+  );
+}
+
 function AxisInput({ label, live, unit, onCommit }: AxisInputProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -174,9 +189,14 @@ export default function SelectedObjectOverlay() {
     const defaultIds = catalogOptions.defaultVariant.selectedOptionValueIds;
     const byName: Record<string, string> = {};
     for (const opt of catalogOptions.options) {
-      const matchId = defaultIds.find((id) =>
-        opt.values.some((v) => v.id === id),
-      );
+      const objectSizeMatch =
+        opt.name === "size"
+          ? opt.values.find((v) => sizesAlmostEqual(v.extraData?.size, obj.size))
+          : undefined;
+      const matchId =
+        opt.name === "size"
+          ? objectSizeMatch?.id
+          : defaultIds.find((id) => opt.values.some((v) => v.id === id));
       if (matchId) byName[opt.name] = matchId;
     }
     setSelectedOptionIds({ forId: obj.id, byName });

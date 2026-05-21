@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import os
 import unittest
 from typing import cast
+from unittest.mock import patch
 
 from adapters.catalog_api import CatalogItem, infer_catalog_object_type
+from api.routes.pipeline import _match_catalog_payload
+from stylist.style_policy import compile_style_policy
 
 
 class CatalogApiObjectTypeInferenceTest(unittest.TestCase):
@@ -192,6 +196,60 @@ class CatalogApiObjectTypeInferenceTest(unittest.TestCase):
             )
         )
         self.assertTrue(sink.matches_types({"sink"}, category_slug="kitchen"))
+
+    def test_catalog_match_prefers_rustic_kitchen_cabinet_for_rustic_style(
+        self,
+    ) -> None:
+        catalog_index = {
+            "by_id": {
+                "forest_cabinet": {
+                    "id": "forest-cabinet",
+                    "name": "Tủ bếp gỗ forest 8",
+                    "object_type": "kitchen_base_cabinet",
+                    "attributes": {"inventory_name": "Tủ bếp gỗ forest 8"},
+                }
+            },
+            "by_type": {
+                "kitchen_base_cabinet": [
+                    {
+                        "id": "forest-cabinet",
+                        "name": "Tủ bếp gỗ forest 8",
+                        "object_type": "kitchen_base_cabinet",
+                        "attributes": {"inventory_name": "Tủ bếp gỗ forest 8"},
+                    },
+                    {
+                        "id": "rustic-cabinet",
+                        "name": "Tủ bếp Rustic",
+                        "object_type": "kitchen_base_cabinet",
+                        "attributes": {"inventory_name": "Tủ bếp Rustic"},
+                    },
+                ]
+            },
+        }
+
+        match = _match_catalog_payload(
+            {
+                "object_type": "kitchen_base_cabinet",
+                "source_id": "forest-cabinet",
+            },
+            catalog_index,
+            style_preferences=["rustic"],
+        )
+
+        if match is None:
+            raise AssertionError("Expected a matching kitchen cabinet.")
+        self.assertEqual(match["id"], "rustic-cabinet")
+
+    def test_style_policy_detects_rustic_from_requested_cabinet_name(self) -> None:
+        with patch.dict(os.environ, {"TKNT_STYLE_POLICY_REQUIRE_LLM": "0"}):
+            policy = compile_style_policy(
+                room_type="kitchen",
+                brief_text='Bắt buộc phải là "Tủ bếp Rustic".',
+                use_llm=False,
+            )
+
+        self.assertEqual(policy["style_name"], "rustic")
+        self.assertIn("rustic", cast(list[str], policy["style_tags"]))
 
     def test_tv_dimensions_use_thin_depth_and_vertical_screen_axis(self) -> None:
         tv = CatalogItem.model_validate(

@@ -1,0 +1,44 @@
+{
+  "source_file": "/Users/Yuki/DesignAI/backend/manual_glb_orientation_bundle/catalog_downloads/04be5d53-2feb-4783-81b4-8510362f6616.glb",
+  "file_name": "04be5d53-2feb-4783-81b4-8510362f6616.glb",
+  "front_axis": "-z",
+  "rotation_deg_offset": 0.0,
+  "rotation_deg_x": 0.0,
+  "rotation_deg_z": 180.0,
+  "quaternion": [
+    0.0,
+    0.0,
+    1.0,
+    0.0
+  ],
+  "preview_override": {
+    "enabled": true,
+    "contexts": [
+      "panel"
+    ],
+    "rotation_deg_offset": 0.0,
+    "rotation_deg_x": 0.0,
+    "rotation_deg_z": 180.0,
+    "notes": "Manual local GLB orientation review."
+  },
+  "orientation_review": {
+    "version": 1,
+    "status": "reviewed",
+    "front_axis": "-z",
+    "rotation_deg_offset": 0.0,
+    "rotation_deg_x": 0.0,
+    "rotation_deg_z": 180.0,
+    "quaternion": [
+      0.0,
+      0.0,
+      1.0,
+      0.0
+    ],
+    "reference_front": "2D plan +Y / 3D scene -Z",
+    "contexts": [
+      "panel"
+    ],
+    "notes": "Manual local GLB orientation review."
+  },
+  "saved_at_utc": "2026-05-20T09:33:08.003728+00:00"
+}

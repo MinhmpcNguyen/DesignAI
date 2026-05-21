@@ -18,19 +18,19 @@ from agent.cluster_composer import (
 )
 from agent.cluster_forge import ClusterForge
 from agent.cluster_placer import build_phase2_payload
-from agent.phase2_controller import Phase2Controller, build_phase2_preview_candidate
 from agent.cluster_relation_planner import ClusterRelationPlanner
-from agent.room_interpreter import RoomInterpreter
-from agent.seed_concept_generator import solver_plan_from_concept
-from agent.solver.solver import MacroClusterSolver
-from agent.stylist import Stylist, stylist_model_name_for_variant
-from agent.tier_count_director import TierCountDirector
+from agent.phase2_controller import Phase2Controller, build_phase2_preview_candidate
 from agent.request_contract import (
     canonical_object_type,
     missing_functional_contract_types,
     missing_non_functional_contract_items,
     request_contract_from_payload,
 )
+from agent.room_interpreter import RoomInterpreter
+from agent.seed_concept_generator import solver_plan_from_concept
+from agent.solver.solver import MacroClusterSolver
+from agent.stylist import Stylist, stylist_model_name_for_variant
+from agent.tier_count_director import TierCountDirector
 from cluster_composer.merge import merge_cluster_outputs
 from cluster_composer.outline import compute_cluster_outline
 from layout.grid_policy import GLOBAL_LAYOUT_GRID_MM
@@ -77,6 +77,22 @@ logger = logging.getLogger(__name__)
 _PRIMARY_SEED_CACHE_VERSION = "v1"
 _PRIMARY_SEED_LAYOUT_CACHE: dict[str, dict[str, Any]] = {}
 _LAYOUT_SPEED_MODE_ENV = "TKNT_LAYOUT_SPEED_MODE"
+_KITCHEN_NO_STOVE_SINK_ENV = "TKNT_KITCHEN_NO_STOVE_SINK"
+_KITCHEN_ALLOWED_NO_STOVE_SINK_TYPES: frozenset[str] = frozenset(
+    {"dining_chair", "dining_table", "fridge", "kitchen_base_cabinet"}
+)
+_KITCHEN_EXCLUDED_TYPES: frozenset[str] = frozenset(
+    {"cooktop", "dishwasher", "range_hood", "sink", "stove"}
+)
+_RUSTIC_KITCHEN_BASE_CABINET_ID = "56715066-87c8-4bc7-b59e-fa29a6b302e6"
+_RUSTIC_KITCHEN_BASE_CABINET_DIMS_M: dict[str, float | str] = {
+    "L": 2.831904,
+    "W": 2.272635,
+    "H": 2.299903,
+    "A": 6.44,
+    "R": 1.25,
+    "source_id": _RUSTIC_KITCHEN_BASE_CABINET_ID,
+}
 _REQUEST_NON_FUNCTIONAL_LAYOUT_SPECS: dict[str, dict[str, Any]] = {
     "rug": {
         "width_ratio": 0.56,
@@ -426,6 +442,281 @@ def _build_primary_guidance_text(
                 legacy_parts.append(text)
 
     return "\n".join(legacy_parts)
+
+
+def _kitchen_no_stove_sink_enabled() -> bool:
+    return os.getenv(_KITCHEN_NO_STOVE_SINK_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _is_allowed_no_stove_sink_kitchen_type(value: object) -> bool:
+    return isinstance(value, str) and value in _KITCHEN_ALLOWED_NO_STOVE_SINK_TYPES
+
+
+def _filter_kitchen_type_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if _is_allowed_no_stove_sink_kitchen_type(item)]
+
+
+def _filter_kitchen_object_rows(
+    value: object,
+    *,
+    object_type_key: str = "object_type",
+) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        item
+        for item in value
+        if isinstance(item, dict)
+        and _is_allowed_no_stove_sink_kitchen_type(item.get(object_type_key))
+    ]
+
+
+def _kitchen_cluster_has_allowed_objects(cluster: dict[str, Any]) -> bool:
+    bundles = cluster.get("required_bundles")
+    if isinstance(bundles, list):
+        for bundle in bundles:
+            if not isinstance(bundle, dict):
+                continue
+            objects = bundle.get("objects")
+            if isinstance(objects, list) and objects:
+                return True
+        return False
+    members = cluster.get("members")
+    if isinstance(members, list):
+        return bool(members)
+    objects = cluster.get("objects")
+    return isinstance(objects, list) and bool(objects)
+
+
+def _kitchen_decision_type(row: dict[str, Any]) -> object:
+    return row.get("object_type") or row.get("category")
+
+
+def _force_no_stove_sink_kitchen_decision(row: dict[str, Any]) -> dict[str, Any]:
+    object_type = _kitchen_decision_type(row)
+    if object_type != "kitchen_base_cabinet":
+        return row
+    out = dict(row)
+    out["object_type"] = "kitchen_base_cabinet"
+    out["category"] = "kitchen_base_cabinet"
+    out["quantity"] = 1
+    out["size_tier"] = "S"
+    out["priority"] = "anchor"
+    out["preserve_level"] = "highest"
+    out["protected"] = True
+    out["droppable"] = False
+    out["drop_order_bias"] = "drop_last"
+    out["min_keep"] = 1
+    out["max_keep"] = 1
+    out["keep_if_space_surplus"] = False
+    out["space_surplus_threshold"] = 0.0
+    out["request_contract_intent"] = "must_keep"
+    out["request_contract_reason"] = "required by no-stove-sink kitchen mode"
+    out["request_contract_evidence"] = "Tủ bếp Rustic"
+    out["request_contract_target_count"] = 1
+    out["budget_adjusted"] = False
+    out["budget_adjustment_reason"] = ""
+    rep_dims = row.get("rep_dims_m")
+    if isinstance(rep_dims, dict):
+        length = rep_dims.get("L")
+        width = rep_dims.get("W")
+        if (
+            isinstance(length, int | float)
+            and isinstance(width, int | float)
+            and length > 0
+            and width > 0
+        ):
+            out["rep_dims_m"] = deepcopy(rep_dims)
+            return out
+    out["rep_dims_m"] = dict(_RUSTIC_KITCHEN_BASE_CABINET_DIMS_M)
+    return out
+
+
+def _filter_kitchen_anchor_policy(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    policy = deepcopy(value)
+    for field in (
+        "dominant_anchor_candidates",
+        "placement_order",
+        "protected_ids",
+        "droppable_ids",
+    ):
+        if isinstance(policy.get(field), list):
+            policy[field] = _filter_kitchen_type_list(policy[field])
+    if not _is_allowed_no_stove_sink_kitchen_type(policy.get("dominant_anchor_id")):
+        candidates = policy.get("dominant_anchor_candidates")
+        policy["dominant_anchor_id"] = (
+            candidates[0] if isinstance(candidates, list) and candidates else ""
+        )
+    return policy
+
+
+def _filter_kitchen_cluster_rules(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    rules = deepcopy(value)
+    for field in ("allowed_rotations", "facing"):
+        field_value = rules.get(field)
+        if isinstance(field_value, dict):
+            rules[field] = {
+                key: val
+                for key, val in field_value.items()
+                if _is_allowed_no_stove_sink_kitchen_type(key)
+            }
+    if isinstance(rules.get("access_requirements"), list):
+        rules["access_requirements"] = [
+            row
+            for row in rules["access_requirements"]
+            if isinstance(row, dict)
+            and _is_allowed_no_stove_sink_kitchen_type(row.get("id"))
+        ]
+    if isinstance(rules.get("dominant_anchor_candidates"), list):
+        rules["dominant_anchor_candidates"] = _filter_kitchen_type_list(
+            rules["dominant_anchor_candidates"]
+        )
+    if isinstance(rules.get("semantic_placements"), list):
+        rules["semantic_placements"] = [
+            row
+            for row in rules["semantic_placements"]
+            if isinstance(row, dict)
+            and _is_allowed_no_stove_sink_kitchen_type(row.get("id"))
+            and _is_allowed_no_stove_sink_kitchen_type(row.get("relative_to"))
+        ]
+    rules["anchor_first_policy"] = _filter_kitchen_anchor_policy(
+        rules.get("anchor_first_policy")
+    )
+    return rules
+
+
+def _filter_kitchen_semantic_program(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    semantic = deepcopy(value)
+    request_contract = semantic.get("request_contract")
+    if isinstance(request_contract, dict):
+        semantic["request_contract"] = _filter_kitchen_request_contract(
+            request_contract
+        )
+    active_clusters = semantic.get("active_clusters")
+    if isinstance(active_clusters, list):
+        filtered_clusters: list[dict[str, Any]] = []
+        for cluster in active_clusters:
+            if not isinstance(cluster, dict):
+                continue
+            if isinstance(cluster.get("dominant_anchor_candidates"), list):
+                cluster["dominant_anchor_candidates"] = _filter_kitchen_type_list(
+                    cluster["dominant_anchor_candidates"]
+                )
+            if isinstance(cluster.get("degradation_ladder"), list):
+                cluster["degradation_ladder"] = [
+                    item
+                    for item in cluster["degradation_ladder"]
+                    if not any(
+                        excluded in str(item) for excluded in _KITCHEN_EXCLUDED_TYPES
+                    )
+                ]
+            for bundle in cluster.get("required_bundles") or []:
+                if not isinstance(bundle, dict):
+                    continue
+                bundle["objects"] = _filter_kitchen_object_rows(bundle.get("objects"))
+            hints = cluster.get("tier_count_hints")
+            if isinstance(hints, dict):
+                hints["object_hints"] = _filter_kitchen_object_rows(
+                    hints.get("object_hints")
+                )
+            if _kitchen_cluster_has_allowed_objects(cluster):
+                filtered_clusters.append(cluster)
+        semantic["active_clusters"] = filtered_clusters
+    constraints = semantic.get("selection_constraints")
+    if isinstance(constraints, dict):
+        for field in ("dominant_anchor_required", "dominant_workflow_required"):
+            if isinstance(constraints.get(field), list):
+                constraints[field] = _filter_kitchen_type_list(constraints[field])
+        for field in ("group_caps", "group_minimums"):
+            rows = constraints.get(field)
+            if not isinstance(rows, list):
+                continue
+            filtered_rows: list[dict[str, Any]] = []
+            for raw_row in rows:
+                if not isinstance(raw_row, dict):
+                    continue
+                row = dict(raw_row)
+                row["objects"] = _filter_kitchen_type_list(row.get("objects"))
+                if row["objects"]:
+                    filtered_rows.append(row)
+            constraints[field] = filtered_rows
+    return semantic
+
+
+def _filter_kitchen_request_contract(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    contract = deepcopy(value)
+    contract["objects"] = _filter_kitchen_object_rows(contract.get("objects"))
+    return contract
+
+
+def _filter_kitchen_cluster_output(cluster_output: dict[str, Any]) -> dict[str, Any]:
+    result = deepcopy(cluster_output)
+    clusters = result.get("clusters")
+    if not isinstance(clusters, list):
+        return result
+    filtered_clusters: list[dict[str, Any]] = []
+    for cluster in clusters:
+        if not isinstance(cluster, dict):
+            continue
+        for field in ("members", "anchors", "anchor_object_types"):
+            val = cluster.get(field)
+            if isinstance(val, list):
+                cluster[field] = _filter_kitchen_type_list(val)
+        constraints = cluster.get("hard_constraints")
+        if isinstance(constraints, list):
+            cluster["hard_constraints"] = [
+                c
+                for c in constraints
+                if isinstance(c, dict)
+                and _is_allowed_no_stove_sink_kitchen_type(c.get("a"))
+                and _is_allowed_no_stove_sink_kitchen_type(c.get("b"))
+            ]
+        cluster["cluster_rules"] = _filter_kitchen_cluster_rules(
+            cluster.get("cluster_rules")
+        )
+        if _kitchen_cluster_has_allowed_objects(cluster):
+            filtered_clusters.append(cluster)
+    result["clusters"] = filtered_clusters
+    semantic_program = result.get("semantic_layout_program")
+    if isinstance(semantic_program, dict):
+        result["semantic_layout_program"] = _filter_kitchen_semantic_program(
+            semantic_program
+        )
+    request_contract = result.get("request_contract")
+    if isinstance(request_contract, dict):
+        result["request_contract"] = _filter_kitchen_request_contract(request_contract)
+    missing = result.get("missing")
+    if isinstance(missing, list):
+        result["missing"] = _filter_kitchen_type_list(missing)
+    return result
+
+
+def _filter_kitchen_tier_output(tier_output: dict[str, Any]) -> dict[str, Any]:
+    result = deepcopy(tier_output)
+    decisions = result.get("decisions")
+    if isinstance(decisions, list):
+        result["decisions"] = [
+            _force_no_stove_sink_kitchen_decision(d)
+            for d in decisions
+            if isinstance(d, dict)
+            and _is_allowed_no_stove_sink_kitchen_type(_kitchen_decision_type(d))
+        ]
+    return result
 
 
 _SPEED_SPLIT_TAG_BY_FAMILY = {
@@ -1016,6 +1307,8 @@ def run_case(
     cluster_output = augment_cluster_forge_with_manual_placements(
         cluster_output, manual_placements
     )
+    if room_type == "kitchen" and _kitchen_no_stove_sink_enabled():
+        cluster_output = _filter_kitchen_cluster_output(cluster_output)
     cluster_output, speed_split_notes = _speed_split_cluster_output(
         room_output=room_output, cluster_output=cluster_output
     )
@@ -1038,6 +1331,8 @@ def run_case(
         clusters_json=cluster_output,
     )
     tier_output = _strip_raw_text(tier_output)
+    if room_type == "kitchen" and _kitchen_no_stove_sink_enabled():
+        tier_output = _filter_kitchen_tier_output(tier_output)
     tier_output = apply_manual_placements_to_tier_output(
         tier_output, manual_placements, clusters_json=cluster_output
     )

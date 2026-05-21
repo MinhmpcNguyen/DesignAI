@@ -85,6 +85,8 @@ _KITCHEN_LINEAR_WORKFLOW_OBJECT_TOKENS = frozenset(
         "stove",
     }
 )
+_RUSTIC_KITCHEN_BASE_CABINET_ID = "56715066-87c8-4bc7-b59e-fa29a6b302e6"
+_RUSTIC_KITCHEN_BASE_CABINET_SOLVER_DEPTH_MM = 650
 _WALL_SEQUENCE_EDGE_TOKENS = frozenset(
     {
         "wall_band",
@@ -127,6 +129,7 @@ DEFAULT_MAX_DEGRADATION_ROUNDS = 3
 OBJECT_LEVEL_MAX_ANCHOR_CANDIDATES_PER_CLUSTER = 36
 OBJECT_LEVEL_MIN_ANCHOR_SOLUTIONS = 240
 OBJECT_LEVEL_MAX_SUPPORT_SOLUTIONS_PER_ANCHOR = 16
+OBJECT_LEVEL_MAX_SUPPORT_SLOTS_PER_OBJECT = 12
 OBJECT_LEVEL_MAX_OBJECT_SOLUTIONS = 24
 OBJECT_LEVEL_MAX_SUPPORT_SLOT_CANDIDATES = 36
 OBJECT_LEVEL_GEOMETRY_REPAIR_MAX_CANDIDATES = 120
@@ -5411,6 +5414,9 @@ def _build_object_solver_world(
                     if isinstance(decision.get("rep_dims_m"), Mapping)
                     else {}
                 )
+                source_id = str(rep_dims.get("source_id") or "")
+                if source_id.startswith("__"):
+                    source_id = ""
                 object_specs[object_id] = {
                     "object_id": object_id,
                     "cluster_id": cluster_id,
@@ -5423,6 +5429,7 @@ def _build_object_solver_world(
                         "W": int(round(float(rep_dims.get("W") or 0.0) * 1000.0)),
                         "H": int(round(float(rep_dims.get("H") or 0.0) * 1000.0)),
                     },
+                    "source_id": source_id,
                     "allowed_rotations": list(
                         (
                             (cluster_rules.get("allowed_rotations") or {}).get(
@@ -6683,6 +6690,63 @@ def _object_spec(
     return row if isinstance(row, Mapping) else None
 
 
+def _positive_mm(value: Any) -> int:
+    try:
+        amount = round(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+    return amount if amount > 0 else 0
+
+
+def _spec_visual_dims_mm(spec: Mapping[str, Any]) -> tuple[int, int, int]:
+    dims = (
+        spec.get("rep_dims_mm") if isinstance(spec.get("rep_dims_mm"), Mapping) else {}
+    )
+    return (
+        _positive_mm(dims.get("L")),
+        _positive_mm(dims.get("W")),
+        _positive_mm(dims.get("H")),
+    )
+
+
+def _spec_solver_footprint_dims_mm(
+    spec: Mapping[str, Any], object_id: str
+) -> tuple[int, int]:
+    visual_length_mm, visual_width_mm, _ = _spec_visual_dims_mm(spec)
+    footprint = (
+        spec.get("solver_footprint_mm")
+        if isinstance(spec.get("solver_footprint_mm"), Mapping)
+        else {}
+    )
+    length_mm = _positive_mm(footprint.get("L")) or visual_length_mm
+    width_mm = _positive_mm(footprint.get("W")) or visual_width_mm
+    if _spec_uses_rustic_install_footprint(
+        spec=spec,
+        object_id=object_id,
+        width_mm=width_mm,
+    ):
+        width_mm = min(width_mm, _RUSTIC_KITCHEN_BASE_CABINET_SOLVER_DEPTH_MM)
+    return length_mm, width_mm
+
+
+def _spec_uses_rustic_install_footprint(
+    *,
+    spec: Mapping[str, Any],
+    object_id: str,
+    width_mm: int,
+) -> bool:
+    if width_mm <= _RUSTIC_KITCHEN_BASE_CABINET_SOLVER_DEPTH_MM:
+        return False
+    source_id = str(spec.get("source_id") or spec.get("inventory_id") or "")
+    if source_id == _RUSTIC_KITCHEN_BASE_CABINET_ID:
+        return True
+    category = str(spec.get("category") or spec.get("base_object_id") or object_id)
+    return (
+        category == "kitchen_base_cabinet"
+        and str(spec.get("source_id") or "") == _RUSTIC_KITCHEN_BASE_CABINET_ID
+    )
+
+
 def _spec_object_key(spec: Mapping[str, Any], object_id: str) -> str:
     return " ".join(
         str(value or "").strip().lower()
@@ -6731,11 +6795,9 @@ def _generate_anchor_pose_candidates(
     spec = _object_spec(cluster_program, anchor_id)
     if spec is None:
         return []
-    dims = (
-        spec.get("rep_dims_mm") if isinstance(spec.get("rep_dims_mm"), Mapping) else {}
-    )
-    length_mm = max(200, int(dims.get("L") or 0))
-    width_mm = max(200, int(dims.get("W") or 0))
+    solver_length_mm, solver_width_mm = _spec_solver_footprint_dims_mm(spec, anchor_id)
+    length_mm = max(200, solver_length_mm)
+    width_mm = max(200, solver_width_mm)
     allowed_rotations = (
         spec.get("allowed_rotations")
         if isinstance(spec.get("allowed_rotations"), Sequence)
@@ -8119,6 +8181,12 @@ def _place_support_objects_for_solution(
                 item[1]["rot"],
             )
         )
+        slot_limit = (
+            OBJECT_LEVEL_MAX_SUPPORT_SLOTS_PER_OBJECT
+            if len(tasks) >= 4
+            else OBJECT_LEVEL_MAX_SUPPORT_SLOT_CANDIDATES
+        )
+        viable_slots = viable_slots[:slot_limit]
 
         for relax_penalty, slot, materialized in viable_slots:
             rect = slot["rect"]
@@ -8904,11 +8972,9 @@ def _support_slot_candidates(
     spec = _object_spec(cluster_program, object_id)
     if spec is None:
         return []
-    dims = (
-        spec.get("rep_dims_mm") if isinstance(spec.get("rep_dims_mm"), Mapping) else {}
-    )
-    length_mm = max(160, int(dims.get("L") or 0))
-    width_mm = max(160, int(dims.get("W") or 0))
+    solver_length_mm, solver_width_mm = _spec_solver_footprint_dims_mm(spec, object_id)
+    length_mm = max(160, solver_length_mm)
+    width_mm = max(160, solver_width_mm)
     allowed_rotations = (
         spec.get("allowed_rotations")
         if isinstance(spec.get("allowed_rotations"), Sequence)
@@ -9419,15 +9485,27 @@ def _materialize_object_row(
     relative_to: str | None = None,
 ) -> dict[str, Any]:
     spec = _object_spec(cluster_program, object_id) or {}
-    dims = (
-        spec.get("rep_dims_mm") if isinstance(spec.get("rep_dims_mm"), Mapping) else {}
-    )
-    length_mm = max(160, int(dims.get("L") or 0))
-    width_mm = max(160, int(dims.get("W") or 0))
+    solver_length_mm, solver_width_mm = _spec_solver_footprint_dims_mm(spec, object_id)
+    visual_length_mm, visual_width_mm, visual_height_mm = _spec_visual_dims_mm(spec)
+    length_mm = max(160, solver_length_mm)
+    width_mm = max(160, solver_width_mm)
+    visual_length_mm = max(length_mm, visual_length_mm)
+    visual_width_mm = max(width_mm, visual_width_mm)
     w_mm, h_mm = _rotate_dims_for_rot(length_mm, width_mm, rot)
+    visual_w_mm, visual_h_mm = _rotate_dims_for_rot(
+        visual_length_mm,
+        visual_width_mm,
+        rot,
+    )
     rect = (int(x), int(y), int(x) + w_mm, int(y) + h_mm)
     front_token = _functional_front_token_for_spec(spec, object_id)
     front_world = _front_vector_from_rotation(front_token, rot)
+    visual_rect = _visual_rect_for_solver_rect(
+        rect=rect,
+        visual_w_mm=visual_w_mm,
+        visual_h_mm=visual_h_mm,
+        front_world=front_world,
+    )
     front_side_world = {
         (0, 1): "top",
         (0, -1): "bottom",
@@ -9462,6 +9540,20 @@ def _materialize_object_row(
         "front_world": {"dx": front_world[0], "dy": front_world[1]},
         "front_side_world": front_side_world,
         "relative_to": relative_to,
+        "visual_w": visual_w_mm,
+        "visual_h": visual_h_mm,
+        "visual_bbox": _bbox_from_rect(visual_rect),
+        "visual_dims_mm": {
+            "L": visual_length_mm,
+            "W": visual_width_mm,
+            "H": visual_height_mm,
+        },
+        "solver_bbox": _bbox_from_rect(rect),
+        "solver_footprint_mm": {
+            "L": length_mm,
+            "W": width_mm,
+            "H": visual_height_mm,
+        },
         "role": str(spec.get("role") or ""),
         "priority": str(spec.get("priority") or ""),
         "protected": bool(spec.get("protected")),
@@ -10931,6 +11023,26 @@ def _build_object_level_solution_payload(
     }
 
 
+def _object_output_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    out = deepcopy(dict(row))
+    visual_rect = _rect_from_bbox_mapping(out.get("visual_bbox"))
+    solver_rect = _rect_tuple(out.get("rect"))
+    if visual_rect is None or solver_rect is None or visual_rect == solver_rect:
+        return out
+
+    out["solver_rect"] = list(solver_rect)
+    out["solver_bbox"] = _bbox_from_rect(solver_rect)
+    out["rect"] = list(visual_rect)
+    out["bbox"] = _bbox_from_rect(visual_rect)
+    out["w"] = visual_rect[2] - visual_rect[0]
+    out["h"] = visual_rect[3] - visual_rect[1]
+    out["center"] = {
+        "x": round((visual_rect[0] + visual_rect[2]) / 2.0),
+        "y": round((visual_rect[1] + visual_rect[3]) / 2.0),
+    }
+    return out
+
+
 def _build_absolute_layout_from_object_solution(
     *,
     solution: Mapping[str, Any],
@@ -10942,7 +11054,7 @@ def _build_absolute_layout_from_object_solution(
         solution.get("verify") if isinstance(solution.get("verify"), Mapping) else {}
     )
     placed_objects = [
-        deepcopy(row)
+        _object_output_row(row)
         for row in (solution.get("placed_objects") or [])
         if isinstance(row, Mapping)
     ]
@@ -10959,9 +11071,12 @@ def _build_absolute_layout_from_object_solution(
             ),
             rows[0] if rows else {},
         )
-        bbox = _union_bboxes(
-            [tuple(row["rect"]) for row in rows if isinstance(row.get("rect"), tuple)]
-        )
+        cluster_rects: list[tuple[int, int, int, int]] = []
+        for row in rows:
+            rect = _rect_tuple(row.get("rect"))
+            if rect is not None:
+                cluster_rects.append(rect)
+        bbox = _union_bboxes(cluster_rects)
         clusters.append(
             {
                 "cluster_id": cluster_id,
@@ -11056,6 +11171,70 @@ def _rect_tuple(value: Any) -> tuple[int, int, int, int] | None:
 
 def _rect_center(rect: tuple[int, int, int, int]) -> tuple[float, float]:
     return ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+
+
+def _bbox_from_rect(rect: tuple[int, int, int, int]) -> dict[str, int]:
+    return {
+        "min_x": rect[0],
+        "min_y": rect[1],
+        "max_x": rect[2],
+        "max_y": rect[3],
+    }
+
+
+def _rect_from_bbox_mapping(value: Any) -> tuple[int, int, int, int] | None:
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        rect = (
+            round(float(value.get("min_x"))),
+            round(float(value.get("min_y"))),
+            round(float(value.get("max_x"))),
+            round(float(value.get("max_y"))),
+        )
+    except (TypeError, ValueError):
+        return None
+    if rect[2] <= rect[0] or rect[3] <= rect[1]:
+        return None
+    return rect
+
+
+def _visual_rect_for_solver_rect(
+    *,
+    rect: tuple[int, int, int, int],
+    visual_w_mm: int,
+    visual_h_mm: int,
+    front_world: tuple[int, int],
+) -> tuple[int, int, int, int]:
+    solver_w = rect[2] - rect[0]
+    solver_h = rect[3] - rect[1]
+    if visual_w_mm <= solver_w and visual_h_mm <= solver_h:
+        return rect
+
+    if front_world == (1, 0):
+        min_x = rect[0]
+        max_x = min_x + visual_w_mm
+        center_y = (rect[1] + rect[3]) / 2.0
+        min_y = round(center_y - visual_h_mm / 2.0)
+        return (min_x, min_y, max_x, min_y + visual_h_mm)
+    if front_world == (-1, 0):
+        max_x = rect[2]
+        min_x = max_x - visual_w_mm
+        center_y = (rect[1] + rect[3]) / 2.0
+        min_y = round(center_y - visual_h_mm / 2.0)
+        return (min_x, min_y, max_x, min_y + visual_h_mm)
+    if front_world == (0, 1):
+        min_y = rect[1]
+        max_y = min_y + visual_h_mm
+        center_x = (rect[0] + rect[2]) / 2.0
+        min_x = round(center_x - visual_w_mm / 2.0)
+        return (min_x, min_y, min_x + visual_w_mm, max_y)
+
+    max_y = rect[3]
+    min_y = max_y - visual_h_mm
+    center_x = (rect[0] + rect[2]) / 2.0
+    min_x = round(center_x - visual_w_mm / 2.0)
+    return (min_x, min_y, min_x + visual_w_mm, max_y)
 
 
 def _rect_inside_room_footprint(

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from typing import Any
+
+_KITCHEN_NO_STOVE_SINK_ENV = "TKNT_KITCHEN_NO_STOVE_SINK"
 
 KITCHEN_ROOM_TYPES = frozenset(
     {
@@ -218,9 +221,7 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
             },
             "semantic": {
                 "dominant_anchor_candidates": ["sink", "fridge", "stove"],
-                "notes": [
-                    "Keep fridge, sink, and stove adjacent in one wall-backed workflow run."
-                ],
+                "notes": ["Keep fridge, sink, and stove in one wall-backed run."],
             },
             "degradation_hints": {
                 "preserve_first": [
@@ -324,9 +325,7 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
             },
             "semantic": {
                 "dominant_anchor_candidates": ["kitchen_tall_cabinet"],
-                "notes": [
-                    "Supplemental tall storage should stay wall-backed and drop before the workflow core."
-                ],
+                "notes": ["Tall storage stays wall-backed and drops before workflow."],
             },
             "degradation_hints": {
                 "preserve_first": ["kitchen_tall_cabinet"],
@@ -394,9 +393,7 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
             },
             "semantic": {
                 "dominant_anchor_candidates": ["kitchen_island"],
-                "notes": [
-                    "Only keep an island when the room and brief leave enough center clearance."
-                ],
+                "notes": ["Only keep an island with enough center clearance."],
             },
             "degradation_hints": {
                 "preserve_first": ["kitchen_island"],
@@ -471,9 +468,7 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
             },
             "semantic": {
                 "dominant_anchor_candidates": ["dining_table"],
-                "notes": [
-                    "Every kitchen profile includes a compact eat-in setting; keep it near but not inside the cooking workflow."
-                ],
+                "notes": ["Keep compact eat-in dining near the cooking workflow."],
             },
             "degradation_hints": {
                 "preserve_first": ["dining_table"],
@@ -538,8 +533,8 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
         ],
         "group_minimums": [],
         "soft_preferences": [
-            "preserve a compact fridge-sink-stove workflow and a small eat-in dining setting before adding optional island furniture",
-            "prefer wall-backed kitchen equipment and keep clear circulation between cooking and dining zones",
+            "preserve fridge-sink-stove workflow before optional island furniture",
+            "prefer wall-backed equipment and clear kitchen circulation",
         ],
     },
 }
@@ -603,9 +598,147 @@ def kitchen_fallback_size_profile(object_type: object) -> dict[str, Any] | None:
     return deepcopy(profile) if profile is not None else None
 
 
+def _env_flag_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _apply_no_stove_sink_kitchen_rule(rule: dict[str, Any]) -> dict[str, Any]:
+    clusters = rule.get("clusters")
+    if not isinstance(clusters, list):
+        return rule
+
+    for cluster in clusters:
+        if not isinstance(cluster, dict):
+            continue
+        cluster_id = cluster.get("cluster_id")
+        if cluster_id in {"kitchen_storage_support", "kitchen_island_optional"}:
+            cluster["activation"] = {
+                "base_rule": "disabled_in_no_stove_sink_mode",
+                "always_consider": False,
+                "requires_usefulness_test": False,
+                "conditions": [],
+            }
+            cluster["object_program"] = {
+                "required": [],
+                "required_if_kept": [],
+                "choose_exactly_one_from": [],
+                "choose_exactly_one_from_if_kept": [],
+                "choose_at_least_one_from": [],
+                "optional": [],
+                "optional_limits": {
+                    "global": 0,
+                    "by_object": {},
+                },
+            }
+            cluster["semantic"] = {
+                "dominant_anchor_candidates": [],
+                "notes": ["Disabled in no-stove-sink kitchen mode."],
+            }
+            cluster["degradation_hints"] = {
+                "preserve_first": [],
+                "shrink_before_drop": [],
+                "drop_first": [],
+            }
+            cluster["tier_count_hints"] = {
+                "bundle_class": "optional",
+                "preserve_level": "low",
+                "keep_if_space_surplus": False,
+                "space_surplus_threshold": 1.0,
+                "drop_order_bias": "drop_first",
+                "object_hints": [],
+            }
+            continue
+        if cluster_id != "kitchen_workflow_core":
+            continue
+        cluster["object_program"] = {
+            "required": ["kitchen_base_cabinet", "fridge"],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+                "global": 0,
+                "by_object": {},
+            },
+        }
+        cluster["semantic"] = {
+            "dominant_anchor_candidates": ["kitchen_base_cabinet", "fridge"],
+            "notes": ["Keep rustic base cabinet and fridge in no-stove-sink mode."],
+        }
+        cluster["degradation_hints"] = {
+            "preserve_first": ["kitchen_base_cabinet", "fridge"],
+            "shrink_before_drop": [],
+            "drop_first": [],
+        }
+        cluster["tier_count_hints"] = {
+            "bundle_class": "indispensable",
+            "preserve_level": "highest",
+            "keep_if_space_surplus": False,
+            "space_surplus_threshold": 0.0,
+            "drop_order_bias": "drop_last",
+            "object_hints": [
+                {
+                    "object_type": "kitchen_base_cabinet",
+                    "min_keep": 1,
+                    "max_keep": 1,
+                    "keep_if_space_surplus": False,
+                    "space_surplus_threshold": 0.0,
+                    "drop_order_bias": "drop_last",
+                    "preserve_level": "highest",
+                    "preferred_size_tier": "S",
+                },
+                {
+                    "object_type": "fridge",
+                    "min_keep": 1,
+                    "max_keep": 1,
+                    "keep_if_space_surplus": False,
+                    "space_surplus_threshold": 0.0,
+                    "drop_order_bias": "drop_last",
+                    "preserve_level": "highest",
+                    "preferred_size_tier": "M",
+                },
+            ],
+        }
+        continue
+
+    global_program = rule.get("global_program")
+    if isinstance(global_program, dict):
+        global_program["dominant_anchor_required"] = ["kitchen_base_cabinet"]
+        global_program["dominant_workflow_required"] = [
+            "kitchen_base_cabinet",
+            "fridge",
+        ]
+        global_program["soft_preferences"] = [
+            "preserve rustic base cabinet and fridge as wall-backed workflow",
+            "keep compact eat-in dining while omitting sink and stove",
+        ]
+        global_program["group_caps"] = [
+            {
+                "objects": ["kitchen_base_cabinet"],
+                "max_keep": 1,
+            },
+            {
+                "objects": ["fridge"],
+                "max_keep": 1,
+            },
+            {
+                "objects": ["dining_table"],
+                "max_keep": 1,
+            },
+            {
+                "objects": ["dining_chair"],
+                "max_keep": 4,
+            },
+        ]
+    return rule
+
+
 def kitchen_semantic_room_rule(room_type: object) -> dict[str, Any]:
     rule = deepcopy(_KITCHEN_SEMANTIC_ROOM_RULE)
     rule["room_type"] = kitchen_key(room_type) or "kitchen"
+    if _env_flag_enabled(_KITCHEN_NO_STOVE_SINK_ENV):
+        rule = _apply_no_stove_sink_kitchen_rule(rule)
     return rule
 
 

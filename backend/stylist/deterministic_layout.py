@@ -29,7 +29,7 @@ DEFAULT_DOOR_COLOR = "#8F6F58"
 DEFAULT_WINDOW_COLOR = "#D7E3EE"
 DEFAULT_OBJECT_COLOR = "#CFCAC2"
 
-STRUCTURAL_SKIP_TYPES = {"mattress", "headboard"}
+STRUCTURAL_SKIP_TYPES = {"mattress", "headboard", "curtain", "wall_art"}
 UNDERLAY_TYPES = {"rug"}
 OPENING_MOUNTED_TYPES = {"curtain", "blind"}
 CEILING_MOUNTED_TYPES = {"ceiling_light", "pendant_light", "track_light"}

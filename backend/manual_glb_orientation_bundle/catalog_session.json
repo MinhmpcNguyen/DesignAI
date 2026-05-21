@@ -1,0 +1,302 @@
+{
+  "034fc194-c99c-4ba4-92cb-87660fa26cce": {
+    "id": "034fc194-c99c-4ba4-92cb-87660fa26cce",
+    "nameVn": "Tủ đầu giường Rustic 2",
+    "modelUrl": "/catalog/models/rustic-master/models/rustic-master/Group2132577602.glb",
+    "glb_filename": "034fc194-c99c-4ba4-92cb-87660fa26cce.glb"
+  },
+  "f123eec2-ce01-4b00-8933-b05d8a125f8e": {
+    "id": "f123eec2-ce01-4b00-8933-b05d8a125f8e",
+    "nameVn": "Tủ đầu giường Rustic 1",
+    "modelUrl": "/catalog/models/rustic-master/models/rustic-master/Group2132576465.glb",
+    "glb_filename": "f123eec2-ce01-4b00-8933-b05d8a125f8e.glb"
+  },
+  "0a933960-641c-46c0-b49a-e288f3a8cb7b": {
+    "id": "0a933960-641c-46c0-b49a-e288f3a8cb7b",
+    "nameVn": "Giường Rustic 1",
+    "modelUrl": "/catalog/models/rustic-master/models/rustic-master/Group2132577629.glb",
+    "glb_filename": "0a933960-641c-46c0-b49a-e288f3a8cb7b.glb"
+  },
+  "d981244f-0e38-40e6-bc30-11c2b75726c5": {
+    "id": "d981244f-0e38-40e6-bc30-11c2b75726c5",
+    "nameVn": "Giường Rustic 1",
+    "modelUrl": "/catalog/models/rustic-ngu/models/rustic-ngu/Group2132577628.glb",
+    "glb_filename": "d981244f-0e38-40e6-bc30-11c2b75726c5.glb"
+  },
+  "faecf5e1-ecae-4aff-8634-9c13926b3ac3": {
+    "id": "faecf5e1-ecae-4aff-8634-9c13926b3ac3",
+    "nameVn": "Giường",
+    "modelUrl": "/catalog/models/flora-master/giuong-flora.glb",
+    "glb_filename": "faecf5e1-ecae-4aff-8634-9c13926b3ac3.glb"
+  },
+  "2184b661-262b-4065-b7fb-23e1c1284429": {
+    "id": "2184b661-262b-4065-b7fb-23e1c1284429",
+    "nameVn": "Giường",
+    "modelUrl": "/catalog/models/flora-master/Group2132577945.glb",
+    "glb_filename": "2184b661-262b-4065-b7fb-23e1c1284429.glb"
+  },
+  "58fb72b6-bcb0-4fcf-b3e9-f8abf1a6fdf2": {
+    "id": "58fb72b6-bcb0-4fcf-b3e9-f8abf1a6fdf2",
+    "nameVn": "Thảm giường",
+    "modelUrl": "/catalog/models/flora-master/Plane001.glb",
+    "glb_filename": "58fb72b6-bcb0-4fcf-b3e9-f8abf1a6fdf2.glb"
+  },
+  "5987e241-ab0b-449f-99d9-d70d1df0966a": {
+    "id": "5987e241-ab0b-449f-99d9-d70d1df0966a",
+    "nameVn": "TV Rustic 1",
+    "modelUrl": "/catalog/models/rustic-khach/models/rustic-khach/Plane002.glb",
+    "glb_filename": "5987e241-ab0b-449f-99d9-d70d1df0966a.glb"
+  },
+  "fd5724d9-9dce-4159-aa59-07222bbcb26e": {
+    "id": "fd5724d9-9dce-4159-aa59-07222bbcb26e",
+    "nameVn": "Tủ bếp forest 12",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645527.glb",
+    "glb_filename": "fd5724d9-9dce-4159-aa59-07222bbcb26e.glb"
+  },
+  "257cdeed-7ad1-4a3b-ae2d-e228ae8925f2": {
+    "id": "257cdeed-7ad1-4a3b-ae2d-e228ae8925f2",
+    "nameVn": "Tủ bếp forest 5",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645546.glb",
+    "glb_filename": "257cdeed-7ad1-4a3b-ae2d-e228ae8925f2.glb"
+  },
+  "35d8bc13-f7ff-4bae-a815-2d19a0cc152a": {
+    "id": "35d8bc13-f7ff-4bae-a815-2d19a0cc152a",
+    "nameVn": "Tủ bếp forest 8",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645522.glb",
+    "glb_filename": "35d8bc13-f7ff-4bae-a815-2d19a0cc152a.glb"
+  },
+  "4012079c-0ba4-4ff2-88d3-3157536a0f96": {
+    "id": "4012079c-0ba4-4ff2-88d3-3157536a0f96",
+    "nameVn": "Tủ bếp gỗ forest 1",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645510.glb",
+    "glb_filename": "4012079c-0ba4-4ff2-88d3-3157536a0f96.glb"
+  },
+  "518cf215-87d8-4ccb-a5f6-c884aceb40dc": {
+    "id": "518cf215-87d8-4ccb-a5f6-c884aceb40dc",
+    "nameVn": "Tủ bếp forest 10",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645523.glb",
+    "glb_filename": "518cf215-87d8-4ccb-a5f6-c884aceb40dc.glb"
+  },
+  "32081e56-6af2-4123-ba99-7faa017323a0": {
+    "id": "32081e56-6af2-4123-ba99-7faa017323a0",
+    "nameVn": "Tủ bếp forest 1",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Object705461138.glb",
+    "glb_filename": "32081e56-6af2-4123-ba99-7faa017323a0.glb"
+  },
+  "009523a2-4df7-4492-a75a-79f60885beeb": {
+    "id": "009523a2-4df7-4492-a75a-79f60885beeb",
+    "nameVn": "Tủ bếp forest 6",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645518.glb",
+    "glb_filename": "009523a2-4df7-4492-a75a-79f60885beeb.glb"
+  },
+  "11a803c8-97ca-4015-8fb5-d4e4ce0175f4": {
+    "id": "11a803c8-97ca-4015-8fb5-d4e4ce0175f4",
+    "nameVn": "Tủ bếp forest 9",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645525.glb",
+    "glb_filename": "11a803c8-97ca-4015-8fb5-d4e4ce0175f4.glb"
+  },
+  "06718a61-d6a2-4eba-8698-1e3c1239703c": {
+    "id": "06718a61-d6a2-4eba-8698-1e3c1239703c",
+    "nameVn": "Tủ bếp gỗ forest 5",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645530.glb",
+    "glb_filename": "06718a61-d6a2-4eba-8698-1e3c1239703c.glb"
+  },
+  "1354ab9b-0512-43a2-983a-239098882c8c": {
+    "id": "1354ab9b-0512-43a2-983a-239098882c8c",
+    "nameVn": "Tủ bếp gỗ forest 7",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645507.glb",
+    "glb_filename": "1354ab9b-0512-43a2-983a-239098882c8c.glb"
+  },
+  "5d0c38e1-d0fa-40b1-b0c8-30b74fb9fb53": {
+    "id": "5d0c38e1-d0fa-40b1-b0c8-30b74fb9fb53",
+    "nameVn": "Tủ bếp forest 11",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645526.glb",
+    "glb_filename": "5d0c38e1-d0fa-40b1-b0c8-30b74fb9fb53.glb"
+  },
+  "68c64dab-f94f-4957-9309-a79b3452c504": {
+    "id": "68c64dab-f94f-4957-9309-a79b3452c504",
+    "nameVn": "Tủ bếp forest 3",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645545.glb",
+    "glb_filename": "68c64dab-f94f-4957-9309-a79b3452c504.glb"
+  },
+  "6cde59b5-7088-4c1e-9e51-adf26b8ca1fe": {
+    "id": "6cde59b5-7088-4c1e-9e51-adf26b8ca1fe",
+    "nameVn": "Tủ bếp forest 7",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645536.glb",
+    "glb_filename": "6cde59b5-7088-4c1e-9e51-adf26b8ca1fe.glb"
+  },
+  "76370554-afea-4f7b-8dc3-416b4aaa9da4": {
+    "id": "76370554-afea-4f7b-8dc3-416b4aaa9da4",
+    "nameVn": "Tủ bếp forest 13",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645515.glb",
+    "glb_filename": "76370554-afea-4f7b-8dc3-416b4aaa9da4.glb"
+  },
+  "80a2b0e1-91ab-4c06-9921-d46111888991": {
+    "id": "80a2b0e1-91ab-4c06-9921-d46111888991",
+    "nameVn": "Tủ bếp gỗ forest 3",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645488.glb",
+    "glb_filename": "80a2b0e1-91ab-4c06-9921-d46111888991.glb"
+  },
+  "878eb495-2315-4741-bbe3-66217e4e50b8": {
+    "id": "878eb495-2315-4741-bbe3-66217e4e50b8",
+    "nameVn": "Bàn bếp forest 2",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645501.glb",
+    "glb_filename": "878eb495-2315-4741-bbe3-66217e4e50b8.glb"
+  },
+  "af8c838e-2fd0-4896-89a4-73dc440e596f": {
+    "id": "af8c838e-2fd0-4896-89a4-73dc440e596f",
+    "nameVn": "Tủ bếp forest 2",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645547.glb",
+    "glb_filename": "af8c838e-2fd0-4896-89a4-73dc440e596f.glb"
+  },
+  "b64ae6e1-500b-4a94-9bdb-6e962b74456b": {
+    "id": "b64ae6e1-500b-4a94-9bdb-6e962b74456b",
+    "nameVn": "Tủ bếp forest 4",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645549.glb",
+    "glb_filename": "b64ae6e1-500b-4a94-9bdb-6e962b74456b.glb"
+  },
+  "bfe8c9d5-bd06-4596-b4b2-4a65405b518a": {
+    "id": "bfe8c9d5-bd06-4596-b4b2-4a65405b518a",
+    "nameVn": "Tủ bếp gỗ forest 2",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645487.glb",
+    "glb_filename": "bfe8c9d5-bd06-4596-b4b2-4a65405b518a.glb"
+  },
+  "da5f370e-e000-403f-80a3-2368af909975": {
+    "id": "da5f370e-e000-403f-80a3-2368af909975",
+    "nameVn": "Bàn bếp forest 1",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645502.glb",
+    "glb_filename": "da5f370e-e000-403f-80a3-2368af909975.glb"
+  },
+  "dc99d2b9-0c2e-4c1c-ade9-1ad756eb2261": {
+    "id": "dc99d2b9-0c2e-4c1c-ade9-1ad756eb2261",
+    "nameVn": "Tủ bếp gỗ forest 8",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645529.glb",
+    "glb_filename": "dc99d2b9-0c2e-4c1c-ade9-1ad756eb2261.glb"
+  },
+  "ebb6829d-d7ea-447f-a8f7-238a724c41c5": {
+    "id": "ebb6829d-d7ea-447f-a8f7-238a724c41c5",
+    "nameVn": "Tủ bếp gỗ forest 4",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645508.glb",
+    "glb_filename": "ebb6829d-d7ea-447f-a8f7-238a724c41c5.glb"
+  },
+  "ec0efbfa-02a9-4ab9-a5bc-5160a0aefecc": {
+    "id": "ec0efbfa-02a9-4ab9-a5bc-5160a0aefecc",
+    "nameVn": "Tủ bếp gỗ forest 6",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Box2131645532.glb",
+    "glb_filename": "ec0efbfa-02a9-4ab9-a5bc-5160a0aefecc.glb"
+  },
+  "56715066-87c8-4bc7-b59e-fa29a6b302e6": {
+    "id": "56715066-87c8-4bc7-b59e-fa29a6b302e6",
+    "nameVn": "Tủ bếp Rustic",
+    "modelUrl": "/catalog/models/rustic-khach/models/rustic-khach/Group2132577566.glb",
+    "glb_filename": "56715066-87c8-4bc7-b59e-fa29a6b302e6.glb"
+  },
+  "837c77d0-9b88-4224-9ebf-61462be798e6": {
+    "id": "837c77d0-9b88-4224-9ebf-61462be798e6",
+    "nameVn": "Tủ lạnh forest",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/smeg_big_black.glb",
+    "glb_filename": "837c77d0-9b88-4224-9ebf-61462be798e6.glb"
+  },
+  "ea9d07d0-f3d6-498d-8160-2f8eefd4ac85": {
+    "id": "ea9d07d0-f3d6-498d-8160-2f8eefd4ac85",
+    "nameVn": "Tủ lạnh 2 cửa Rustic",
+    "modelUrl": "/catalog/models/rustic-khach/models/rustic-khach/Component_4_001.glb",
+    "glb_filename": "ea9d07d0-f3d6-498d-8160-2f8eefd4ac85.glb"
+  },
+  "2ed10a40-d101-41ff-9863-6a0213b36fd5": {
+    "id": "2ed10a40-d101-41ff-9863-6a0213b36fd5",
+    "nameVn": "Bồn rửa bát forest",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Group2132577640.glb",
+    "glb_filename": "2ed10a40-d101-41ff-9863-6a0213b36fd5.glb"
+  },
+  "c6c08c55-e817-4b82-a0e4-139a78e71f7a": {
+    "id": "c6c08c55-e817-4b82-a0e4-139a78e71f7a",
+    "nameVn": "Bồn rửa chén Rustic",
+    "modelUrl": "/catalog/models/rustic-khach/models/rustic-khach/Group2132577578.glb",
+    "glb_filename": "c6c08c55-e817-4b82-a0e4-139a78e71f7a.glb"
+  },
+  "c26b4d65-ed1f-4beb-b8e8-a5e2fa0f7091": {
+    "id": "c26b4d65-ed1f-4beb-b8e8-a5e2fa0f7091",
+    "nameVn": "Ghế sofa forest",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Group2132577673.glb",
+    "glb_filename": "c26b4d65-ed1f-4beb-b8e8-a5e2fa0f7091.glb"
+  },
+  "9c77d5dc-0f0a-4474-b56b-aaca0e5e3ef2": {
+    "id": "9c77d5dc-0f0a-4474-b56b-aaca0e5e3ef2",
+    "nameVn": "Ghế sofa Rustic",
+    "modelUrl": "/catalog/models/rustic-khach/models/rustic-khach/ghesofa.glb",
+    "glb_filename": "9c77d5dc-0f0a-4474-b56b-aaca0e5e3ef2.glb"
+  },
+  "9dc9871e-7225-42fe-a0ea-9c06e3615911": {
+    "id": "9dc9871e-7225-42fe-a0ea-9c06e3615911",
+    "nameVn": "Ghế sofa đơn Rustic 1",
+    "modelUrl": "/catalog/models/rustic-khach/models/rustic-khach/Group2132577557.glb",
+    "glb_filename": "9dc9871e-7225-42fe-a0ea-9c06e3615911.glb"
+  },
+  "2b209faa-327e-4883-8833-fa5f6b25ee23": {
+    "id": "2b209faa-327e-4883-8833-fa5f6b25ee23",
+    "nameVn": "Ghế gỗ forest 3",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Group2132577611.glb",
+    "glb_filename": "2b209faa-327e-4883-8833-fa5f6b25ee23.glb"
+  },
+  "ee350d73-1d19-487a-86c7-534996dadceb": {
+    "id": "ee350d73-1d19-487a-86c7-534996dadceb",
+    "nameVn": "Ghế gỗ forest 1",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Group2132577614.glb",
+    "glb_filename": "ee350d73-1d19-487a-86c7-534996dadceb.glb"
+  },
+  "c50af2d8-209d-486f-98b0-44bff03fa495": {
+    "id": "c50af2d8-209d-486f-98b0-44bff03fa495",
+    "nameVn": "Ghế gỗ forest 4",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Group2132577613.glb",
+    "glb_filename": "c50af2d8-209d-486f-98b0-44bff03fa495.glb"
+  },
+  "498b7a2a-577a-4519-b8d3-515c3d4b7f79": {
+    "id": "498b7a2a-577a-4519-b8d3-515c3d4b7f79",
+    "nameVn": "Ghế forest 2",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Object705461199.glb",
+    "glb_filename": "498b7a2a-577a-4519-b8d3-515c3d4b7f79.glb"
+  },
+  "bdc02acd-f643-4ed9-bab7-a6abc806214b": {
+    "id": "bdc02acd-f643-4ed9-bab7-a6abc806214b",
+    "nameVn": "Ghế gỗ forest 2",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Group2132577612.glb",
+    "glb_filename": "bdc02acd-f643-4ed9-bab7-a6abc806214b.glb"
+  },
+  "6021c24e-11ec-4b21-82ec-0410c66dfe19": {
+    "id": "6021c24e-11ec-4b21-82ec-0410c66dfe19",
+    "nameVn": "Ghế tựa gỗ Rustic 1",
+    "modelUrl": "/catalog/models/rustic-ngu/models/rustic-ngu/Group2132577565.glb",
+    "glb_filename": "6021c24e-11ec-4b21-82ec-0410c66dfe19.glb"
+  },
+  "0eb6ddfb-5aff-4acd-b732-e41d9b6b43de": {
+    "id": "0eb6ddfb-5aff-4acd-b732-e41d9b6b43de",
+    "nameVn": "Ghế gỗ",
+    "modelUrl": "/catalog/models/forest-ngu/chair.glb",
+    "glb_filename": "0eb6ddfb-5aff-4acd-b732-e41d9b6b43de.glb"
+  },
+  "0f6abc0b-fc1b-4315-af1d-db87225e9ac2": {
+    "id": "0f6abc0b-fc1b-4315-af1d-db87225e9ac2",
+    "nameVn": "Ghế ngồi sàn",
+    "modelUrl": "/catalog/models/forest-ngu/puf.glb",
+    "glb_filename": "0f6abc0b-fc1b-4315-af1d-db87225e9ac2.glb"
+  },
+  "04be5d53-2feb-4783-81b4-8510362f6616": {
+    "id": "04be5d53-2feb-4783-81b4-8510362f6616",
+    "nameVn": "Bàn gỗ forest",
+    "modelUrl": "/catalog/models/forest-khach/models/forest-khach/Group2132577609.glb",
+    "glb_filename": "04be5d53-2feb-4783-81b4-8510362f6616.glb"
+  },
+  "aa41f81a-7781-47da-ac64-4499b5bce2e2": {
+    "id": "aa41f81a-7781-47da-ac64-4499b5bce2e2",
+    "nameVn": "Bàn gỗ làm việc Rustic 1",
+    "modelUrl": "/catalog/models/rustic-ngu/models/rustic-ngu/Group2132576496.glb",
+    "glb_filename": "aa41f81a-7781-47da-ac64-4499b5bce2e2.glb"
+  },
+  "9d7a0232-367b-4eb9-9665-48613c8f50d4": {
+    "id": "9d7a0232-367b-4eb9-9665-48613c8f50d4",
+    "nameVn": "Bàn gỗ lớn Rustic 1",
+    "modelUrl": "/catalog/models/rustic-khach/models/rustic-khach/Group2132576443.glb",
+    "glb_filename": "9d7a0232-367b-4eb9-9665-48613c8f50d4.glb"
+  }
+}

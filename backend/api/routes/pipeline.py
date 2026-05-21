@@ -59,6 +59,9 @@ _MIN_QUATERNION_NORM = 1e-12
 _QUARTER_TURN_THRESHOLD = 0.15
 _DEBUG_POINT_PAIR_LENGTH = 2
 _DEBUG_ZERO_EPSILON = 1e-9
+_KITCHEN_NO_STOVE_SINK_ENV = "TKNT_KITCHEN_NO_STOVE_SINK"
+_RUSTIC_KITCHEN_BASE_CABINET_ID = "56715066-87c8-4bc7-b59e-fa29a6b302e6"
+_RUSTIC_KITCHEN_BASE_CABINET_HEIGHT = 2299.903
 _TV_UPRIGHT_DEFAULT_ROTATION: list[float] = [
     -0.707106781187,
     0.0,
@@ -621,37 +624,173 @@ def _load_catalog_index(
 def _match_catalog_payload(
     obj: dict[str, Any],
     catalog_index: dict[str, Any],
+    *,
+    style_preferences: Sequence[str] = (),
 ) -> dict[str, Any] | None:
     by_id = _mapping(catalog_index.get("by_id"))
     by_type = _mapping(catalog_index.get("by_type"))
-    for value in (
-        obj.get("catalogItemId"),
-        obj.get("catalog_id"),
-        obj.get("inventory_id"),
-        obj.get("source_id"),
-    ):
-        key = _catalog_key(value)
-        match = by_id.get(key) if key else None
-        if isinstance(match, dict):
-            return match
-
     type_key = _catalog_key(obj.get("object_type") or obj.get("type"))
+    style_keys = {
+        key for value in style_preferences if (key := _ascii_catalog_key(value))
+    }
+    defer_identity_match = type_key == "kitchen_base_cabinet" and "rustic" in style_keys
+    if not defer_identity_match:
+        for value in (
+            obj.get("catalogItemId"),
+            obj.get("catalog_id"),
+            obj.get("inventory_id"),
+            obj.get("source_id"),
+        ):
+            key = _catalog_key(value)
+            match = by_id.get(key) if key else None
+            if isinstance(match, dict):
+                return match
+
     candidates = by_type.get(type_key) if type_key else None
     if isinstance(candidates, list) and candidates:
-        first = candidates[0]
-        return first if isinstance(first, dict) else None
+        return _select_catalog_payload(
+            obj=obj,
+            candidates=candidates,
+            style_preferences=style_preferences,
+            type_key=type_key,
+        )
     if type_key:
         for fallback_key in _CATALOG_TYPE_FALLBACKS.get(type_key, ()):
             fallback_candidates = by_type.get(fallback_key)
             if isinstance(fallback_candidates, list) and fallback_candidates:
-                first = fallback_candidates[0]
-                return first if isinstance(first, dict) else None
+                return _select_catalog_payload(
+                    obj=obj,
+                    candidates=fallback_candidates,
+                    style_preferences=style_preferences,
+                    type_key=fallback_key,
+                )
     if type_key and type_key.endswith("_lamp"):
         lamp_candidates = by_type.get("lamp")
         if isinstance(lamp_candidates, list) and lamp_candidates:
-            first = lamp_candidates[0]
-            return first if isinstance(first, dict) else None
+            return _select_catalog_payload(
+                obj=obj,
+                candidates=lamp_candidates,
+                style_preferences=style_preferences,
+                type_key="lamp",
+            )
     return None
+
+
+def _select_catalog_payload(
+    *,
+    obj: dict[str, Any],
+    candidates: Sequence[Any],
+    style_preferences: Sequence[str],
+    type_key: str,
+) -> dict[str, Any] | None:
+    rows = [candidate for candidate in candidates if isinstance(candidate, dict)]
+    if not rows:
+        return None
+
+    requested_names = _catalog_requested_name_keys(obj)
+    style_keys = [
+        key for value in style_preferences if (key := _ascii_catalog_key(value))
+    ]
+
+    ranked: list[tuple[int, int, dict[str, Any]]] = []
+    for index, candidate in enumerate(rows):
+        score = 0
+        haystack = _catalog_payload_haystack(candidate)
+        if requested_names and requested_names & _catalog_payload_name_keys(candidate):
+            score += 100
+        for style_key in style_keys:
+            if style_key in haystack:
+                score += 12
+        if (
+            type_key == "kitchen_base_cabinet"
+            and "rustic" in style_keys
+            and "tu_bep_rustic" in haystack
+        ):
+            score += 40
+        ranked.append((score, -index, candidate))
+    return max(ranked, key=lambda item: (item[0], item[1]))[2]
+
+
+def _catalog_requested_name_keys(obj: Mapping[str, Any]) -> set[str]:
+    keys: set[str] = set()
+    for value in (
+        obj.get("inventory_name"),
+        obj.get("name"),
+        obj.get("catalog_name"),
+        obj.get("catalogName"),
+    ):
+        key = _ascii_catalog_key(value)
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _catalog_payload_name_keys(payload: Mapping[str, Any]) -> set[str]:
+    attributes = _mapping(payload.get("attributes"))
+    keys: set[str] = set()
+    for value in (
+        payload.get("name"),
+        payload.get("inventory_name"),
+        attributes.get("inventory_name"),
+        attributes.get("catalog_name"),
+        attributes.get("catalog_name_vn"),
+    ):
+        key = _ascii_catalog_key(value)
+        if key:
+            keys.add(key)
+    return keys
+
+
+def _catalog_payload_haystack(payload: Mapping[str, Any]) -> str:
+    attributes = _mapping(payload.get("attributes"))
+    values = [
+        payload.get("name"),
+        payload.get("inventory_name"),
+        payload.get("object_type"),
+        payload.get("type"),
+        payload.get("style_tags"),
+        attributes.get("inventory_name"),
+        attributes.get("catalog_name"),
+        attributes.get("catalog_name_vn"),
+        attributes.get("slug"),
+        attributes.get("sku_slug"),
+        attributes.get("semantic_object_type"),
+        attributes.get("category"),
+        attributes.get("catalog_category_slug"),
+    ]
+    parts: list[str] = []
+    for value in values:
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, list):
+            parts.extend(item for item in value if isinstance(item, str))
+    return " ".join(_ascii_catalog_key(part) for part in parts if part)
+
+
+def _catalog_style_preferences(styled_payload: Mapping[str, Any]) -> list[str]:
+    out: list[str] = []
+
+    def add(value: Any) -> None:
+        clean = _string_or_none(value)
+        if clean is not None and clean not in out:
+            out.append(clean)
+
+    final_style_plan = styled_payload.get("final_style_plan")
+    if isinstance(final_style_plan, Mapping):
+        add(final_style_plan.get("style_name"))
+        trace = final_style_plan.get("layout_policy_trace")
+        if isinstance(trace, Mapping):
+            add(trace.get("style_name"))
+            style_tags = trace.get("style_tags")
+            if isinstance(style_tags, list):
+                for tag in style_tags:
+                    add(tag)
+
+    room = styled_payload.get("room")
+    if isinstance(room, Mapping):
+        add(room.get("style"))
+
+    return out
 
 
 def _normalize_run_room_objects(
@@ -666,6 +805,7 @@ def _normalize_run_room_objects(
     out: list[dict[str, Any]] = []
     rotations_ccw: list[float] = []
     default_rotations: list[list[float] | None] = []
+    style_preferences = _catalog_style_preferences(styled_payload)
     # Build a lookup of instance_id → floor-surface height (mm) so that items
     # placed "on_top" of furniture can be elevated to the correct Y position.
     # Furniture (source="existing") comes before accessories in the objects list,
@@ -677,11 +817,21 @@ def _normalize_run_room_objects(
         bbox = _bbox_from_object(obj)
         if bbox is None:
             continue
-        catalog_payload = _match_catalog_payload(obj, catalog_index)
+        catalog_payload = _match_catalog_payload(
+            obj,
+            catalog_index,
+            style_preferences=style_preferences,
+        )
         catalog_item_id = _catalog_item_id(catalog_payload, obj)
         if catalog_payload is None and catalog_item_id is None:
             continue
         size_mm = _catalog_size_mm(catalog_payload)
+        size_mm = _no_stove_sink_kitchen_cabinet_size(
+            catalog_payload=catalog_payload,
+            obj=obj,
+            bbox=bbox,
+            current_size=size_mm,
+        )
         if size_mm is None:
             size_mm = [
                 max(1.0, bbox["max_x"] - bbox["min_x"]),
@@ -1004,6 +1154,33 @@ def _catalog_size_mm(catalog_payload: dict[str, Any] | None) -> list[float] | No
     return None
 
 
+def _env_flag_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _no_stove_sink_kitchen_cabinet_size(
+    *,
+    catalog_payload: dict[str, Any] | None,
+    obj: Mapping[str, Any],
+    bbox: Mapping[str, float],
+    current_size: list[float] | None,
+) -> list[float] | None:
+    if not _env_flag_enabled(_KITCHEN_NO_STOVE_SINK_ENV):
+        return current_size
+    if (
+        _catalog_key(obj.get("object_type") or obj.get("type"))
+        != "kitchen_base_cabinet"
+    ):
+        return current_size
+    if _catalog_item_id(catalog_payload, dict(obj)) != _RUSTIC_KITCHEN_BASE_CABINET_ID:
+        return current_size
+    if current_size is not None:
+        return current_size
+    length = max(0.1, float(bbox["max_x"] - bbox["min_x"]))
+    width = max(0.1, float(bbox["max_y"] - bbox["min_y"]))
+    return [length, _RUSTIC_KITCHEN_BASE_CABINET_HEIGHT, width]
+
+
 def _catalog_default_rotation(
     catalog_payload: dict[str, Any] | None,
 ) -> list[float] | None:
@@ -1307,6 +1484,15 @@ def _catalog_key(value: Any) -> str:
     if clean is None:
         return ""
     return clean.lower().replace("-", "_").replace(" ", "_")
+
+
+def _ascii_catalog_key(value: Any) -> str:
+    clean = _string_or_none(value)
+    if clean is None:
+        return ""
+    normalized = unicodedata.normalize("NFKD", clean)
+    ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
+    return ascii_text.lower().replace("-", "_").replace(" ", "_")
 
 
 def get_normalize_run_job_manager() -> NormalizeRunJobManager:

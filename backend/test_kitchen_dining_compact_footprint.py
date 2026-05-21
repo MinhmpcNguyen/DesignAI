@@ -1,8 +1,10 @@
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
 
+import os
 import unittest
 from typing import cast
+from unittest.mock import patch
 
 from agent.cluster_composer import _select_variant_families
 from agent.request_contract import build_request_contract, sanitize_request_contract
@@ -10,9 +12,17 @@ from agent.seed_concept_generator import (
     _allowed_variant_families_for_row,
     _role_kind,
 )
-from agent.solver.solver import _support_slot_candidates, solve_object_level_layout
+from agent.solver.solver import (
+    _materialize_object_row,
+    _object_output_row,
+    _support_slot_candidates,
+    solve_object_level_layout,
+)
 from agent.tier_count_director import TierCountDirector, _decision_footprint_m2
-from api.routes.pipeline import _CATALOG_TYPE_FALLBACKS
+from api.routes.pipeline import (
+    _CATALOG_TYPE_FALLBACKS,
+    _no_stove_sink_kitchen_cabinet_size,
+)
 from layout.kitchen_profile import (
     is_kitchen_wall_backed_object,
     is_kitchen_workflow_object,
@@ -20,8 +30,13 @@ from layout.kitchen_profile import (
     kitchen_semantic_room_rule,
 )
 from layout.room_profiles.kitchen import kitchen_semantic_placements_for_members
+from pipeline.orchestrator import (
+    _filter_kitchen_cluster_output,
+    _filter_kitchen_tier_output,
+)
 from tier_count.tools import (
     _AccessRequirements,
+    _build_size_profiles,
     _estimate_decision_footprint_detail,
 )
 
@@ -296,7 +311,8 @@ class KitchenDiningCompactFootprintTest(unittest.TestCase):
         self.assertFalse(is_kitchen_workflow_object("kitchen_base_cabinet"))
         self.assertTrue(is_kitchen_wall_backed_object("kitchen_base_cabinet"))
 
-        rule = kitchen_semantic_room_rule("kitchen")
+        with patch.dict(os.environ, {"TKNT_KITCHEN_NO_STOVE_SINK": "0"}):
+            rule = kitchen_semantic_room_rule("kitchen")
         clusters = cast(list[dict[str, object]], rule["clusters"])
         workflow_cluster = next(
             row for row in clusters if row.get("cluster_id") == "kitchen_workflow_core"
@@ -320,6 +336,316 @@ class KitchenDiningCompactFootprintTest(unittest.TestCase):
         self.assertEqual(by_id["stove"]["relative_to"], "sink")
         self.assertEqual(by_id["fridge"]["band_intent"], "wall_sequence")
         self.assertEqual(by_id["stove"]["gap_max"], 20)
+
+    def test_no_stove_sink_mode_requires_base_cabinet_and_fridge(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TKNT_KITCHEN_NO_STOVE_SINK": "1"},
+        ):
+            rule = kitchen_semantic_room_rule("kitchen")
+
+        clusters = cast(list[dict[str, object]], rule["clusters"])
+        workflow_cluster = next(
+            row for row in clusters if row.get("cluster_id") == "kitchen_workflow_core"
+        )
+        object_program = cast(dict[str, object], workflow_cluster["object_program"])
+        required_objects = cast(list[str], object_program["required"])
+        self.assertEqual(
+            required_objects,
+            ["kitchen_base_cabinet", "fridge"],
+        )
+        self.assertNotIn("sink", required_objects)
+        self.assertNotIn("stove", required_objects)
+
+        hints = cast(dict[str, object], workflow_cluster["tier_count_hints"])
+        object_hints = cast(list[dict[str, object]], hints["object_hints"])
+        by_type = {str(row.get("object_type")): row for row in object_hints}
+        self.assertEqual(by_type["kitchen_base_cabinet"]["min_keep"], 1)
+        self.assertEqual(by_type["fridge"]["min_keep"], 1)
+        self.assertNotIn("sink", by_type)
+        self.assertNotIn("stove", by_type)
+
+        by_cluster = {str(row.get("cluster_id")): row for row in clusters}
+        for cluster_id in ("kitchen_storage_support", "kitchen_island_optional"):
+            disabled_cluster = by_cluster[cluster_id]
+            activation = cast(dict[str, object], disabled_cluster["activation"])
+            disabled_program = cast(
+                dict[str, object], disabled_cluster["object_program"]
+            )
+            self.assertEqual(activation["base_rule"], "disabled_in_no_stove_sink_mode")
+            self.assertEqual(disabled_program["required"], [])
+            self.assertEqual(disabled_program["optional"], [])
+
+    def test_no_stove_sink_mode_places_fridge_next_to_cabinet(self) -> None:
+        placements = kitchen_semantic_placements_for_members(
+            "kitchen_workflow_core",
+            ["kitchen_base_cabinet", "fridge"],
+            ["kitchen_base_cabinet"],
+        )
+        by_id = {cast(str, row["id"]): row for row in placements}
+
+        self.assertEqual(by_id["fridge"]["relative_to"], "kitchen_base_cabinet")
+        self.assertEqual(by_id["fridge"]["band_intent"], "wall_sequence")
+
+    def test_no_stove_sink_filter_removes_nested_semantic_program(self) -> None:
+        filtered = _filter_kitchen_cluster_output(
+            {
+                "clusters": [
+                    {
+                        "cluster_id": "kitchen_workflow_core",
+                        "members": [
+                            "kitchen_base_cabinet",
+                            "fridge",
+                            "sink",
+                            "stove",
+                            "cooktop",
+                            "range_hood",
+                        ],
+                        "anchors": ["sink"],
+                        "hard_constraints": [
+                            {"type": "no_overlap", "a": "sink", "b": "fridge"},
+                            {
+                                "type": "no_overlap",
+                                "a": "kitchen_base_cabinet",
+                                "b": "fridge",
+                            },
+                        ],
+                        "cluster_rules": {
+                            "semantic_placements": [
+                                {"id": "sink", "relative_to": "fridge"},
+                                {
+                                    "id": "fridge",
+                                    "relative_to": "kitchen_base_cabinet",
+                                },
+                            ],
+                            "anchor_first_policy": {
+                                "dominant_anchor_id": "sink",
+                                "dominant_anchor_candidates": ["sink", "fridge"],
+                                "protected_ids": ["sink", "fridge"],
+                                "droppable_ids": ["stove"],
+                                "placement_order": [
+                                    "sink",
+                                    "stove",
+                                    "fridge",
+                                    "kitchen_base_cabinet",
+                                ],
+                            },
+                        },
+                    },
+                    {
+                        "cluster_id": "kitchen_storage_support",
+                        "members": ["kitchen_tall_cabinet"],
+                        "anchors": ["kitchen_tall_cabinet"],
+                    },
+                ],
+                "semantic_layout_program": {
+                    "request_contract": {
+                        "objects": [
+                            {"object_type": "sink"},
+                            {"object_type": "cooktop"},
+                            {"object_type": "dishwasher"},
+                            {"object_type": "kitchen_base_cabinet"},
+                        ]
+                    },
+                    "active_clusters": [
+                        {
+                            "cluster_id": "kitchen_workflow_core",
+                            "dominant_anchor_candidates": ["sink", "fridge"],
+                            "required_bundles": [
+                                {
+                                    "objects": [
+                                        {"object_type": "sink"},
+                                        {"object_type": "fridge"},
+                                    ]
+                                }
+                            ],
+                            "tier_count_hints": {
+                                "object_hints": [
+                                    {"object_type": "sink"},
+                                    {"object_type": "fridge"},
+                                ]
+                            },
+                        },
+                        {
+                            "cluster_id": "kitchen_storage_support",
+                            "dominant_anchor_candidates": ["kitchen_tall_cabinet"],
+                            "required_bundles": [
+                                {
+                                    "objects": [
+                                        {"object_type": "kitchen_tall_cabinet"},
+                                    ]
+                                }
+                            ],
+                            "tier_count_hints": {
+                                "object_hints": [
+                                    {"object_type": "kitchen_tall_cabinet"},
+                                ]
+                            },
+                        },
+                    ],
+                },
+            }
+        )
+        clusters = cast(list[dict[str, object]], filtered["clusters"])
+        self.assertEqual(len(clusters), 1)
+        cluster = clusters[0]
+        self.assertEqual(cluster["members"], ["kitchen_base_cabinet", "fridge"])
+        self.assertEqual(cluster["anchors"], [])
+
+        rules = cast(dict[str, object], cluster["cluster_rules"])
+        anchor_policy = cast(dict[str, object], rules["anchor_first_policy"])
+        self.assertEqual(anchor_policy["dominant_anchor_id"], "fridge")
+        self.assertEqual(anchor_policy["protected_ids"], ["fridge"])
+        self.assertEqual(anchor_policy["droppable_ids"], [])
+
+        semantic_program = cast(dict[str, object], filtered["semantic_layout_program"])
+        contract = cast(dict[str, object], semantic_program["request_contract"])
+        contract_objects = cast(list[dict[str, object]], contract["objects"])
+        self.assertEqual(
+            [row["object_type"] for row in contract_objects],
+            ["kitchen_base_cabinet"],
+        )
+        active_clusters = cast(
+            list[dict[str, object]], semantic_program["active_clusters"]
+        )
+        self.assertEqual(
+            [row["cluster_id"] for row in active_clusters],
+            ["kitchen_workflow_core"],
+        )
+
+    def test_no_stove_sink_tier_filter_keeps_only_requested_kitchen_core(
+        self,
+    ) -> None:
+        filtered = _filter_kitchen_tier_output(
+            {
+                "decisions": [
+                    {"category": "sink"},
+                    {"category": "stove"},
+                    {"category": "cooktop"},
+                    {"category": "dishwasher"},
+                    {"category": "fridge"},
+                    {"object_type": "kitchen_base_cabinet", "category": "storage"},
+                    {"category": "dining_table"},
+                    {"category": "dining_chair"},
+                    {"category": "kitchen_tall_cabinet"},
+                ]
+            }
+        )
+        decisions = cast(list[dict[str, object]], filtered["decisions"])
+
+        self.assertEqual(
+            [row.get("object_type") or row.get("category") for row in decisions],
+            [
+                "fridge",
+                "kitchen_base_cabinet",
+                "dining_table",
+                "dining_chair",
+            ],
+        )
+        cabinet = next(
+            row for row in decisions if row.get("object_type") == "kitchen_base_cabinet"
+        )
+        self.assertEqual(cabinet["quantity"], 1)
+        self.assertEqual(cabinet["min_keep"], 1)
+        self.assertEqual(cabinet["request_contract_intent"], "must_keep")
+
+    def test_no_stove_sink_size_profile_prefers_rustic_base_cabinet(self) -> None:
+        with patch.dict(os.environ, {"TKNT_KITCHEN_NO_STOVE_SINK": "1"}):
+            profiles = _build_size_profiles(
+                [
+                    {
+                        "id": "forest-cabinet",
+                        "type": "kitchen_base_cabinet",
+                        "nameVn": "Tủ bếp forest 11",
+                        "length_mm": 700,
+                        "width_mm": 20,
+                        "height_mm": 330,
+                        "attributes": {"category": "kitchen_base_cabinet"},
+                    },
+                    {
+                        "id": "rustic-cabinet",
+                        "type": "kitchen_base_cabinet",
+                        "nameVn": "Tủ bếp Rustic",
+                        "length_mm": 1800,
+                        "width_mm": 600,
+                        "height_mm": 900,
+                        "attributes": {"category": "kitchen_base_cabinet"},
+                    },
+                ]
+            )
+
+        profile = cast(dict[str, object], profiles["kitchen_base_cabinet"])
+        rep_dims = cast(dict[str, dict[str, object]], profile["rep_dims_m"])
+        self.assertEqual(rep_dims["S"]["source_id"], "rustic-cabinet")
+        self.assertEqual(rep_dims["S"]["L"], 1.80)
+        self.assertEqual(rep_dims["S"]["W"], 0.60)
+        self.assertEqual(rep_dims["S"]["H"], 0.90)
+        self.assertEqual(rep_dims["M"]["source_id"], "rustic-cabinet")
+        self.assertEqual(rep_dims["M"]["L"], 1.80)
+        self.assertEqual(rep_dims["L"]["source_id"], "rustic-cabinet")
+        self.assertEqual(rep_dims["L"]["W"], 0.60)
+
+    def test_no_stove_sink_render_size_preserves_catalog_dimensions(self) -> None:
+        catalog_size = [2831.904, 2299.903, 2272.635]
+        with patch.dict(os.environ, {"TKNT_KITCHEN_NO_STOVE_SINK": "1"}):
+            size = _no_stove_sink_kitchen_cabinet_size(
+                catalog_payload={"id": "56715066-87c8-4bc7-b59e-fa29a6b302e6"},
+                obj={"object_type": "kitchen_base_cabinet"},
+                bbox={"min_x": 0.0, "max_x": 900.0, "min_y": 0.0, "max_y": 550.0},
+                current_size=catalog_size,
+            )
+
+        self.assertEqual(size, catalog_size)
+
+    def test_rustic_base_cabinet_uses_install_footprint_for_solver(self) -> None:
+        cluster_program = {
+            "cluster_id": "kitchen_workflow_core",
+            "object_program": {
+                "object_specs_by_id": {
+                    "kitchen_base_cabinet": {
+                        "object_id": "kitchen_base_cabinet",
+                        "base_object_id": "kitchen_base_cabinet",
+                        "category": "kitchen_base_cabinet",
+                        "source_id": "56715066-87c8-4bc7-b59e-fa29a6b302e6",
+                        "role": "dominant_anchor",
+                        "priority": "anchor",
+                        "protected": True,
+                        "droppable": False,
+                        "rep_dims_mm": {"L": 2832, "W": 2272, "H": 2300},
+                        "allowed_rotations": [0, 90, 180, 270],
+                        "front": "top",
+                    }
+                },
+                "access_requirements": [
+                    {
+                        "id": "kitchen_base_cabinet",
+                        "type": "front_clearance",
+                        "required": True,
+                    }
+                ],
+            },
+        }
+
+        internal_row = _materialize_object_row(
+            cluster_program,
+            "kitchen_base_cabinet",
+            300,
+            5050,
+            180,
+        )
+        output_row = _object_output_row(internal_row)
+
+        self.assertEqual(
+            internal_row["bbox"],
+            {"min_x": 300, "min_y": 5050, "max_x": 3132, "max_y": 5700},
+        )
+        self.assertEqual(output_row["solver_bbox"], internal_row["bbox"])
+        self.assertEqual(
+            output_row["bbox"],
+            {"min_x": 300, "min_y": 3428, "max_x": 3132, "max_y": 5700},
+        )
+        self.assertEqual(output_row["w"], 2832)
+        self.assertEqual(output_row["h"], 2272)
 
     def test_kitchen_wall_sequence_support_slots_keep_wall_depth(self) -> None:
         cluster_program = {

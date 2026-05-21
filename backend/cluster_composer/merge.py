@@ -21,6 +21,8 @@ _MEDIA_CONSOLE_TYPES = frozenset(
     }
 )
 _BARE_TV_DISPLAY_TYPES = frozenset({"smart_tv", "television", "ti_vi", "tivi", "tv"})
+_RUSTIC_KITCHEN_BASE_CABINET_ID = "56715066-87c8-4bc7-b59e-fa29a6b302e6"
+_RUSTIC_KITCHEN_BASE_CABINET_SOLVER_DEPTH_MM = 650
 
 
 def merge_cluster_outputs(
@@ -250,6 +252,13 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
             source_id = str(rep_dims.get("source_id") or "")
             if source_id.startswith("__"):
                 source_id = ""
+            solver_footprint_mm = _solver_footprint_mm(
+                category=str(decision.get("category") or base_object_id),
+                source_id=source_id,
+                length_mm=length_mm,
+                width_mm=width_mm,
+                height_mm=height_mm,
+            )
             object_specs_by_id[object_id] = {
                 "object_id": object_id,
                 "base_object_id": base_object_id,
@@ -265,6 +274,11 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
                     "W": width_mm,
                     "H": height_mm,
                 },
+                **(
+                    {"solver_footprint_mm": solver_footprint_mm}
+                    if solver_footprint_mm is not None
+                    else {}
+                ),
                 "source_id": source_id,
                 "protected": bool(decision.get("protected")) and required,
                 "droppable": droppable,
@@ -411,6 +425,27 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
         "required_object_ids": _stable_unique(required_ids),
         "optional_object_ids": _stable_unique(optional_ids),
         "object_specs_by_id": object_specs_by_id,
+    }
+
+
+def _solver_footprint_mm(
+    *,
+    category: str,
+    source_id: str,
+    length_mm: int,
+    width_mm: int,
+    height_mm: int,
+) -> dict[str, int] | None:
+    if (
+        category != "kitchen_base_cabinet"
+        or source_id != _RUSTIC_KITCHEN_BASE_CABINET_ID
+        or width_mm <= _RUSTIC_KITCHEN_BASE_CABINET_SOLVER_DEPTH_MM
+    ):
+        return None
+    return {
+        "L": length_mm,
+        "W": _RUSTIC_KITCHEN_BASE_CABINET_SOLVER_DEPTH_MM,
+        "H": height_mm,
     }
 
 

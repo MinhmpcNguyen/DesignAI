@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from collections.abc import Sequence
+from copy import deepcopy
 from typing import Any
 
 from layout.kitchen_profile import (
@@ -30,6 +30,8 @@ KITCHEN_NON_FUNCTIONAL_CONTRACT_TYPES = frozenset(
         "range_hood",
     }
 )
+_KITCHEN_MEDIUM_AREA_M2 = 12.0
+_KITCHEN_LARGE_AREA_M2 = 16.0
 
 KITCHEN_SCORING_ALIASES: dict[str, tuple[str, ...]] = {
     "bar_stool": ("bar_stool", "counter_stool", "island_stool", "breakfast_stool"),
@@ -102,9 +104,9 @@ def apply_kitchen_capacity_model(
     out = dict(capacity_model)
     room_area = max(0.1, float(out.get("available_area_m2") or 0.1))
     density_ratio = max(float(out.get("density_ratio") or 0.38), 0.44)
-    if room_area >= 12.0:
+    if room_area >= _KITCHEN_MEDIUM_AREA_M2:
         density_ratio = max(density_ratio, 0.46)
-    if room_area >= 16.0:
+    if room_area >= _KITCHEN_LARGE_AREA_M2:
         density_ratio = max(density_ratio, 0.48)
     out["target_density"] = "functional_eat_in_kitchen"
     out["density_ratio"] = min(0.54, density_ratio)
@@ -200,13 +202,18 @@ def kitchen_semantic_placements_for_members(
         )
         if member in {"fridge", "sink", "stove", "cooktop"}:
             previous_workflow = member
+    wall_support_anchor = "sink" if "sink" in members else anchor
     for member in ("kitchen_base_cabinet", "dishwasher"):
-        if member not in members or member == anchor or "sink" not in members:
+        if (
+            member not in members
+            or member == anchor
+            or wall_support_anchor not in members
+        ):
             continue
         rows.append(
             {
                 "id": member,
-                "relative_to": "sink",
+                "relative_to": wall_support_anchor,
                 "kind": "anchor_side",
                 "side_options": ["left", "right"],
                 "gap_min": 0,
