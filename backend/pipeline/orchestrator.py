@@ -1154,6 +1154,42 @@ def _room_fill_ratio(room_output: dict[str, Any]) -> float:
     return max(0.0, min(1.0, polygon_area / bbox_area))
 
 
+_SOLVER_REASON_VI: dict[str, str] = {
+    "required_clusters_without_candidates": (
+        "Một số nhóm đồ nội thất không thể đặt vào phòng này."
+    ),
+    "no_candidates_generated": (
+        "Không tạo được phương án đồ nội thất phù hợp với phòng và yêu cầu hiện tại."
+    ),
+    "no_complete_hard_valid_seed": (
+        "Không tìm được bố cục thỏa mãn các ràng buộc sắp xếp."
+    ),
+}
+
+
+def _solver_failure_message_vi(solver_outputs: list[dict[str, Any]]) -> str:
+    reasons: set[str] = set()
+    has_infeasible = False
+    for output in solver_outputs:
+        placer = output.get("placer_seed") if isinstance(output, dict) else None
+        if isinstance(placer, dict):
+            reason = str(placer.get("reason") or "").strip()
+            if reason:
+                reasons.add(reason)
+        notes = output.get("notes") if isinstance(output, dict) else []
+        if isinstance(notes, list):
+            joined = " ".join(str(n) for n in notes).lower()
+            if "infeasible" in joined or "no feasible" in joined:
+                has_infeasible = True
+
+    for reason_key, message_vi in _SOLVER_REASON_VI.items():
+        if reason_key in reasons:
+            return message_vi
+    if has_infeasible:
+        return "Không tồn tại cách sắp xếp nào thỏa mãn tất cả ràng buộc. Hãy thử điều chỉnh yêu cầu."
+    return "Không sắp xếp được đồ nội thất vào phòng. Hãy thử yêu cầu ít đồ hơn hoặc điều chỉnh mô tả."
+
+
 def _append_initial_intent_guidance(
     base_text: str,
     intent: dict[str, Any] | None,
@@ -1381,19 +1417,17 @@ def run_case(
         if isinstance(item, dict)
     ]
     if not concepts:
-        _update_status(
-            paths,
-            "error",
-            error="layout concept planner could not produce any viable intent plans",
-        )
+        _no_concepts_msg = "Không tạo được bố cục thiết kế cho phòng này. Hãy thử mô tả yêu cầu đơn giản hơn."
+        _update_status(paths, "error", error=_no_concepts_msg)
         return {
             "case_id": case_id,
             "case_dir": str(case_root),
             "final_output": None,
-            "error": "layout concept planner could not produce any viable intent plans",
+            "error": _no_concepts_msg,
         }
 
     solved_bundles: list[dict[str, Any]] = []
+    failed_solver_outputs: list[dict[str, Any]] = []
     for concept_index, concept in enumerate(concepts[:target_final_count], start=1):
         relation_plan = solver_plan_from_concept(
             concept=concept,
@@ -1416,7 +1450,7 @@ def run_case(
             progress_current=len(solved_bundles),
             progress_total=target_final_count,
         )
-        concept_bundles = _solve_object_level_variant_bundle(
+        concept_bundles, failed_output = _solve_object_level_variant_bundle(
             concept=concept,
             relation_plan=relation_plan,
             room_output=room_output,
@@ -1429,6 +1463,8 @@ def run_case(
             ablation_mode=resolved_ablation_mode,
         )
         if not concept_bundles:
+            if isinstance(failed_output, dict):
+                failed_solver_outputs.append(failed_output)
             continue
         for solution_offset, solved_bundle in enumerate(concept_bundles, start=1):
             solved_bundle = _refill_judged_variant_accessories(
@@ -1451,16 +1487,13 @@ def run_case(
         )
 
     if not solved_bundles:
-        _update_status(
-            paths,
-            "error",
-            error="object-level solver could not produce any feasible anchor-first layouts",
-        )
+        _no_solver_msg = _solver_failure_message_vi(failed_solver_outputs)
+        _update_status(paths, "error", error=_no_solver_msg)
         return {
             "case_id": case_id,
             "case_dir": str(case_root),
             "final_output": None,
-            "error": "object-level solver could not produce any feasible anchor-first layouts",
+            "error": _no_solver_msg,
         }
 
     styling_candidates = _select_final_styling_candidates(
@@ -1507,13 +1540,13 @@ def run_case(
 
     if not final_candidates:
         _update_status(
-            paths, "error", error="stylist could not finalize any anchor-first layouts"
+            paths, "error", error="Không hoàn thiện được thiết kế nội thất."
         )
         return {
             "case_id": case_id,
             "case_dir": str(case_root),
             "final_output": None,
-            "error": "stylist could not finalize any anchor-first layouts",
+            "error": "Không hoàn thiện được thiết kế nội thất.",
         }
 
     _update_status(
@@ -1540,13 +1573,13 @@ def run_case(
     payload_variants = layout_variants.get("variants")
     if not isinstance(payload_variants, list) or not payload_variants:
         _update_status(
-            paths, "error", error="final gallery assembly produced no layout options"
+            paths, "error", error="Không tạo được phương án thiết kế nào."
         )
         return {
             "case_id": case_id,
             "case_dir": str(case_root),
             "final_output": None,
-            "error": "final gallery assembly produced no layout options",
+            "error": "Không tạo được phương án thiết kế nào.",
         }
 
     canonical_variant = payload_variants[0]
@@ -1558,13 +1591,13 @@ def run_case(
         _update_status(
             paths,
             "error",
-            error="canonical final option missing styled or layout payload",
+            error="Kết quả thiết kế bị thiếu dữ liệu.",
         )
         return {
             "case_id": case_id,
             "case_dir": str(case_root),
             "final_output": None,
-            "error": "canonical final option missing styled or layout payload",
+            "error": "Kết quả thiết kế bị thiếu dữ liệu.",
         }
 
     canonical_bundle = deepcopy(final_gallery_candidates[0])
@@ -1614,7 +1647,7 @@ def _solve_object_level_variant_bundle(
     manual_placements: list[dict[str, Any]] | None,
     variant_index: int,
     ablation_mode: AblationMode,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     try:
         solver_output = solver.generate_object_layout(
             room_model_json=room_output,
@@ -1755,14 +1788,14 @@ def _solve_object_level_variant_bundle(
                     "ablation_mode": ablation_mode,
                 }
             )
-        return bundles
+        return bundles, None if bundles else solver_output
     except Exception as exc:
         logger.warning(
             "Skipping concept %s because object-level solving failed: %s",
             concept.get("concept_id") or variant_index,
             exc,
         )
-        return []
+        return [], None
 
 
 def _annotate_object_level_layout_coverage(

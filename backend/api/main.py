@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from api.routes.pipeline import router as pipeline_router
 from config import root_config
@@ -13,6 +15,7 @@ from config.models import OpenAIModelGroupConfig
 from config.openai_config import OpenAIConfig
 from db.demo_data import ensure_demo_inventory_loaded
 from db.runtime_init import ensure_runtime_schema
+from domain.normalize_run import ApiErrorReason
 
 app = FastAPI(
     title="TKNT Normalize-Run API",
@@ -131,6 +134,25 @@ def _openai_model_names(models: OpenAIModelGroupConfig) -> tuple[str, str]:
     return (
         resolved_models["primary"].name,
         resolved_models["helper"].name,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    errors = exc.errors()
+    field_messages = "; ".join(
+        f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+        for err in errors
+    )
+    return JSONResponse(
+        status_code=400,
+        content={
+            "reason": ApiErrorReason.NORMALIZE_RUN_INVALID_PAYLOAD,
+            "message": f"Request validation failed: {field_messages}",
+            "context": {"errors": errors},
+        },
     )
 
 

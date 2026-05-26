@@ -474,6 +474,12 @@ export interface NormalizeRunJobResponse {
   resultUrl: string;
 }
 
+export interface NormalizeRunApiError {
+  reason: string;
+  message: string;
+  context?: Record<string, unknown> | null;
+}
+
 export interface NormalizeRunStatusResponse {
   id: string;
   status: NormalizeRunJobStatus;
@@ -481,6 +487,7 @@ export interface NormalizeRunStatusResponse {
   message?: string | null;
   progressCurrent?: number | null;
   progressTotal?: number | null;
+  error?: NormalizeRunApiError | null;
   statusUrl: string;
   resultUrl: string;
 }

@@ -1519,7 +1519,10 @@ def _run_pipeline_for_job(
 @router.post(
     "/normalize-run",
     response_model=PipelineNormalizeRunJobResponse,
-    responses={500: {"model": ApiErrorDetail}},
+    responses={
+        400: {"model": ApiErrorDetail},
+        500: {"model": ApiErrorDetail},
+    },
     summary="Start a normalize-run job and return a polling id",
 )
 def normalize_run_pipeline(
@@ -1656,7 +1659,7 @@ def _execute_normalize_run_pipeline(
         )
     except ValueError as exc:
         raise api_exception(
-            422,
+            400,
             ApiErrorReason.NORMALIZE_RUN_INVALID_PAYLOAD,
             str(exc),
         ) from exc
@@ -1664,7 +1667,7 @@ def _execute_normalize_run_pipeline(
     system_inputs = normalized.get("system_inputs")
     if not isinstance(system_inputs, list) or not system_inputs:
         raise_api_error(
-            422,
+            400,
             ApiErrorReason.NORMALIZE_RUN_NO_PIPELINE_INPUTS,
             "No room pipeline inputs were produced from the payload.",
         )
@@ -1687,7 +1690,7 @@ def _execute_normalize_run_pipeline(
     )
     if not room_run_inputs:
         raise_api_error(
-            422,
+            400,
             ApiErrorReason.NORMALIZE_RUN_NO_RUNNABLE_ROOMS,
             "No runnable room pipeline inputs were produced from the payload.",
         )
@@ -1894,7 +1897,7 @@ def _run_normalize_room_case(
         raise api_exception(
             502,
             ApiErrorReason.NORMALIZE_RUN_PIPELINE_FAILED,
-            "Normalize-run pipeline failed.",
+            str(exc),
             context=json_object_from_mapping(
                 _record_pipeline_error(paths=paths, error=exc)
             ),
@@ -1902,12 +1905,13 @@ def _run_normalize_room_case(
 
     if result.get("error"):
         paths = case_paths(run_input.room_case_id)
+        error_message = str(result["error"])
         raise_api_error(
             502,
             ApiErrorReason.NORMALIZE_RUN_PIPELINE_FAILED,
-            "Normalize-run pipeline returned an error.",
+            error_message,
             context=json_object_from_mapping(
-                _record_pipeline_error(paths=paths, error=str(result["error"]))
+                _record_pipeline_error(paths=paths, error=error_message)
             ),
         )
 
@@ -1926,7 +1930,7 @@ def _run_normalize_room_case(
         raise api_exception(
             502,
             ApiErrorReason.NORMALIZE_RUN_RESPONSE_ENRICHMENT_FAILED,
-            "Normalize-run response enrichment failed.",
+            str(exc),
             context=json_object_from_mapping(
                 _record_pipeline_error(paths=paths, error=exc)
             ),

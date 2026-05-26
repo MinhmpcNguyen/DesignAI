@@ -209,7 +209,7 @@ class NormalizeRunJobManager:
                 job_id,
                 status="error",
                 stage="error",
-                message="Normalize-run job failed.",
+                message=detail.message,
                 error=detail,
             )
         except Exception as exc:

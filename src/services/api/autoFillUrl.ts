@@ -99,7 +99,9 @@ export async function pollNormalizeRunUntilReady(
       return getNormalizeRunResult(jobId);
     }
     if (status.status === "error") {
-      throw new Error(status.message ?? "Pipeline thất bại.");
+      throw new Error(
+        status.error?.message ?? status.message ?? "Pipeline thất bại.",
+      );
     }
     await new Promise<void>((r) => setTimeout(r, intervalMs));
   }
