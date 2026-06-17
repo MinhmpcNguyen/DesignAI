@@ -100,8 +100,8 @@ ANCHOR_PRIORITY: dict[str, tuple[str, ...]] = {
     ),
     "tv_console": ("tv", "speaker", "smart_speaker"),
     "dresser": ("mirror", "decor"),
-    "side_table": ("table_lamp", "plant", "decor", "vase", "smart_speaker", "speaker"),
-    "console_table": ("mirror", "decor", "table_lamp", "plant", "vase"),
+    "side_table": ("plant", "decor", "vase", "smart_speaker", "speaker"),
+    "console_table": ("mirror", "decor", "plant", "vase"),
     "coffee_table": ("vase", "decor"),
     "dining_table": ("rug", "vase"),
     "buffet_sideboard": ("mirror", "decor", "speaker", "smart_speaker"),
@@ -835,8 +835,9 @@ def _place_support_attached_items(
 
     for item_type in item_types:
         if _is_media_console_type(support.object_type) and item_type == "tv":
-            row = _place_tv_on_console_item(
+            row = _place_wall_item_over_support(
                 support=support,
+                room_rect=room_rect,
                 item_type=item_type,
                 inventory_profiles=inventory_profiles,
                 existing_ids=existing_ids,

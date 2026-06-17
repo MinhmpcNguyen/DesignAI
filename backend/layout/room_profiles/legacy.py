@@ -3,8 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from layout.room_profiles.base import RoomProfile
-from layout.room_profiles.base import normalize_profile_token
+from layout.room_profiles.base import RoomProfile, normalize_profile_token
+from stylist.semantic_program_rules import get_compiled_semantic_room_rule
 
 BEDROOM_LEGACY_ALIASES: dict[str, tuple[str, ...]] = {
     "bed": ("bed", "queen bed", "king bed", "single bed", "double bed"),
@@ -44,6 +44,7 @@ LIVING_ROOM_LEGACY_ALIASES: dict[str, tuple[str, ...]] = {
     "rug": ("rug", "carpet"),
     "side_table": ("side table", "end table"),
     "sofa": ("sofa", "couch", "loveseat", "sectional"),
+    "sectional_sofa": ("sectional sofa", "l shaped sofa", "l-shape sofa"),
     "table_lamp": ("table lamp", "side table lamp"),
     "tv": ("tv", "television"),
     "tv_console": ("tv console", "media console", "tv stand"),
@@ -77,7 +78,7 @@ BEDROOM_WALL_BACKED_OBJECTS = frozenset(
 BEDROOM_FLOATING_OBJECTS = frozenset({"chair", "rug"})
 BEDROOM_MOUNTED_OBJECTS = frozenset({"ceiling_lamp", "mirror", "wall_art"})
 
-LIVING_ROOM_ANCHOR_OBJECTS = frozenset({"sofa", "tv_console"})
+LIVING_ROOM_ANCHOR_OBJECTS = frozenset({"sectional_sofa", "sofa", "tv_console"})
 LIVING_ROOM_SUPPORT_OBJECTS = frozenset(
     {
         "armchair",
@@ -94,7 +95,9 @@ LIVING_ROOM_SUPPORT_OBJECTS = frozenset(
         "tv",
     }
 )
-LIVING_ROOM_SEATING_OBJECTS = frozenset({"armchair", "chair", "ottoman", "sofa"})
+LIVING_ROOM_SEATING_OBJECTS = frozenset(
+    {"armchair", "chair", "ottoman", "sectional_sofa", "sofa"}
+)
 LIVING_ROOM_SURFACE_OBJECTS = frozenset(
     {"coffee_table", "console_table", "media_shelf", "side_table", "tv_console"}
 )
@@ -112,10 +115,28 @@ LIVING_ROOM_FLOATING_OBJECTS = frozenset(
         "ottoman",
         "rug",
         "side_table",
+        "sectional_sofa",
         "sofa",
     }
 )
 LIVING_ROOM_MOUNTED_OBJECTS = frozenset({"ceiling_lamp", "tv", "wall_art"})
+LIVING_ROOM_NON_FUNCTIONAL_CONTRACT_TYPES = frozenset({"plant", "wall_art"})
+LIVING_ROOM_NON_FUNCTIONAL_LAYOUT_SPECS: dict[str, dict[str, Any]] = {
+    "plant": {
+        "width": 320,
+        "height": 320,
+        "collision_layer": "floor_solid",
+        "placement": "room_corner",
+        "margin": 250,
+    },
+    "wall_art": {
+        "width": 900,
+        "height": 650,
+        "collision_layer": "wall_mounted",
+        "place_on": {"target_instance_id": "wall", "method": "hang_on"},
+        "target_object_types": ["sectional_sofa", "sofa", "tv_console"],
+    },
+}
 
 _BEDROOM_DECLARED_OBJECTS = (
     frozenset(BEDROOM_LEGACY_ALIASES)
@@ -198,6 +219,13 @@ _LIVING_ROOM_SIZE_PROFILES: dict[str, dict[str, Any]] = {
             "L": {"L": 2.80, "W": 1.00, "A": 2.80},
         }
     },
+    "sectional_sofa": {
+        "rep_dims_m": {
+            "S": {"L": 2.20, "W": 1.40, "A": 3.08},
+            "M": {"L": 2.60, "W": 1.60, "A": 4.16},
+            "L": {"L": 3.00, "W": 1.80, "A": 5.40},
+        }
+    },
     "armchair": {
         "rep_dims_m": {
             "S": {"L": 0.70, "W": 0.70, "A": 0.49},
@@ -210,6 +238,13 @@ _LIVING_ROOM_SIZE_PROFILES: dict[str, dict[str, Any]] = {
             "S": {"L": 0.70, "W": 0.45, "A": 0.32},
             "M": {"L": 1.00, "W": 0.55, "A": 0.55},
             "L": {"L": 1.30, "W": 0.70, "A": 0.91},
+        }
+    },
+    "console_table": {
+        "rep_dims_m": {
+            "S": {"L": 0.80, "W": 0.35, "A": 0.28},
+            "M": {"L": 1.10, "W": 0.40, "A": 0.44},
+            "L": {"L": 1.40, "W": 0.45, "A": 0.63},
         }
     },
     "tv_console": {
@@ -288,16 +323,20 @@ def living_room_shadow_size_profile(object_type: object) -> dict[str, Any] | Non
 
 def bedroom_legacy_semantic_room_rule(room_type: str) -> dict[str, Any] | None:
     _ = room_type
-    from stylist.semantic_program_rules import get_compiled_semantic_room_rule
 
     return get_compiled_semantic_room_rule("bedroom")
 
 
 def living_room_legacy_semantic_room_rule(room_type: str) -> dict[str, Any] | None:
     _ = room_type
-    from stylist.semantic_program_rules import get_compiled_semantic_room_rule
 
     return get_compiled_semantic_room_rule("living_room")
+
+
+def combined_living_kitchen_semantic_room_rule(room_type: str) -> dict[str, Any] | None:
+    _ = room_type
+
+    return get_compiled_semantic_room_rule("combined_living_kitchen")
 
 
 BEDROOM_LEGACY_PROFILE = RoomProfile(
@@ -326,6 +365,8 @@ LIVING_ROOM_LEGACY_PROFILE = RoomProfile(
     canonical_room_type="living_room",
     layout_traits_enabled=False,
     object_aliases=LIVING_ROOM_LEGACY_ALIASES,
+    non_functional_contract_types=LIVING_ROOM_NON_FUNCTIONAL_CONTRACT_TYPES,
+    non_functional_layout_specs=LIVING_ROOM_NON_FUNCTIONAL_LAYOUT_SPECS,
     wall_backed_objects=LIVING_ROOM_WALL_BACKED_OBJECTS,
     floating_objects=LIVING_ROOM_FLOATING_OBJECTS,
     mounted_objects=LIVING_ROOM_MOUNTED_OBJECTS,
@@ -337,5 +378,27 @@ LIVING_ROOM_LEGACY_PROFILE = RoomProfile(
     lighting_objects=LIVING_ROOM_LIGHTING_OBJECTS,
     decor_objects=LIVING_ROOM_DECOR_OBJECTS,
     semantic_room_rule_provider=living_room_legacy_semantic_room_rule,
+    size_profile_provider=living_room_shadow_size_profile,
+)
+
+COMBINED_LIVING_KITCHEN_PROFILE = RoomProfile(
+    profile_id="combined_living_kitchen_legacy",
+    room_types=frozenset({"combined_living_kitchen", "open_plan_living", "living_kitchen"}),
+    canonical_room_type="combined_living_kitchen",
+    layout_traits_enabled=False,
+    object_aliases=LIVING_ROOM_LEGACY_ALIASES,
+    non_functional_contract_types=LIVING_ROOM_NON_FUNCTIONAL_CONTRACT_TYPES,
+    non_functional_layout_specs=LIVING_ROOM_NON_FUNCTIONAL_LAYOUT_SPECS,
+    wall_backed_objects=LIVING_ROOM_WALL_BACKED_OBJECTS,
+    floating_objects=LIVING_ROOM_FLOATING_OBJECTS,
+    mounted_objects=LIVING_ROOM_MOUNTED_OBJECTS,
+    storage_objects=LIVING_ROOM_STORAGE_OBJECTS,
+    anchor_objects=LIVING_ROOM_ANCHOR_OBJECTS,
+    support_objects=LIVING_ROOM_SUPPORT_OBJECTS,
+    seating_objects=LIVING_ROOM_SEATING_OBJECTS,
+    surface_objects=LIVING_ROOM_SURFACE_OBJECTS,
+    lighting_objects=LIVING_ROOM_LIGHTING_OBJECTS,
+    decor_objects=LIVING_ROOM_DECOR_OBJECTS,
+    semantic_room_rule_provider=combined_living_kitchen_semantic_room_rule,
     size_profile_provider=living_room_shadow_size_profile,
 )

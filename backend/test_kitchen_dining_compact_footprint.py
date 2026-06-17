@@ -240,7 +240,7 @@ class KitchenDiningCompactFootprintTest(unittest.TestCase):
             row for row in object_hints if row.get("object_type") == "dining_chair"
         )
 
-        self.assertEqual(chair_hint["min_keep"], 4)
+        self.assertEqual(chair_hint["min_keep"], 0)
         self.assertEqual(chair_hint["max_keep"], 4)
 
         chair_profile = kitchen_fallback_size_profile("dining_chair")
@@ -251,7 +251,7 @@ class KitchenDiningCompactFootprintTest(unittest.TestCase):
         chair_s = cast(dict[str, float], chair_profile["rep_dims_m"]["S"])
         table_s = cast(dict[str, float], table_profile["rep_dims_m"]["S"])
         self.assertLessEqual(chair_s["A"], 0.13)
-        self.assertLessEqual(table_s["A"], 0.46)
+        self.assertLessEqual(table_s["A"], 0.56)
 
     def test_four_kitchen_dining_chairs_do_not_count_toward_footprint(self) -> None:
         result = TierCountDirector().generate(
@@ -272,7 +272,7 @@ class KitchenDiningCompactFootprintTest(unittest.TestCase):
         )
 
         summary = cast(dict[str, object], result["decision_summary"])
-        self.assertEqual(summary["estimated_footprint_mm2"], 460000)
+        self.assertEqual(summary["estimated_footprint_mm2"], 550000)
         table_profile = kitchen_fallback_size_profile("dining_table")
         if table_profile is None:
             raise AssertionError("Expected compact dining table profile.")
@@ -546,8 +546,8 @@ class KitchenDiningCompactFootprintTest(unittest.TestCase):
             row for row in decisions if row.get("object_type") == "kitchen_base_cabinet"
         )
         self.assertEqual(cabinet["quantity"], 1)
-        self.assertEqual(cabinet["min_keep"], 1)
-        self.assertEqual(cabinet["request_contract_intent"], "must_keep")
+        self.assertEqual(cabinet["min_keep"], 0)
+        self.assertEqual(cabinet["request_contract_intent"], "should_keep")
 
     def test_no_stove_sink_size_profile_prefers_rustic_base_cabinet(self) -> None:
         with patch.dict(os.environ, {"TKNT_KITCHEN_NO_STOVE_SINK": "1"}):

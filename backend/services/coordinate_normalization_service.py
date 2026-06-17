@@ -79,6 +79,129 @@ _KITCHEN_PROMPT_TERMS = (
     "dao bep",
 )
 
+# Signals that push kitchen share up (living ~50%)
+_LARGE_KITCHEN_SIGNALS = (
+    "bep rong",
+    "bep lon",
+    "bep to",
+    "dao bep",
+    "kitchen island",
+    "island bep",
+    "bep mo",
+    "open kitchen",
+)
+
+# Signals that push kitchen share down (living ~70%)
+_SMALL_KITCHEN_SIGNALS = (
+    "kitchenette",
+    "bep mini",
+    "mini kitchen",
+    "goc bep",
+    "bep phu",
+)
+
+# Signals for equal split (living 50%)
+_EQUAL_SPLIT_SIGNALS = (
+    "50 50",
+    "nua nua",
+    "bang nhau",
+    "tuong duong",
+)
+
+_CHOKEPOINT_NARROWING_THRESHOLD = 0.82
+_CHOKEPOINT_RATIO_TOLERANCE = 0.12
+
+# How far the concave-vertex split ratio may deviate from the target before we
+# fall back to the binary-search cut.  Wider than chokepoint tolerance because
+# the architectural corner is more important than a precise area ratio.
+_CONCAVE_SPLIT_RATIO_TOLERANCE = 0.18
+
+
+def _polygon_rectangularity(polygon: Polygon) -> float:
+    """Return how rectangular a polygon is, 0–1 (1 = perfect rectangle).
+
+    Uses the ratio of the polygon's area to its oriented bounding-box area.
+    More rectangular shapes score closer to 1; L-shapes or staircases score
+    significantly lower.
+    """
+    if polygon.is_empty or polygon.area <= 0:
+        return 0.0
+    try:
+        obb = polygon.minimum_rotated_rectangle
+        obb_area = float(obb.area)
+        if obb_area <= 0:
+            return 0.0
+        return min(1.0, float(polygon.area) / obb_area)
+    except Exception:
+        return 0.0
+
+
+def _concave_vertex_cuts(polygon: Polygon) -> list[tuple[Literal["x", "y"], float]]:
+    """Return (axis, coordinate) cut candidates derived from the polygon's
+    concave (reflex) vertices.
+
+    For an L-shaped room the single concave vertex has both an x- and y-
+    coordinate; cutting at either gives two rectangles.  The caller should try
+    all returned candidates and keep the one that gives the best split quality.
+    """
+    coords = list(polygon.exterior.coords)[:-1]
+    n = len(coords)
+    if n < 5:
+        return []
+
+    cuts: list[tuple[Literal["x", "y"], float]] = []
+    seen: set[tuple[str, float]] = set()
+    for i in range(n):
+        p0 = coords[(i - 1) % n]
+        p1 = coords[i]
+        p2 = coords[(i + 1) % n]
+        # Cross product of vectors (p1-p0) and (p2-p1).
+        # For a CCW polygon, a negative cross product means a reflex (concave) vertex.
+        cross = (p1[0] - p0[0]) * (p2[1] - p1[1]) - (p1[1] - p0[1]) * (p2[0] - p1[0])
+        if cross >= 0:
+            continue
+        for axis, coord in (("x", p1[0]), ("y", p1[1])):
+            key = (axis, coord)
+            if key not in seen:
+                seen.add(key)
+                cuts.append((axis, coord))  # type: ignore[arg-type]
+    return cuts
+
+
+def _strip_diacritics_casefold(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    without_marks = "".join(
+        char for char in decomposed if not unicodedata.combining(char)
+    )
+    return without_marks.casefold()
+
+
+def _infer_living_kitchen_ratio(
+    description: str | None,
+    special_notes: str | None,
+) -> float:
+    """Return living-room area share (0–1) inferred from text signals.
+
+    Large-kitchen signals → 0.50, small-kitchen signals → 0.70, default → 0.60.
+    """
+    parts: list[str] = []
+    if description:
+        parts.append(description)
+    if special_notes:
+        parts.append(special_notes)
+    if not parts:
+        return 0.6
+
+    text = _strip_diacritics_casefold(" ".join(parts))
+
+    if any(sig in text for sig in _EQUAL_SPLIT_SIGNALS):
+        return 0.5
+    if any(sig in text for sig in _LARGE_KITCHEN_SIGNALS):
+        return 0.5
+    if any(sig in text for sig in _SMALL_KITCHEN_SIGNALS):
+        return 0.7
+    return 0.6
+
 
 @dataclass(frozen=True)
 class PlanarPoint:
@@ -133,15 +256,21 @@ class CoordinateNormalizationService:
         special_notes: str | None = None,
         style: str | None = None,
         split_largest_room: bool = True,
+        combine_living_kitchen: bool = False,
     ) -> JsonObject:
         raw_payload = deepcopy(dict(payload))
         source_scale_to_mm = self._source_scale_to_mm(raw_payload, source_unit)
         source_payload = self._scale_json(raw_payload, factor=source_scale_to_mm)
         apartment_bbox = self._apartment_bbox(source_payload)
-        split_payload, room_split = self._split_largest_room_payload(
-            source_payload,
-            enabled=split_largest_room,
-        )
+        if combine_living_kitchen:
+            split_payload, room_split = self._combine_largest_room_as_unified(source_payload)
+        else:
+            split_payload, room_split = self._split_largest_room_payload(
+                source_payload,
+                enabled=split_largest_room,
+                description=description,
+                special_notes=special_notes,
+            )
         shift = PlanarPoint(x=-apartment_bbox.min_x, y=-apartment_bbox.min_y)
         normalized_payload = self._translate_json(
             split_payload,
@@ -263,12 +392,15 @@ class CoordinateNormalizationService:
         payload: Mapping[str, Any],
         *,
         enabled: bool,
+        description: str | None = None,
+        special_notes: str | None = None,
     ) -> tuple[JsonObject, JsonObject]:
+        living_ratio = _infer_living_kitchen_ratio(description, special_notes)
         split_payload = deepcopy(dict(payload))
         split_meta: JsonObject = {
             "enabled": enabled,
             "applied": False,
-            "ratio": {"living_room": 0.6, "kitchen": 0.4},
+            "ratio": {"living_room": living_ratio, "kitchen": round(1.0 - living_ratio, 2)},
         }
         if not enabled:
             return split_payload, split_meta
@@ -300,7 +432,7 @@ class CoordinateNormalizationService:
             split_meta["reason"] = "Largest room payload was not an object."
             return split_payload, split_meta
 
-        split_result = self._split_room_mapping(largest_room)
+        split_result = self._split_room_mapping(largest_room, ratio=living_ratio)
         if split_result is None:
             split_meta["reason"] = "Largest room polygon could not be split cleanly."
             return split_payload, split_meta
@@ -323,16 +455,68 @@ class CoordinateNormalizationService:
         split_meta["applied"] = True
         return split_payload, split_meta
 
+    def _combine_largest_room_as_unified(
+        self,
+        payload: Mapping[str, Any],
+    ) -> tuple[JsonObject, JsonObject]:
+        """Instead of splitting, relabel the largest room as combined_living_kitchen."""
+        combined_payload = deepcopy(dict(payload))
+        combine_meta: JsonObject = {
+            "enabled": True,
+            "applied": False,
+            "mode": "combined_living_kitchen",
+        }
+
+        rooms = combined_payload.get("rooms")
+        if not isinstance(rooms, list) or len(rooms) < 1:
+            # Single-room payloads: relabel at the top level
+            for key in ("roomType", "room_type"):
+                if key in combined_payload:
+                    combined_payload[key] = "combined_living_kitchen"
+                    combine_meta["applied"] = True
+            return combined_payload, combine_meta
+
+        largest_index: int | None = None
+        largest_area = 0.0
+        for index, raw_room in enumerate(rooms):
+            if not isinstance(raw_room, dict):
+                continue
+            points = self._room_points(raw_room)
+            if len(points) < 3:
+                continue
+            area = abs(self._polygon_area([point.as_dict() for point in points]))
+            if area > largest_area:
+                largest_area = area
+                largest_index = index
+
+        if largest_index is None:
+            combine_meta["reason"] = "No relabelable room polygon was found."
+            return combined_payload, combine_meta
+
+        largest_room = dict(rooms[largest_index])
+        largest_room["roomType"] = "combined_living_kitchen"
+        largest_room["room_type"] = "combined_living_kitchen"
+        rooms_copy = list(rooms)
+        rooms_copy[largest_index] = largest_room
+        combined_payload["rooms"] = rooms_copy
+        combine_meta["applied"] = True
+        combine_meta["parent_room_id"] = self._string_or_none(
+            largest_room.get("key") or largest_room.get("room_id")
+        )
+        return combined_payload, combine_meta
+
     def _split_room_mapping(
         self,
         raw_room: Mapping[str, Any],
+        *,
+        ratio: float = 0.6,
     ) -> tuple[JsonObject, JsonObject, JsonObject | None, JsonObject] | None:
         room_points = self._room_points(raw_room)
         polygon = self._polygon_from_points(room_points)
         if polygon is None:
             return None
 
-        split_geometries = self._split_polygon_by_ratio(polygon, ratio=0.6)
+        split_geometries = self._split_polygon_by_ratio(polygon, ratio=ratio)
         if split_geometries is None:
             return None
 
@@ -400,6 +584,57 @@ class CoordinateNormalizationService:
         }
         return living_room, kitchen_room, partition_wall, split_details
 
+    def _find_natural_chokepoint(
+        self,
+        polygon: Polygon,
+        axis: Literal["x", "y"],
+        *,
+        scan_steps: int = 48,
+    ) -> float | None:
+        """Return the coordinate along *axis* where the polygon is narrowest.
+
+        Returns None if no meaningful narrowing exists (e.g. a plain rectangle).
+        """
+        min_x, min_y, max_x, max_y = polygon.bounds
+        lower = min_x if axis == "x" else min_y
+        upper = max_x if axis == "x" else max_y
+        span = upper - lower
+        if span < 1.0:
+            return None
+
+        pad = max(max_x - min_x, max_y - min_y, 1000.0)
+        widths: list[tuple[float, float]] = []
+
+        for i in range(1, scan_steps):
+            pos = lower + (i / scan_steps) * span
+            if axis == "x":
+                slab = box(pos - 1, min_y - pad, pos + 1, max_y + pad)
+                intersect = polygon.intersection(slab)
+                if intersect.is_empty:
+                    continue
+                b = intersect.bounds
+                width = b[3] - b[1]
+            else:
+                slab = box(min_x - pad, pos - 1, max_x + pad, pos + 1)
+                intersect = polygon.intersection(slab)
+                if intersect.is_empty:
+                    continue
+                b = intersect.bounds
+                width = b[2] - b[0]
+            if width > 0:
+                widths.append((pos, width))
+
+        if not widths:
+            return None
+
+        avg_width = sum(w for _, w in widths) / len(widths)
+        min_pos, min_width = min(widths, key=lambda pw: pw[1])
+
+        if min_width > avg_width * _CHOKEPOINT_NARROWING_THRESHOLD:
+            return None
+
+        return min_pos
+
     def _split_polygon_by_ratio(
         self,
         polygon: Polygon,
@@ -409,8 +644,54 @@ class CoordinateNormalizationService:
         min_x, min_y, max_x, max_y = polygon.bounds
         width = max_x - min_x
         height = max_y - min_y
-        axes = ["x", "y"] if width >= height else ["y", "x"]
+        axes: list[Literal["x", "y"]] = ["x", "y"] if width >= height else ["y", "x"]
+
+        # ── Step 1: try concave-vertex cuts ───────────────────────────────────
+        # For L-shaped or staircase rooms, cutting at a concave vertex's axis-
+        # coordinate produces two rectangular (or more-rectangular) sub-rooms,
+        # which are much easier to furnish than two L-shapes.
+        best_concave: tuple[Polygon, Polygon] | None = None
+        best_concave_score: float = -1.0
+        for axis, cut in _concave_vertex_cuts(polygon):
+            pair = self._clip_polygon_pair(polygon, axis=axis, cut=cut)
+            first, second = pair
+            if first is None or second is None:
+                continue
+            if first.area < second.area:
+                first, second = second, first
+            total = first.area + second.area
+            if total <= 0:
+                continue
+            actual_ratio = first.area / total
+            ratio_error = abs(actual_ratio - ratio)
+            if ratio_error > _CONCAVE_SPLIT_RATIO_TOLERANCE:
+                continue
+            # Score: reward rectangularity of both pieces, penalise ratio error.
+            score = (
+                0.5 * _polygon_rectangularity(first)
+                + 0.5 * _polygon_rectangularity(second)
+                - ratio_error
+            )
+            if score > best_concave_score:
+                best_concave_score = score
+                best_concave = (first, second)
+
+        if best_concave is not None:
+            return best_concave
+
+        # ── Step 2: chokepoint + ratio-binary-search (existing logic) ─────────
         for axis in axes:
+            chokepoint = self._find_natural_chokepoint(polygon, axis)
+            if chokepoint is not None:
+                pair = self._clip_polygon_pair(polygon, axis=axis, cut=chokepoint)
+                first, second = pair
+                if first is not None and second is not None:
+                    if first.area < second.area:
+                        first, second = second, first
+                    total = first.area + second.area
+                    if total > 0 and abs(first.area / total - ratio) <= _CHOKEPOINT_RATIO_TOLERANCE:
+                        return first, second
+
             result = self._split_polygon_along_axis(polygon, axis=axis, ratio=ratio)
             if result is not None:
                 return result
@@ -499,6 +780,13 @@ class CoordinateNormalizationService:
             if len(polygons) != 1:
                 return None
             return polygons[0]
+        # GeometryCollection can result when a cut passes through a polygon vertex
+        # (Shapely emits polygon + degenerate edges). Extract the polygon component.
+        geoms = getattr(geometry, "geoms", None)
+        if geoms is not None:
+            polygons = [g for g in geoms if isinstance(g, Polygon) and g.area > 1.0]
+            if len(polygons) == 1:
+                return polygons[0]
         return None
 
     def _split_child_room(

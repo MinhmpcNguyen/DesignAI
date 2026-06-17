@@ -10,6 +10,7 @@ from layout.room_profiles.base import RoomProfile, normalize_profile_token
 from layout.room_profiles.kitchen import KITCHEN_PROFILE
 from layout.room_profiles.legacy import (
     BEDROOM_LEGACY_PROFILE,
+    COMBINED_LIVING_KITCHEN_PROFILE,
     LIVING_ROOM_LEGACY_PROFILE,
 )
 
@@ -17,6 +18,7 @@ ROOM_PROFILES: tuple[RoomProfile, ...] = (
     KITCHEN_PROFILE,
     BEDROOM_LEGACY_PROFILE,
     LIVING_ROOM_LEGACY_PROFILE,
+    COMBINED_LIVING_KITCHEN_PROFILE,
 )
 _PROFILE_READINESS_MIN_COVERAGE = 1.0
 _PROFILE_READINESS_MIN_TRAIT_COVERAGE = 1.0

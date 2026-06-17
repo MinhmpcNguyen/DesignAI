@@ -163,11 +163,12 @@ _KITCHEN_SIZE_PROFILES: dict[str, dict[str, Any]] = {
             "L": {"L": 2.20, "W": 1.00, "A": 2.20},
         }
     },
+    # Budget footprint 1.1× table để tính chỗ cho ghế xung quanh.
     "dining_table": {
         "rep_dims_m": {
-            "S": {"L": 0.70, "W": 0.65, "A": 0.46},
-            "M": {"L": 0.90, "W": 0.70, "A": 0.63},
-            "L": {"L": 1.10, "W": 0.75, "A": 0.83},
+            "S": {"L": 0.77, "W": 0.72, "A": 0.55},
+            "M": {"L": 0.99, "W": 0.77, "A": 0.76},
+            "L": {"L": 1.21, "W": 0.83, "A": 1.00},
         }
     },
     "dining_chair": {
@@ -494,12 +495,12 @@ _KITCHEN_SEMANTIC_ROOM_RULE: dict[str, Any] = {
                     },
                     {
                         "object_type": "dining_chair",
-                        "min_keep": 4,
+                        "min_keep": 0,
                         "max_keep": 4,
-                        "keep_if_space_surplus": False,
+                        "keep_if_space_surplus": True,
                         "space_surplus_threshold": 0.0,
-                        "drop_order_bias": "drop_last",
-                        "preserve_level": "high",
+                        "drop_order_bias": "drop_first",
+                        "preserve_level": "medium",
                         "preferred_size_tier": "S",
                     },
                 ],

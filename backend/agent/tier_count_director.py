@@ -264,6 +264,26 @@ EXCLUSIVE_FAMILY_DEFAULT_RANK: dict[str, int] = {
     "sectional_sofa": 1,
 }
 
+_REQUESTED_DIM_DEFAULT_WIDTH_M: dict[str, float] = {
+    "coffee_table": 0.60,
+    "console_table": 0.40,
+    "rug": 1.60,
+    "sectional_sofa": 1.60,
+    "sofa": 0.95,
+    "storage_cabinet": 0.40,
+    "tv_console": 0.40,
+}
+_REQUESTED_DIM_DEFAULT_HEIGHT_M: dict[str, float] = {
+    "coffee_table": 0.40,
+    "console_table": 0.85,
+    "floor_lamp": 1.60,
+    "rug": 0.02,
+    "sectional_sofa": 0.80,
+    "sofa": 0.80,
+    "storage_cabinet": 0.85,
+    "tv_console": 0.45,
+}
+
 
 def _run_hardcoded_tier_count(
     *,
@@ -624,7 +644,7 @@ def _apply_style_policy_to_capacity_model(
         out["center_openness_weight"] = "very_high"
         out["circulation_penalty_weight"] = "very_high"
     if _style_level(layout_policy.get("clutter_tolerance")) <= 1:
-        density_ratio = min(density_ratio, 0.32)
+        density_ratio = min(density_ratio, 0.38)
     if _style_level(layout_policy.get("clutter_tolerance")) >= 3:
         density_ratio = max(density_ratio, 0.40)
     density_ratio = max(0.22, min(0.64, density_ratio))
@@ -1220,10 +1240,7 @@ def _apply_request_contract_to_object(
     *,
     request_contract: dict[str, Any],
 ) -> dict[str, Any]:
-    item = contract_item_for_object_type(
-        request_contract,
-        str(obj.get("base_type") or obj.get("object_type") or ""),
-    )
+    item = _contract_item_for_tier_object(obj, request_contract=request_contract)
     if item is None:
         return obj
     if (
@@ -1240,6 +1257,10 @@ def _apply_request_contract_to_object(
     out["request_contract_reason"] = str(item.get("reason") or "")
     out["request_contract_evidence"] = str(item.get("evidence") or "")
     out["request_contract_target_count"] = target_count
+    # Propagate user-specified dimensions so tier selection can use them
+    dims_mm = item.get("requested_dims_mm")
+    if isinstance(dims_mm, dict) and dims_mm:
+        out["requested_dims_mm"] = dims_mm
     compact_original_intent = str(item.get("compact_bedroom_original_intent") or "")
     if compact_original_intent:
         out["compact_bedroom_original_intent"] = compact_original_intent
@@ -1319,6 +1340,22 @@ def _apply_request_contract_to_object(
     if str(out.get("role") or "") in {"optional", "decor_light"}:
         out["role"] = "support"
     return out
+
+
+def _contract_item_for_tier_object(
+    obj: dict[str, Any],
+    *,
+    request_contract: dict[str, Any],
+) -> dict[str, Any] | None:
+    object_type = str(obj.get("object_type") or obj.get("base_type") or "")
+    item = contract_item_for_object_type(request_contract, object_type)
+    if item is not None:
+        return item
+
+    base_type = str(obj.get("base_type") or _profile_category_for_member(object_type))
+    if base_type == "sectional_sofa":
+        return contract_item_for_object_type(request_contract, "sofa")
+    return None
 
 
 def _apply_request_contract_to_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -1548,15 +1585,33 @@ def _exclusive_family_requested_type(
             str(item.get("object_type") or "")
         )
         evidence = str(item.get("evidence") or "").lower()
-        if "sectional" in evidence and "sectional_sofa" in family_types:
-            candidates.append((0, index, "sectional_sofa"))
-            continue
         if requested_type in family_types:
-            candidates.append((1, index, requested_type))
+            candidates.append((0, index, requested_type))
+            continue
+        if (
+            _evidence_requests_sectional_sofa(evidence)
+            and "sectional_sofa" in family_types
+        ):
+            candidates.append((1, index, "sectional_sofa"))
 
     if not candidates:
         return ""
     return sorted(candidates)[0][2]
+
+
+def _evidence_requests_sectional_sofa(evidence: str) -> bool:
+    key = evidence.replace("-", " ").replace("_", " ")
+    return any(
+        token in key
+        for token in (
+            "sectional",
+            "l shaped",
+            "l shape",
+            "chu l",
+            "goc",
+            "corner sofa",
+        )
+    )
 
 
 def _drop_exclusive_family_object(
@@ -2361,6 +2416,9 @@ def _select_inventory_decision_program(
                     key: round(float(value), 3) for key, value in score.items()
                 },
             }
+            requested_dims = obj.get("requested_dims_mm")
+            if isinstance(requested_dims, dict) and requested_dims:
+                decision_object["requested_dims_mm"] = dict(requested_dims)
             _copy_exclusive_family_trace(obj, decision_object)
             _copy_compact_bedroom_trace(obj, decision_object)
             bundle_decision["objects"].append(decision_object)
@@ -2415,6 +2473,8 @@ def _select_inventory_decision_program(
                 "rationale": reason,
                 "utility_score": round(float(score["total"]), 3),
             }
+            if isinstance(requested_dims, dict) and requested_dims:
+                decision_row["requested_dims_mm"] = dict(requested_dims)
             _copy_exclusive_family_trace(obj, decision_row)
             _copy_compact_bedroom_trace(obj, decision_row)
             decisions.append(decision_row)
@@ -3218,6 +3278,20 @@ def _score_size_tier(
     hinted_preferred = _tier_count_size_tier(obj.get("preferred_size_tier"))
     if hinted_preferred is not None:
         preferred = hinted_preferred
+
+    # If the user explicitly specified dimensions for this object, derive the
+    # preferred tier from dimensional proximity — this overrides the generic
+    # heuristics but is subordinate to a directly-set preferred_size_tier.
+    dims_mm = obj.get("requested_dims_mm")
+    dim_preferred: str | None = None
+    if isinstance(dims_mm, dict) and dims_mm and hinted_preferred is None:
+        dim_preferred = _tier_for_requested_dims(
+            dims_mm, obj, size_profiles_by_category
+        )
+        if dim_preferred is not None:
+            hinted_preferred = dim_preferred
+            preferred = dim_preferred
+
     if (
         role == "dominant_anchor"
         and room_scale == "large"
@@ -3238,9 +3312,11 @@ def _score_size_tier(
     dominance = 1.0 if tier == preferred else 0.35
     if hinted_preferred is not None:
         if tier == hinted_preferred:
-            dominance += 0.45
+            # Dimension-derived hints get a stronger bonus than generic hints
+            # because the user explicitly stated the size they want.
+            dominance += 0.65 if dim_preferred is not None else 0.45
         else:
-            dominance -= 0.25
+            dominance -= 0.35 if dim_preferred is not None else 0.25
     if (
         role not in {"dominant_anchor", "workflow_anchor"}
         and tier == "L"
@@ -3267,6 +3343,53 @@ def _available_tiers_for_object(
         return ["S", "M", "L"]
     tiers = [tier for tier in ("S", "M", "L") if isinstance(rep_dims.get(tier), dict)]
     return tiers or ["S", "M", "L"]
+
+
+def _tier_for_requested_dims(
+    dims_mm: dict[str, Any],
+    obj: dict[str, Any],
+    size_profiles_by_category: dict[str, Any],
+) -> str | None:
+    """Return the size tier whose catalog representative dimensions are closest
+    to the user-requested dimensions.
+
+    Only the length dimension is required; width is used as a secondary signal
+    when present.  The function ignores screen_diagonal_inch (TV) because TVs
+    are selected by model type, not footprint tier.
+    """
+    req_l_mm = float(dims_mm.get("L_mm", 0))
+    if req_l_mm <= 0:
+        return None
+    req_w_mm = float(dims_mm.get("W_mm", 0))  # 0 means "not specified"
+
+    profile = _profile_for_object(obj, size_profiles_by_category)
+    rep_dims = profile.get("rep_dims_m") if isinstance(profile, dict) else None
+    if not isinstance(rep_dims, dict):
+        return None
+
+    best_tier: str | None = None
+    best_score = float("inf")
+    for tier in ("S", "M", "L"):
+        d = rep_dims.get(tier)
+        if not isinstance(d, dict):
+            continue
+        cat_l_mm = float(d.get("L", 0)) * 1000.0  # profile stores in metres
+        cat_w_mm = float(d.get("W", 0)) * 1000.0
+        if cat_l_mm <= 0:
+            continue
+        # Normalise distance by the requested dimension so large furniture
+        # differences don't overshadow small furniture.
+        l_dist = abs(cat_l_mm - req_l_mm) / max(req_l_mm, 1.0)
+        w_dist = (
+            abs(cat_w_mm - req_w_mm) / max(req_w_mm, 1.0)
+            if req_w_mm > 0 and cat_w_mm > 0
+            else 0.0
+        )
+        score = l_dist + w_dist * 0.6
+        if score < best_score:
+            best_score = score
+            best_tier = tier
+    return best_tier
 
 
 def _tier_tiebreak(tier: str) -> int:
@@ -5347,7 +5470,11 @@ def _build_ok_result(
         final_decisions=decisions,
         size_profiles_by_category=size_profiles_by_category,
     )
-    result = _merge_recommended_decisions_into_draft(base_draft, trial_decisions)
+    min_keep_decisions, min_keep_restores = _restore_hard_request_min_keep_decisions(
+        draft_decisions=draft_decisions,
+        final_decisions=trial_decisions,
+    )
+    result = _merge_recommended_decisions_into_draft(base_draft, min_keep_decisions)
     result["status"] = "OK"
     result["budget_valid"] = True
     if budget_mode:
@@ -5356,6 +5483,8 @@ def _build_ok_result(
         )
     if trial_restores:
         result["budget_trial_restores"] = trial_restores
+    if min_keep_restores:
+        result["request_contract_min_keep_restores"] = min_keep_restores
     if isinstance(size_profiles_by_category, dict):
         _attach_rep_dims(result, size_profiles_by_category)
     _refresh_budget_adjusted_trace(result, draft_decisions=draft_decisions)
@@ -5739,6 +5868,69 @@ def _restore_solver_trial_decisions(
                     "reason": restored["budget_restore_reason"],
                 }
             )
+
+    if not restore_by_key:
+        return final_rows, []
+
+    out: list[dict[str, Any]] = []
+    emitted: set[tuple[str, str]] = set()
+    for row in final_rows:
+        key = _decision_key(row)
+        if key is not None and key in restore_by_key:
+            out.append(dict(restore_by_key[key]))
+            emitted.add(key)
+        else:
+            out.append(dict(row))
+            if key is not None:
+                emitted.add(key)
+    for key, row in restore_by_key.items():
+        if key not in emitted:
+            out.append(dict(row))
+    return out, restores
+
+
+def _restore_hard_request_min_keep_decisions(
+    *,
+    draft_decisions: list[dict[str, Any]],
+    final_decisions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    final_rows = _decision_rows(final_decisions)
+    final_by_key, _ = _final_decision_maps(final_rows)
+    restore_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    restores: list[dict[str, Any]] = []
+
+    for draft in draft_decisions:
+        intent = str(draft.get("request_contract_intent") or "")
+        if intent not in _HARD_REQUEST_CONTRACT_INTENTS:
+            continue
+        min_keep = _decision_min_keep(draft)
+        if min_keep <= 0:
+            continue
+        key = _decision_key(draft)
+        if key is None:
+            continue
+        final = final_by_key.get(key, {})
+        if _decision_quantity(final) >= min_keep:
+            continue
+
+        restored = dict(final if final else draft)
+        restored["quantity"] = min_keep
+        restored["min_keep"] = max(min_keep, _decision_min_keep(restored))
+        restored["protected"] = True
+        restored["droppable"] = False
+        restored["budget_adjusted"] = True
+        restored["request_contract_restore_reason"] = (
+            "restored to requested min_keep after budget recommendation"
+        )
+        restore_by_key[key] = restored
+        restores.append(
+            {
+                "cluster_id": key[0],
+                "object_type": key[1],
+                "quantity": min_keep,
+                "reason": restored["request_contract_restore_reason"],
+            }
+        )
 
     if not restore_by_key:
         return final_rows, []
@@ -6388,7 +6580,60 @@ def _attach_rep_dims(
 
         rep = (profile.get("rep_dims_m") or {}).get(tier.upper())
         if isinstance(rep, dict):
-            d["rep_dims_m"] = rep
+            d["rep_dims_m"] = _rep_dims_with_requested_size(d, rep)
+            continue
+
+        requested_rep = _rep_dims_with_requested_size(d, {})
+        if requested_rep:
+            d["rep_dims_m"] = requested_rep
+
+
+def _rep_dims_with_requested_size(
+    decision: dict[str, Any],
+    rep_dims: dict[str, Any],
+) -> dict[str, Any]:
+    out = dict(rep_dims)
+    dims_mm = decision.get("requested_dims_mm")
+    if not isinstance(dims_mm, dict) or not dims_mm:
+        return out
+    if dims_mm.get("screen_diagonal_inch") and not (
+        dims_mm.get("L_mm") or dims_mm.get("W_mm")
+    ):
+        return out
+
+    object_type = _profile_category_for_member(
+        str(decision.get("object_type") or decision.get("category") or "")
+    )
+    length_m = _positive_float(dims_mm.get("L_mm")) / 1000.0
+    width_m = _positive_float(dims_mm.get("W_mm")) / 1000.0
+    if length_m > 0:
+        out["L"] = round(length_m, 6)
+    if width_m > 0:
+        out["W"] = round(width_m, 6)
+    elif _positive_float(out.get("W")) <= 0:
+        default_width = _REQUESTED_DIM_DEFAULT_WIDTH_M.get(object_type)
+        if default_width is not None:
+            out["W"] = default_width
+
+    if _positive_float(out.get("H")) <= 0:
+        default_height = _REQUESTED_DIM_DEFAULT_HEIGHT_M.get(object_type)
+        if default_height is not None:
+            out["H"] = default_height
+
+    length = _positive_float(out.get("L"))
+    width = _positive_float(out.get("W"))
+    if length > 0 and width > 0:
+        out["A"] = round(length * width, 6)
+        out["R"] = round(length / width, 6) if width > 0 else out.get("R")
+    return out
+
+
+def _positive_float(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return parsed if parsed > 0 else 0.0
 
 
 def _extract_categories_from_decisions(result: dict[str, Any]) -> list[str]:

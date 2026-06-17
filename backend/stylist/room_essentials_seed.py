@@ -221,12 +221,10 @@ ROOM_SURFACE_GROUPS: dict[str, dict[str, Any]] = {
                 "projector",
             ],
             "side_table": [
-                "table_lamp",
                 "plant",
                 "smart_speaker",
             ],
             "console_table": [
-                "mirror",
                 "decor",
             ],
             "coffee_table": [
@@ -576,6 +574,79 @@ ROOM_SURFACE_GROUPS: dict[str, dict[str, Any]] = {
                 "wall_sconce",
                 "kitchen_wall_cabinet",
                 "range_hood",
+                "air_conditioner",
+            ],
+            "__ceiling__": [
+                "ceiling_light",
+                "pendant_light",
+                "track_light",
+            ],
+        },
+    },
+    "combined_living_kitchen": {
+        "no_stack": [
+            # living
+            "sofa",
+            "sectional_sofa",
+            "armchair",
+            "ottoman",
+            "coffee_table",
+            "side_table",
+            "tv_console",
+            "floor_lamp",
+            # kitchen
+            "kitchen_base_cabinet",
+            "kitchen_tall_cabinet",
+            "kitchen_island",
+            "fridge",
+            "stove",
+            "sink",
+            "dishwasher",
+            "dining_table",
+            "dining_chair",
+        ],
+        "can_stack_or_be_stacked_or_hang_or_soft": {
+            "sofa": [
+                "rug",
+                "cushion",
+                "throw_blanket",
+            ],
+            "tv_console": [
+                "tv",
+                "speaker",
+            ],
+            "side_table": [
+                "plant",
+                "smart_speaker",
+            ],
+            "coffee_table": [
+                "vase",
+            ],
+            "stove": [
+                "range_hood",
+            ],
+            "kitchen_tall_cabinet": [
+                "oven",
+            ],
+            "kitchen_base_cabinet": [
+                "cooktop",
+                "microwave",
+                "rice_cooker",
+                "electric_kettle",
+                "coffee_machine",
+            ],
+            "kitchen_island": [
+                "decor",
+                "vase",
+            ],
+            "dining_table": [
+                "decor",
+                "vase",
+            ],
+            "__wall__": [
+                "kitchen_wall_cabinet",
+                "wall_art",
+                "clock",
                 "air_conditioner",
             ],
             "__ceiling__": [

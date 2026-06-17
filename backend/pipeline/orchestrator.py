@@ -78,6 +78,11 @@ _PRIMARY_SEED_CACHE_VERSION = "v1"
 _PRIMARY_SEED_LAYOUT_CACHE: dict[str, dict[str, Any]] = {}
 _LAYOUT_SPEED_MODE_ENV = "TKNT_LAYOUT_SPEED_MODE"
 _KITCHEN_NO_STOVE_SINK_ENV = "TKNT_KITCHEN_NO_STOVE_SINK"
+_MEDIUM_LIVING_ROOM_AREA_M2 = 18.0
+_LARGE_LIVING_ROOM_AREA_M2 = 24.0
+_MEDIUM_LIVING_ROOM_EXTRA_CONCEPTS = 3
+_LARGE_LIVING_ROOM_EXTRA_CONCEPTS = 5
+_MAX_LIVING_ROOM_PLANNING_CONCEPTS = 14
 _KITCHEN_ALLOWED_NO_STOVE_SINK_TYPES: frozenset[str] = frozenset(
     {"dining_chair", "dining_table", "fridge", "kitchen_base_cabinet"}
 )
@@ -509,15 +514,15 @@ def _force_no_stove_sink_kitchen_decision(row: dict[str, Any]) -> dict[str, Any]
     out["quantity"] = 1
     out["size_tier"] = "S"
     out["priority"] = "anchor"
-    out["preserve_level"] = "highest"
-    out["protected"] = True
-    out["droppable"] = False
+    out["preserve_level"] = "high"
+    out["protected"] = False
+    out["droppable"] = True
     out["drop_order_bias"] = "drop_last"
-    out["min_keep"] = 1
+    out["min_keep"] = 0
     out["max_keep"] = 1
-    out["keep_if_space_surplus"] = False
-    out["space_surplus_threshold"] = 0.0
-    out["request_contract_intent"] = "must_keep"
+    out["keep_if_space_surplus"] = True
+    out["space_surplus_threshold"] = 0.35
+    out["request_contract_intent"] = "should_keep"
     out["request_contract_reason"] = "required by no-stove-sink kitchen mode"
     out["request_contract_evidence"] = "Tủ bếp Rustic"
     out["request_contract_target_count"] = 1
@@ -1154,6 +1159,369 @@ def _room_fill_ratio(room_output: dict[str, Any]) -> float:
     return max(0.0, min(1.0, polygon_area / bbox_area))
 
 
+# ── Graceful degradation: essential furniture per room type ────────────────
+# P1 = phải có (solver phải đặt thành công)
+# P2 = quan trọng (thử đặt, nếu không được thì bỏ)
+_ROOM_ESSENTIAL_TYPES: dict[str, frozenset[str]] = {
+    "combined_living_kitchen": frozenset(
+        {
+            "sofa",
+            "sectional",
+            "loveseat",
+            "couch",
+            "tv_console",
+            "kitchen_base_cabinet",
+            "fridge",
+            "stove",
+            "sink",
+        }
+    ),
+    "bedroom": frozenset(
+        {
+            "bed",
+            "single_bed",
+            "double_bed",
+            "queen_bed",
+            "king_bed",
+            "bunk_bed",
+            "giuong",
+            "bed_frame",
+        }
+    ),
+    "living_room": frozenset(
+        {
+            "sofa",
+            "sectional",
+            "loveseat",
+            "couch",
+            "tv_console",
+            "tv_stand",
+            "media_console",
+            "ke_tv",
+            "ke_tivi",
+        }
+    ),
+    "kitchen": frozenset(
+        {
+            "kitchen_base_cabinet",
+            "kitchen_cabinet",
+            "tu_bep",
+            "fridge",
+            "refrigerator",
+            "tu_lanh",
+        }
+    ),
+    "dining_room": frozenset(
+        {
+            "dining_table",
+            "ban_an",
+            "table",
+        }
+    ),
+    "bathroom": frozenset(),  # không cần đặt đồ nội thất
+}
+
+
+def _essential_types_for_room(room_type: str | None) -> frozenset[str]:
+    if not room_type:
+        return (
+            frozenset()
+        )  # unknown → caller should use _infer_essential_types_from_clusters
+    key = room_type.strip().lower().replace("-", "_").replace(" ", "_")
+    for pattern, types in _ROOM_ESSENTIAL_TYPES.items():
+        if key == pattern or key.startswith(pattern) or pattern in key:
+            return types
+    return frozenset()  # unrecognized room type → infer from clusters
+
+
+def _infer_essential_types_from_clusters(
+    merged_output: dict[str, Any],
+) -> frozenset[str]:
+    """Infer essential furniture types by scanning cluster members."""
+    for cluster in merged_output.get("clusters") or []:
+        if not isinstance(cluster, dict):
+            continue
+        tag = str(cluster.get("tag") or cluster.get("cluster_tag") or "").lower()
+        cluster_id = str(cluster.get("cluster_id") or "").lower()
+        members = cluster.get("members") or []
+        member_strs = [
+            (m.get("object_id") or m.get("object_type") or str(m)).lower()
+            if isinstance(m, dict)
+            else str(m).lower()
+            for m in members
+        ]
+        # Bedroom
+        if (
+            "sleep" in tag
+            or "sleep" in cluster_id
+            or any("bed" in m for m in member_strs)
+        ):
+            return _ROOM_ESSENTIAL_TYPES["bedroom"]
+        # Kitchen
+        if (
+            "kitchen" in tag
+            or "kitchen" in cluster_id
+            or any("kitchen" in m or "fridge" in m for m in member_strs)
+        ):
+            return _ROOM_ESSENTIAL_TYPES["kitchen"]
+        # Living
+        if (
+            "living" in tag
+            or "living" in cluster_id
+            or any("sofa" in m or "tv_console" in m for m in member_strs)
+        ):
+            return _ROOM_ESSENTIAL_TYPES["living_room"]
+    # Default: try to place anything that's already in clusters
+    return frozenset()
+
+
+def _cluster_contains_essential(
+    cluster: dict[str, Any],
+    essential_types: frozenset[str],
+) -> bool:
+    members = cluster.get("members") or []
+    for member in members:
+        member_id = (
+            member.get("object_id") or member.get("object_type") or str(member)
+            if isinstance(member, dict)
+            else str(member)
+        )
+        key = member_id.strip().lower().replace("-", "_").replace(" ", "_")
+        if key in essential_types:
+            return True
+        # strip trailing number suffix: kitchen_base_cabinet_2 → kitchen_base_cabinet
+        import re as _re
+
+        base = _re.sub(r"_\d+$", "", key)
+        if base in essential_types:
+            return True
+    return False
+
+
+def _filter_clusters_to_ids(
+    output: dict[str, Any],
+    cluster_ids: set[str],
+) -> dict[str, Any]:
+    """Filter any dict with 'clusters' list to only keep clusters in cluster_ids."""
+    clusters = output.get("clusters") or []
+    kept = [
+        c
+        for c in clusters
+        if isinstance(c, dict) and c.get("cluster_id") in cluster_ids
+    ]
+    result = dict(output)
+    result["clusters"] = kept
+    result["active_cluster_ids"] = [
+        cid for cid in (output.get("active_cluster_ids") or []) if cid in cluster_ids
+    ]
+    return result
+
+
+def _filter_merged_to_essential(
+    merged_output: dict[str, Any],
+    essential_types: frozenset[str],
+) -> dict[str, Any] | None:
+    """Return merged_output keeping only clusters that contain essential items."""
+    if not essential_types:
+        return None
+    clusters = merged_output.get("clusters") or []
+    essential_clusters = [
+        c
+        for c in clusters
+        if isinstance(c, dict) and _cluster_contains_essential(c, essential_types)
+    ]
+    if not essential_clusters or len(essential_clusters) == len(clusters):
+        return None  # nothing to filter
+    essential_ids = {c["cluster_id"] for c in essential_clusters if isinstance(c, dict)}
+    result = dict(merged_output)
+    result["clusters"] = essential_clusters
+    result["active_cluster_ids"] = [
+        cid
+        for cid in (merged_output.get("active_cluster_ids") or [])
+        if cid in essential_ids
+    ]
+    return result
+
+
+def _relax_relation_plan_to_essential(
+    relation_plan: dict[str, Any],
+    essential_cluster_ids: set[str],
+) -> dict[str, Any]:
+    """Mark non-essential clusters as optional in relation_plan zone_plan."""
+    concept_key = None
+    for key in ("macro_concept", "concept", "layout_concept"):
+        if isinstance(relation_plan.get(key), dict):
+            concept_key = key
+            break
+    target = relation_plan.get(concept_key) if concept_key else relation_plan
+    if not isinstance(target, dict):
+        return relation_plan
+    zone_plan = target.get("cluster_zone_plan")
+    if not isinstance(zone_plan, list):
+        return relation_plan
+    new_zone_plan = [
+        {**row, "priority": "optional"}
+        if isinstance(row, dict)
+        and str(row.get("cluster_id") or "") not in essential_cluster_ids
+        else row
+        for row in zone_plan
+    ]
+    updated_target = {**target, "cluster_zone_plan": new_zone_plan}
+    if concept_key:
+        return {**relation_plan, concept_key: updated_target}
+    return updated_target
+
+
+_CLUSTER_ROLE_KIND_FROM_TAG: dict[str, str] = {
+    "sleep": "sleep",
+    "bedroom": "sleep",
+    "living": "social_anchor",
+    "living_media": "media",
+    "media": "media",
+    "kitchen": "kitchen",
+    "dining": "dining",
+    "work": "work",
+    "storage": "storage",
+}
+
+_FALLBACK_ZONE_SEQUENCES = [
+    "top_wall_zone",
+    "bottom_wall_zone",
+    "left_wall_zone",
+    "right_wall_zone",
+    "floating_center_zone",
+]
+
+
+def _build_essential_fallback_concepts(
+    essential_cluster_ids: set[str],
+    merged_output: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Tạo synthetic concepts đơn giản chỉ chứa essential clusters."""
+    if not essential_cluster_ids:
+        return []
+    cluster_map = {
+        c["cluster_id"]: c
+        for c in (merged_output.get("clusters") or [])
+        if isinstance(c, dict) and c.get("cluster_id") in essential_cluster_ids
+    }
+    concepts: list[dict[str, Any]] = []
+    for zone in _FALLBACK_ZONE_SEQUENCES[:3]:
+        zone_plan = []
+        for cid in essential_cluster_ids:
+            cluster = cluster_map.get(cid, {})
+            tag = str(cluster.get("tag") or cid).lower()
+            role_kind = next(
+                (v for k, v in _CLUSTER_ROLE_KIND_FROM_TAG.items() if k in tag),
+                "support",
+            )
+            zone_plan.append(
+                {
+                    "cluster_id": cid,
+                    "priority": "core",
+                    "zone_assignment": zone,
+                    "role_kind": role_kind,
+                    "semantic_role": role_kind,
+                }
+            )
+        concepts.append(
+            {
+                "concept_id": f"essential_fallback_{zone}",
+                "concept_family": "focal_axis",
+                "concept_score_prior": 0.5,
+                "cluster_zone_plan": zone_plan,
+            }
+        )
+    return concepts
+
+
+_DINING_CLUSTER_TOKENS = frozenset(
+    {"dining", "dining_table", "ban_an", "kitchen_dining"}
+)
+
+
+def _is_dining_cluster_id(cluster_id: str) -> bool:
+    key = cluster_id.strip().lower()
+    return any(token in key for token in _DINING_CLUSTER_TOKENS)
+
+
+def _push_dining_cluster_last(relation_plan: dict[str, Any]) -> dict[str, Any]:
+    """Set dining cluster priority to 'support' so solver places it after core clusters."""
+    concept_key = None
+    concept_value = None
+    for key in ("concept", "macro_concept", "layout_concept"):
+        if isinstance(relation_plan.get(key), dict):
+            concept_key = key
+            concept_value = dict(relation_plan[key])
+            break
+
+    target = concept_value if concept_value is not None else relation_plan
+    zone_plan = target.get("cluster_zone_plan")
+    if not isinstance(zone_plan, list):
+        return relation_plan
+
+    updated_zone_plan = []
+    changed = False
+    for row in zone_plan:
+        if not isinstance(row, dict):
+            updated_zone_plan.append(row)
+            continue
+        cid = str(row.get("cluster_id") or "").strip()
+        if _is_dining_cluster_id(cid):
+            updated_row = dict(row)
+            updated_row["priority"] = "support"
+            updated_zone_plan.append(updated_row)
+            changed = True
+        else:
+            updated_zone_plan.append(row)
+
+    if not changed:
+        return relation_plan
+
+    updated_target = dict(target)
+    updated_target["cluster_zone_plan"] = updated_zone_plan
+
+    if concept_key is not None:
+        result = dict(relation_plan)
+        result[concept_key] = updated_target
+        return result
+    return updated_target
+
+
+def _force_kitchen_dining_chair_count(
+    tier_output: dict[str, Any],
+    *,
+    count: int = 6,
+) -> dict[str, Any]:
+    """Force dining_chair quantity to `count` in kitchen tier output."""
+    decisions = tier_output.get("decisions")
+    if not isinstance(decisions, list):
+        return tier_output
+    updated = False
+    new_decisions = []
+    for decision in decisions:
+        if not isinstance(decision, dict):
+            new_decisions.append(decision)
+            continue
+        category = str(decision.get("category") or decision.get("object_type") or "")
+        if "dining_chair" in category.lower():
+            d = dict(decision)
+            d["quantity"] = count
+            d["recommended_quantity"] = count
+            d["min_keep"] = 0
+            d["droppable"] = True
+            d["keep_if_space_surplus"] = True
+            new_decisions.append(d)
+            updated = True
+        else:
+            new_decisions.append(decision)
+    if not updated:
+        return tier_output
+    result = dict(tier_output)
+    result["decisions"] = new_decisions
+    return result
+
+
 _SOLVER_REASON_VI: dict[str, str] = {
     "required_clusters_without_candidates": (
         "Một số nhóm đồ nội thất không thể đặt vào phòng này."
@@ -1376,6 +1744,8 @@ def run_case(
         mode=resolved_ablation_mode,
         tier_output=tier_output,
     )
+    if room_type == "kitchen":
+        tier_output = _force_kitchen_dining_chair_count(tier_output, count=4)
     _write_module_json(
         paths, "tier_count_director", tier_output, legacy_path=paths.tier_count
     )
@@ -1387,20 +1757,28 @@ def run_case(
         paths, "cluster_output_merger", merged_output, legacy_path=paths.cluster_merged
     )
 
-    target_final_count = target_final_count_for_mode(resolved_ablation_mode, 5)
+    _default_final_count = 3 if room_type == "kitchen" else 5
+    target_final_count = target_final_count_for_mode(
+        resolved_ablation_mode, _default_final_count
+    )
+    planning_concept_count = _planning_concept_count(
+        room_type=room_type,
+        room_output=room_output,
+        target_final_count=target_final_count,
+    )
     _update_status(
         paths,
         "cluster_relation_planner",
         message=_variant_progress_message(
-            "Planning layout concepts", 0, target_final_count
+            "Planning layout concepts", 0, planning_concept_count
         ),
         progress_current=0,
-        progress_total=target_final_count,
+        progress_total=planning_concept_count,
     )
     seed_relation_plans = relation_planner.generate_bundle(
         room_model_json=room_output,
         clusters_json=merged_output,
-        target_count=target_final_count,
+        target_count=planning_concept_count,
         description=planning_guidance_text or None,
     )
     seed_relation_plans = _strip_raw_text(seed_relation_plans)
@@ -1428,13 +1806,26 @@ def run_case(
 
     solved_bundles: list[dict[str, Any]] = []
     failed_solver_outputs: list[dict[str, Any]] = []
-    for concept_index, concept in enumerate(concepts[:target_final_count], start=1):
+    # Allow collecting up to (target_final_count * 3) raw solved bundles before
+    # stopping early.  This gives the downstream diversity-filter enough candidate
+    # material to pick truly distinct layouts (e.g. sofa on different walls).
+    # For non-living rooms the original 1× budget is enough.
+    _raw_bundle_cap = (
+        target_final_count * 3
+        if room_type in {"living", "combined_living_kitchen"}
+        else target_final_count
+    )
+    for concept_index, concept in enumerate(concepts[:planning_concept_count], start=1):
+        if len(solved_bundles) >= _raw_bundle_cap:
+            break
         relation_plan = solver_plan_from_concept(
             concept=concept,
             room_model_json=room_output,
             room_type=room_type,
         )
         relation_plan = _strip_raw_text(relation_plan)
+        if room_type == "kitchen":
+            relation_plan = _push_dining_cluster_last(relation_plan)
         if concept_index == 1:
             _write_module_json(
                 paths,
@@ -1446,7 +1837,7 @@ def run_case(
         _update_status(
             paths,
             "solver",
-            message=f"Concept {concept_index}/{target_final_count}: solving object-level anchor-first layout.",
+            message=f"Concept {concept_index}/{planning_concept_count}: solving object-level anchor-first layout.",
             progress_current=len(solved_bundles),
             progress_total=target_final_count,
         )
@@ -1487,14 +1878,106 @@ def run_case(
         )
 
     if not solved_bundles:
-        _no_solver_msg = _solver_failure_message_vi(failed_solver_outputs)
-        _update_status(paths, "error", error=_no_solver_msg)
-        return {
-            "case_id": case_id,
-            "case_dir": str(case_root),
-            "final_output": None,
-            "error": _no_solver_msg,
-        }
+        # ── Fallback: retry với chỉ đồ thiết yếu ──────────────────────────
+        essential_types = _essential_types_for_room(room_type)
+        # Nếu room_type không rõ, infer từ cấu trúc clusters
+        if not essential_types:
+            essential_types = _infer_essential_types_from_clusters(merged_output)
+        essential_merged = _filter_merged_to_essential(merged_output, essential_types)
+        # Nếu không filter được, thử chỉ giữ cluster đầu tiên (cluster có anchor chính)
+        if essential_merged is None:
+            all_clusters = [
+                c for c in (merged_output.get("clusters") or []) if isinstance(c, dict)
+            ]
+            if len(all_clusters) > 1:
+                first_id = all_clusters[0].get("cluster_id", "")
+                essential_merged = _filter_clusters_to_ids(merged_output, {first_id})
+        if essential_merged is not None:
+            logger.info(
+                "Main solver failed — retrying with essential-only clusters: case=%s room_type=%s",
+                case_id,
+                room_type,
+            )
+            essential_cluster_ids = {
+                c["cluster_id"]
+                for c in (essential_merged.get("clusters") or [])
+                if isinstance(c, dict)
+            }
+            # Tạo synthetic concept đơn giản chỉ reference essential clusters
+            # để tránh dependency vào LLM concepts (có thể reference clusters không tồn tại)
+            fallback_concepts = _build_essential_fallback_concepts(
+                essential_cluster_ids, merged_output
+            )
+            # Thêm original concepts (2 cái) làm dự phòng
+            for orig_concept in concepts[:2]:
+                fallback_concepts.append(orig_concept)
+
+            # Filter cluster_output cùng với merged_output để tránh mismatch
+            essential_cluster_output = _filter_clusters_to_ids(
+                cluster_output, essential_cluster_ids
+            )
+
+            for fb_concept in fallback_concepts:
+                fallback_plan = solver_plan_from_concept(
+                    concept=fb_concept,
+                    room_model_json=room_output,
+                    room_type=room_type,
+                )
+                fallback_plan = _strip_raw_text(fallback_plan)
+                fallback_plan = _relax_relation_plan_to_essential(
+                    fallback_plan, essential_cluster_ids
+                )
+                fb_bundles, _ = _solve_object_level_variant_bundle(
+                    concept=fb_concept,
+                    relation_plan=fallback_plan,
+                    room_output=room_output,
+                    cluster_output=essential_cluster_output,
+                    tier_output=tier_output,
+                    merged_output=essential_merged,
+                    solver=solver,
+                    manual_placements=manual_placements,
+                    variant_index=1,
+                    ablation_mode=resolved_ablation_mode,
+                )
+                if fb_bundles:
+                    for fb_bundle in fb_bundles:
+                        fb_bundle = _refill_judged_variant_accessories(
+                            bundle=fb_bundle,
+                            room_output=room_output,
+                            variant_index=len(solved_bundles) + 1,
+                            ablation_mode=resolved_ablation_mode,
+                        )
+                        solved_bundles.append(fb_bundle)
+                        if not (
+                            paths.stylist.exists() or paths.absolute_layout.exists()
+                        ):
+                            _write_bundle_stage_artifacts(paths, fb_bundle)
+                    logger.info(
+                        "Essential-only fallback succeeded: case=%s bundles=%d",
+                        case_id,
+                        len(solved_bundles),
+                    )
+                    break
+
+        if not solved_bundles:
+            # ── Không có gì phù hợp → trả phòng rỗng thay vì lỗi ──────────
+            logger.warning(
+                "Essential-only fallback also failed — returning empty room: case=%s",
+                case_id,
+            )
+            _write_json(
+                paths.layout_variants,
+                {"variants": [], "selection_summary": None},
+            )
+            _update_status(
+                paths, "done", message="Phòng quá nhỏ, không đặt được đồ nội thất."
+            )
+            return {
+                "case_id": case_id,
+                "case_dir": str(case_root),
+                "final_output": {"objects": [], "room_type": room_type},
+                "error": None,
+            }
 
     styling_candidates = _select_final_styling_candidates(
         solved_bundles,
@@ -1539,9 +2022,7 @@ def run_case(
         )
 
     if not final_candidates:
-        _update_status(
-            paths, "error", error="Không hoàn thiện được thiết kế nội thất."
-        )
+        _update_status(paths, "error", error="Không hoàn thiện được thiết kế nội thất.")
         return {
             "case_id": case_id,
             "case_dir": str(case_root),
@@ -1572,9 +2053,7 @@ def run_case(
     )
     payload_variants = layout_variants.get("variants")
     if not isinstance(payload_variants, list) or not payload_variants:
-        _update_status(
-            paths, "error", error="Không tạo được phương án thiết kế nào."
-        )
+        _update_status(paths, "error", error="Không tạo được phương án thiết kế nào.")
         return {
             "case_id": case_id,
             "case_dir": str(case_root),
@@ -2895,6 +3374,38 @@ def _solver_parallel_limit(target_final_count: int) -> int:
     return max(1, min(int(target_final_count), 2))
 
 
+def _planning_concept_count(
+    *,
+    room_type: str,
+    room_output: dict[str, Any],
+    target_final_count: int,
+) -> int:
+    target_count = max(1, int(target_final_count))
+    if target_count <= 1 or room_type not in {"living", "combined_living_kitchen"}:
+        return target_count
+
+    room = room_output.get("room")
+    area_m2 = 0.0
+    if isinstance(room, dict):
+        try:
+            area_m2 = float(room.get("area_m2") or 0.0)
+        except (TypeError, ValueError):
+            area_m2 = 0.0
+
+    # Always add extra concepts for living rooms so the solver can explore all
+    # wall-assignment combinations (sofa left/right/top/bottom) and produce
+    # enough distinct candidates for the diversity filter.
+    extra_concepts = _MEDIUM_LIVING_ROOM_EXTRA_CONCEPTS  # baseline: small rooms
+    if area_m2 >= _LARGE_LIVING_ROOM_AREA_M2:
+        extra_concepts = _LARGE_LIVING_ROOM_EXTRA_CONCEPTS
+    elif area_m2 >= _MEDIUM_LIVING_ROOM_AREA_M2:
+        extra_concepts = _MEDIUM_LIVING_ROOM_EXTRA_CONCEPTS + 2
+    return min(
+        _MAX_LIVING_ROOM_PLANNING_CONCEPTS,
+        target_count + extra_concepts,
+    )
+
+
 def _solver_workers_per_task(
     solver: MacroClusterSolver,
     *,
@@ -3340,6 +3851,10 @@ def _build_layout_variants_payload_from_final_candidates(
                     candidate.get("quality_gate_reasons") or []
                 ),
                 "notes": deepcopy(candidate.get("notes") or []),
+                "objects": _variant_payload_objects(
+                    absolute_layout=absolute_layout,
+                    styled_result=styled_result,
+                ),
                 "absolute_layout": deepcopy(absolute_layout),
                 "styled_result": deepcopy(styled_result),
             }
@@ -3352,6 +3867,20 @@ def _build_layout_variants_payload_from_final_candidates(
         else None,
         "variants": payload_variants,
     }
+
+
+def _variant_payload_objects(
+    *,
+    absolute_layout: dict[str, Any],
+    styled_result: dict[str, Any],
+) -> list[dict[str, Any]]:
+    styled_objects = styled_result.get("objects")
+    if isinstance(styled_objects, list):
+        return [deepcopy(row) for row in styled_objects if isinstance(row, dict)]
+    layout_objects = absolute_layout.get("objects")
+    if isinstance(layout_objects, list):
+        return [deepcopy(row) for row in layout_objects if isinstance(row, dict)]
+    return []
 
 
 def _select_final_styling_candidates(
@@ -3536,24 +4065,49 @@ def _requested_non_functional_layout_object(
         existing_objects,
         spec.get("target_object_types"),
     )
+    corner_rect = (
+        _room_corner_refill_rect(
+            room_bbox=room_bbox,
+            width=width,
+            height=height,
+            existing_objects=existing_objects,
+            margin=int(spec.get("margin") or 250),
+        )
+        if str(spec.get("placement") or "") == "room_corner"
+        else None
+    )
     target_center = _layout_object_center(target_object) if target_object else None
-    if target_center is not None:
+    if corner_rect is not None:
+        min_x, min_y, max_x, max_y = corner_rect
+    elif target_center is not None:
         center_x, center_y = target_center
+        min_x = _clamp_int(
+            center_x - width // 2,
+            int(room_bbox["min_x"]),
+            int(room_bbox["max_x"]) - width,
+        )
+        min_y = _clamp_int(
+            center_y - height // 2,
+            int(room_bbox["min_y"]),
+            int(room_bbox["max_y"]) - height,
+        )
+        max_x = min_x + width
+        max_y = min_y + height
     else:
-        center_x = int(round((int(room_bbox["min_x"]) + int(room_bbox["max_x"])) / 2.0))
-        center_y = int(round((int(room_bbox["min_y"]) + int(room_bbox["max_y"])) / 2.0))
-    min_x = _clamp_int(
-        center_x - width // 2,
-        int(room_bbox["min_x"]),
-        int(room_bbox["max_x"]) - width,
-    )
-    min_y = _clamp_int(
-        center_y - height // 2,
-        int(room_bbox["min_y"]),
-        int(room_bbox["max_y"]) - height,
-    )
-    max_x = min_x + width
-    max_y = min_y + height
+        center_x = round((int(room_bbox["min_x"]) + int(room_bbox["max_x"])) / 2.0)
+        center_y = round((int(room_bbox["min_y"]) + int(room_bbox["max_y"])) / 2.0)
+        min_x = _clamp_int(
+            center_x - width // 2,
+            int(room_bbox["min_x"]),
+            int(room_bbox["max_x"]) - width,
+        )
+        min_y = _clamp_int(
+            center_y - height // 2,
+            int(room_bbox["min_y"]),
+            int(room_bbox["max_y"]) - height,
+        )
+        max_x = min_x + width
+        max_y = min_y + height
     instance_id = _unique_refill_instance_id(object_type, existing_objects)
     place_on = deepcopy(
         spec.get("place_on") if isinstance(spec.get("place_on"), dict) else {}
@@ -3588,8 +4142,8 @@ def _requested_non_functional_layout_object(
             "max_y": max_y,
         },
         "center": {
-            "x": int(round((min_x + max_x) / 2.0)),
-            "y": int(round((min_y + max_y) / 2.0)),
+            "x": round((min_x + max_x) / 2.0),
+            "y": round((min_y + max_y) / 2.0),
         },
         "polygon_ccw": [
             {"x": min_x, "y": min_y},
@@ -3715,6 +4269,83 @@ def _layout_object_area(row: dict[str, Any]) -> float:
         return max(0.0, float(row.get("w") or 0.0) * float(row.get("h") or 0.0))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _room_corner_refill_rect(
+    *,
+    room_bbox: dict[str, int],
+    width: int,
+    height: int,
+    existing_objects: list[dict[str, Any]],
+    margin: int,
+) -> tuple[int, int, int, int] | None:
+    min_room_x = int(room_bbox["min_x"])
+    min_room_y = int(room_bbox["min_y"])
+    max_room_x = int(room_bbox["max_x"])
+    max_room_y = int(room_bbox["max_y"])
+    candidates = [
+        (min_room_x + margin, min_room_y + margin),
+        (max_room_x - margin - width, min_room_y + margin),
+        (min_room_x + margin, max_room_y - margin - height),
+        (max_room_x - margin - width, max_room_y - margin - height),
+    ]
+    occupied = [
+        bbox
+        for row in existing_objects
+        if (bbox := _layout_object_bbox(row)) is not None
+        and str(row.get("collision_layer") or "floor_solid")
+        not in {"ceiling", "surface_child", "wall_mounted"}
+    ]
+    fallback: tuple[int, int, int, int] | None = None
+    for min_x, min_y in candidates:
+        rect = (
+            _clamp_int(min_x, min_room_x, max_room_x - width),
+            _clamp_int(min_y, min_room_y, max_room_y - height),
+            0,
+            0,
+        )
+        rect = (rect[0], rect[1], rect[0] + width, rect[1] + height)
+        if fallback is None:
+            fallback = rect
+        if not any(_rectangles_overlap(rect, other) for other in occupied):
+            return rect
+    return fallback
+
+
+def _layout_object_bbox(row: dict[str, Any]) -> tuple[int, int, int, int] | None:
+    bbox = row.get("bbox")
+    if isinstance(bbox, dict):
+        try:
+            return (
+                round(float(bbox.get("min_x") or 0.0)),
+                round(float(bbox.get("min_y") or 0.0)),
+                round(float(bbox.get("max_x") or 0.0)),
+                round(float(bbox.get("max_y") or 0.0)),
+            )
+        except (TypeError, ValueError):
+            return None
+    try:
+        min_x = round(float(row.get("x") or 0.0))
+        min_y = round(float(row.get("y") or 0.0))
+        width = round(float(row.get("w") or 0.0))
+        height = round(float(row.get("h") or 0.0))
+    except (TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return (min_x, min_y, min_x + width, min_y + height)
+
+
+def _rectangles_overlap(
+    left: tuple[int, int, int, int],
+    right: tuple[int, int, int, int],
+) -> bool:
+    return (
+        left[0] < right[2]
+        and left[2] > right[0]
+        and left[1] < right[3]
+        and left[3] > right[1]
+    )
 
 
 def _unique_refill_instance_id(

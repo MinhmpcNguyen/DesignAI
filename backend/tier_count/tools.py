@@ -50,6 +50,52 @@ _SIZE_PROFILE_CATALOG_TYPE_FALLBACKS: dict[str, tuple[str, ...]] = {
     "dining_chair": ("chair",),
 }
 
+# Per-category allowed scale range for L and W (min_factor, max_factor).
+# Items without an entry here are treated as non-scalable (1.0, 1.0).
+# These ranges represent how much the 3D model can be non-uniformly scaled
+# in plan-space while remaining visually plausible. Height is never scaled.
+_CATEGORY_SCALE_RANGE: dict[str, tuple[float, float]] = {
+    "sofa": (0.75, 1.25),
+    "sectional_sofa": (0.75, 1.25),
+    "armchair": (0.80, 1.20),
+    "lounge_chair": (0.80, 1.20),
+    "coffee_table": (0.70, 1.30),
+    "side_table": (0.70, 1.30),
+    "dining_table": (0.65, 1.35),
+    "dining_chair": (0.85, 1.15),
+    "tv_console": (0.70, 1.50),
+    "media_console": (0.70, 1.50),
+    "wardrobe": (0.75, 1.50),
+    "bookshelf": (0.70, 1.50),
+    "desk": (0.75, 1.25),
+    "dresser": (0.80, 1.20),
+    "nightstand": (0.80, 1.20),
+    "kitchen_base_cabinet": (0.70, 1.50),
+    "kitchen_wall_cabinet": (0.70, 1.50),
+    "kitchen_tall_cabinet": (0.80, 1.20),
+    "rug": (0.60, 1.50),
+    "bench": (0.75, 1.30),
+    # Fixed-size items — appliances, fixtures, and decoratives must not be scaled
+    "bed": (1.00, 1.00),
+    "fridge": (1.00, 1.00),
+    "stove": (1.00, 1.00),
+    "sink": (1.00, 1.00),
+    "toilet": (1.00, 1.00),
+    "bathtub": (1.00, 1.00),
+    "tv": (1.00, 1.00),
+    "floor_lamp": (1.00, 1.00),
+    "table_lamp": (1.00, 1.00),
+    "ceiling_light": (1.00, 1.00),
+    "wall_sconce": (1.00, 1.00),
+    "plant": (1.00, 1.00),
+    "wall_art": (1.00, 1.00),
+}
+_DEFAULT_SCALE_RANGE: tuple[float, float] = (1.00, 1.00)
+
+
+def _category_scale_range(category: str) -> tuple[float, float]:
+    return _CATEGORY_SCALE_RANGE.get(_norm_key(category), _DEFAULT_SCALE_RANGE)
+
 
 def _is_footprint_exempt_category(category: object) -> bool:
     normalized = _norm_key(str(category or ""))
@@ -416,12 +462,15 @@ def _build_size_profiles(
             )
             backfilled = {"S": False, "M": False, "L": False}
 
+        lo, hi = _category_scale_range(cat)
         profiles[cat] = {
             "metric": "footprint_area_m2",
             "percentiles": {"p_low": p_low, "p_high": p_high},
             "thresholds": {"A_low": a_low, "A_high": a_high},
             "rep_dims_m": rep_dims,
             "rep_dims_backfilled": backfilled,
+            "scale_range": {"min": lo, "max": hi},
+            "scalable": lo != 1.0 or hi != 1.0,
             "counts": {
                 "n_category": len(items_cat),
                 "n_threshold_base": len(base),

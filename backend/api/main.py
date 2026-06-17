@@ -13,8 +13,6 @@ from config import root_config
 from config.logging_config import setup_logging
 from config.models import OpenAIModelGroupConfig
 from config.openai_config import OpenAIConfig
-from db.demo_data import ensure_demo_inventory_loaded
-from db.runtime_init import ensure_runtime_schema
 from domain.normalize_run import ApiErrorReason
 
 app = FastAPI(
@@ -60,18 +58,7 @@ def _cors_allowed_origin_regex() -> str | None:
 def _startup_logging() -> None:
     # Ensure our internal logs (agents/RAG/search) show up when running via uvicorn.
     setup_logging()
-    _initialize_runtime_schema()
     _log_runtime_profile()
-
-
-def _initialize_runtime_schema() -> None:
-    try:
-        ensure_runtime_schema()
-        loaded_count = ensure_demo_inventory_loaded()
-        if loaded_count:
-            logger.info("Loaded %d bundled demo inventory assets.", loaded_count)
-    except Exception as exc:
-        logger.exception("Runtime schema initialization skipped: %s", exc)
 
 
 def _log_runtime_profile() -> None:

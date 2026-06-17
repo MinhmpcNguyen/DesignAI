@@ -6,6 +6,14 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from agent.request_contract import (
+    contract_intent,
+    contract_item_for_object_type,
+    contract_min_keep,
+    contract_target_count,
+    request_contract_from_payload,
+)
+
 _MEDIA_CONSOLE_TYPES = frozenset(
     {
         "ke_ti_vi",
@@ -23,6 +31,29 @@ _MEDIA_CONSOLE_TYPES = frozenset(
 _BARE_TV_DISPLAY_TYPES = frozenset({"smart_tv", "television", "ti_vi", "tivi", "tv"})
 _RUSTIC_KITCHEN_BASE_CABINET_ID = "56715066-87c8-4bc7-b59e-fa29a6b302e6"
 _RUSTIC_KITCHEN_BASE_CABINET_SOLVER_DEPTH_MM = 650
+_REQUESTED_DIM_DEFAULT_WIDTH_MM: dict[str, int] = {
+    "coffee_table": 600,
+    "console_table": 400,
+    "rug": 1600,
+    "sectional_sofa": 1600,
+    "sofa": 950,
+    "storage_cabinet": 400,
+    "tv_console": 400,
+}
+_REQUESTED_DIM_DEFAULT_HEIGHT_MM: dict[str, int] = {
+    "coffee_table": 400,
+    "console_table": 850,
+    "floor_lamp": 1600,
+    "rug": 20,
+    "sectional_sofa": 800,
+    "sofa": 800,
+    "storage_cabinet": 850,
+    "tv_console": 450,
+}
+_STORAGE_REQUEST_CONTRACT_TYPES = frozenset({"console_table"})
+_SYNTHETIC_REQUEST_REP_DIMS_M: dict[str, dict[str, float]] = {
+    "console_table": {"L": 1.10, "W": 0.40, "H": 0.85, "A": 0.44},
+}
 
 
 def merge_cluster_outputs(
@@ -42,6 +73,7 @@ def merge_cluster_outputs(
 
     clusters = cluster_payload.get("clusters", [])
     decisions = tier_payload.get("decisions", [])
+    request_contract = request_contract_from_payload(cluster_payload)
 
     decision_by_cluster_and_type: dict[tuple[str, str], dict[str, Any]] = {}
     decision_by_type: dict[str, dict[str, Any]] = {}
@@ -62,6 +94,11 @@ def merge_cluster_outputs(
     media_console_owner_cluster_ids = _media_console_owner_cluster_ids(
         clusters=clusters,
         decision_by_cluster_and_type=decision_by_cluster_and_type,
+        decision_by_type=decision_by_type,
+    )
+    storage_request_owner_cluster_ids = _synthetic_request_owner_cluster_ids(
+        clusters=clusters,
+        request_contract=request_contract,
         decision_by_type=decision_by_type,
     )
 
@@ -94,6 +131,20 @@ def merge_cluster_outputs(
             )
             is not None
         ]
+        synthetic_decisions = _synthetic_request_decisions_for_cluster(
+            cluster=cluster,
+            request_contract=request_contract,
+            kept_members=kept_members,
+            owner_cluster_ids=storage_request_owner_cluster_ids,
+        )
+        synthetic_decision_by_type = {
+            str(row.get("object_type") or ""): row
+            for row in synthetic_decisions
+            if str(row.get("object_type") or "")
+        }
+        for object_type in synthetic_decision_by_type:
+            if object_type not in kept_members:
+                kept_members.append(object_type)
         if not kept_members:
             continue
         kept_set = set(kept_members)
@@ -104,17 +155,26 @@ def merge_cluster_outputs(
         anchors = cluster.get("anchors")
         filtered_anchors: list[str] = []
         if isinstance(anchors, list):
-            filtered_anchors = [
-                anchor
-                for anchor in anchors
-                if isinstance(anchor, str) and anchor.strip() and anchor in kept_set
-            ]
+            for anchor in anchors:
+                if not isinstance(anchor, str) or not anchor.strip():
+                    continue
+                if anchor in kept_set:
+                    filtered_anchors.append(anchor)
+                    continue
+                replacement = _family_replacement_base_id(anchor, kept_set)
+                if replacement is not None:
+                    filtered_anchors.append(replacement)
         if not filtered_anchors:
             dominant_candidates = _string_list(
                 _cluster_rules(cluster).get("dominant_anchor_candidates")
             )
             filtered_anchors = [
-                anchor for anchor in dominant_candidates if anchor in kept_set
+                anchor
+                for anchor in (
+                    _family_replacement_base_id(candidate, kept_set) or candidate
+                    for candidate in dominant_candidates
+                )
+                if anchor in kept_set
             ][:1]
         if not filtered_anchors:
             continue
@@ -125,6 +185,8 @@ def merge_cluster_outputs(
             decision = _decision_for_member(
                 cluster_id, member, decision_by_cluster_and_type, decision_by_type
             )
+            if decision is None:
+                decision = synthetic_decision_by_type.get(member)
             if decision is None:
                 continue
             decision_row = deepcopy(decision)
@@ -151,7 +213,10 @@ def merge_cluster_outputs(
                 anchors=set(filtered_anchors),
             )
 
-        object_program = _build_object_program_for_cluster(merged)
+        object_program = _build_object_program_for_cluster(
+            merged,
+            request_contract=request_contract,
+        )
         merged["object_program"] = object_program
         merged["members"] = list(object_program.get("members") or [])
         merged["anchors"] = list(object_program.get("anchors") or [])
@@ -180,7 +245,11 @@ def merge_cluster_outputs(
     return merged_output
 
 
-def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]:
+def _build_object_program_for_cluster(
+    cluster: dict[str, Any],
+    *,
+    request_contract: dict[str, Any],
+) -> dict[str, Any]:
     cluster_id = str(cluster.get("cluster_id") or "").strip()
     base_members = [
         member
@@ -225,6 +294,19 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
         height_mm = round(float(rep_dims.get("H") or 0.0) * 1000.0)
         if length_mm <= 0 or width_mm <= 0:
             continue
+        category = str(decision.get("category") or base_object_id)
+        requested_dims = _requested_dims_for_decision(
+            decision,
+            request_contract=request_contract,
+            base_object_id=base_object_id,
+        )
+        length_mm, width_mm, height_mm = _apply_requested_dims_mm(
+            category=category,
+            requested_dims=requested_dims,
+            length_mm=length_mm,
+            width_mm=width_mm,
+            height_mm=height_mm,
+        )
         preserve_level = str(decision.get("preserve_level") or "").strip().lower()
         role = str(decision.get("role") or "").strip().lower()
         priority = str(decision.get("priority") or "").strip().lower()
@@ -253,7 +335,7 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
             if source_id.startswith("__"):
                 source_id = ""
             solver_footprint_mm = _solver_footprint_mm(
-                category=str(decision.get("category") or base_object_id),
+                category=category,
                 source_id=source_id,
                 length_mm=length_mm,
                 width_mm=width_mm,
@@ -264,7 +346,7 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
                 "base_object_id": base_object_id,
                 "quantity_index": quantity_index,
                 "cluster_id": cluster_id,
-                "category": str(decision.get("category") or base_object_id),
+                "category": category,
                 "role": role,
                 "priority": priority,
                 "preserve_level": preserve_level,
@@ -274,6 +356,11 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
                     "W": width_mm,
                     "H": height_mm,
                 },
+                **(
+                    {"requested_dims_mm": deepcopy(requested_dims)}
+                    if requested_dims
+                    else {}
+                ),
                 **(
                     {"solver_footprint_mm": solver_footprint_mm}
                     if solver_footprint_mm is not None
@@ -317,7 +404,10 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
         if not isinstance(base_object_id, str):
             continue
         object_ids = expanded_ids_by_base.get(base_object_id, [])
-        relative_id = _primary_expanded_id(relative_to, expanded_ids_by_base)
+        relative_id = _primary_expanded_id(
+            relative_to,
+            expanded_ids_by_base,
+        ) or _family_replacement_expanded_id(relative_to, expanded_ids_by_base)
         if not object_ids or relative_id is None:
             continue
         side_options = _string_list(row.get("side_options"))
@@ -345,6 +435,10 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
                     "orientation": str(row.get("orientation") or ""),
                 }
             )
+    support_edges = _ensure_storage_support_edges(
+        support_edges=support_edges,
+        expanded_ids_by_base=expanded_ids_by_base,
+    )
     support_edges = _ensure_media_support_edges(
         support_edges=support_edges,
         expanded_ids_by_base=expanded_ids_by_base,
@@ -380,12 +474,19 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
     dominant_anchor_id = _clean_str(anchor_first_policy.get("dominant_anchor_id"))
     if dominant_anchor_id is None:
         dominant_anchor_id = next(iter(cluster.get("anchors") or []), None)
-    dominant_anchor_id = _primary_expanded_id(dominant_anchor_id, expanded_ids_by_base)
+    dominant_anchor_id = _primary_expanded_id(
+        dominant_anchor_id,
+        expanded_ids_by_base,
+    ) or _family_replacement_expanded_id(dominant_anchor_id, expanded_ids_by_base)
 
     placement_order = _expand_id_list(
         _string_list(anchor_first_policy.get("placement_order")) or list(base_members),
         expanded_ids_by_base,
     )
+    placement_order = [
+        *placement_order,
+        *[item for item in members if item not in set(placement_order)],
+    ]
     anchor_candidates = _string_list(
         anchor_first_policy.get("dominant_anchor_candidates")
     ) or _string_list(rules.get("dominant_anchor_candidates"))
@@ -394,6 +495,13 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
         expanded_ids_by_base,
         primary_only=True,
     )
+    if dominant_anchor_id is None:
+        dominant_anchor_id = next(iter(anchors), None)
+    if dominant_anchor_id is not None:
+        placement_order = [
+            dominant_anchor_id,
+            *[item for item in placement_order if item != dominant_anchor_id],
+        ]
 
     return {
         "cluster_id": cluster_id,
@@ -428,6 +536,135 @@ def _build_object_program_for_cluster(cluster: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _synthetic_request_owner_cluster_ids(
+    *,
+    clusters: list[Any],
+    request_contract: dict[str, Any],
+    decision_by_type: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+    owners: dict[str, str] = {}
+    for object_type in sorted(_STORAGE_REQUEST_CONTRACT_TYPES):
+        if object_type in decision_by_type:
+            continue
+        item = contract_item_for_object_type(request_contract, object_type)
+        if not isinstance(item, dict) or contract_min_keep(item) <= 0:
+            continue
+        if contract_intent(item) == "max0":
+            continue
+
+        ranked_clusters: list[tuple[int, str]] = []
+        for cluster in clusters:
+            if not isinstance(cluster, dict) or not _is_storage_display_cluster(
+                cluster
+            ):
+                continue
+            cluster_id = str(cluster.get("cluster_id") or "").strip()
+            if not cluster_id:
+                continue
+            ranked_clusters.append(
+                (_synthetic_request_cluster_rank(cluster), cluster_id)
+            )
+        if ranked_clusters:
+            owners[object_type] = max(ranked_clusters)[1]
+    return owners
+
+
+def _synthetic_request_cluster_rank(cluster: dict[str, Any]) -> int:
+    key = _norm_key(
+        " ".join(
+            str(value or "")
+            for value in (
+                cluster.get("cluster_id"),
+                cluster.get("semantic_role"),
+                cluster.get("layout_role"),
+                cluster.get("tag"),
+                " ".join(_string_list(cluster.get("members"))),
+            )
+        )
+    )
+    rank = 0
+    if "storage" in key or "display" in key:
+        rank += 40
+    if "book" in key or "cabinet" in key:
+        rank += 20
+    if "shelf" in key:
+        rank += 10
+    if _is_dedicated_media_cluster(cluster):
+        rank -= 30
+    return rank
+
+
+def _synthetic_request_decisions_for_cluster(
+    *,
+    cluster: dict[str, Any],
+    request_contract: dict[str, Any],
+    kept_members: list[str],
+    owner_cluster_ids: dict[str, str],
+) -> list[dict[str, Any]]:
+    if not _is_storage_display_cluster(cluster):
+        return []
+
+    kept_set = set(kept_members)
+    out: list[dict[str, Any]] = []
+    cluster_id = str(cluster.get("cluster_id") or "").strip()
+    for object_type in sorted(_STORAGE_REQUEST_CONTRACT_TYPES):
+        if owner_cluster_ids.get(object_type) != cluster_id:
+            continue
+        if object_type in kept_set:
+            continue
+        item = contract_item_for_object_type(request_contract, object_type)
+        if not isinstance(item, dict):
+            continue
+        min_keep = contract_min_keep(item)
+        if min_keep <= 0:
+            continue
+        intent = contract_intent(item)
+        if intent == "max0":
+            continue
+        target_count = max(min_keep, contract_target_count(item))
+        rep_dims = dict(_SYNTHETIC_REQUEST_REP_DIMS_M.get(object_type, {}))
+        requested_dims = item.get("requested_dims_mm")
+        if isinstance(requested_dims, dict) and requested_dims:
+            rep_dims = _rep_dims_m_with_requested_dims(
+                object_type=object_type,
+                rep_dims=rep_dims,
+                requested_dims=requested_dims,
+            )
+        out.append(
+            {
+                "cluster_id": cluster_id,
+                "object_type": object_type,
+                "category": object_type,
+                "quantity": target_count,
+                "size_tier": "M",
+                "priority": "primary",
+                "preserve_level": "highest",
+                "role": "support",
+                "semantic_support_role": "wall_support",
+                "band_intent": "wall_band",
+                "protected": True,
+                "droppable": False,
+                "drop_order_bias": "drop_last",
+                "min_keep": min_keep,
+                "keep_if_space_surplus": False,
+                "space_surplus_threshold": 0.0,
+                "request_contract_intent": intent,
+                "request_contract_reason": str(item.get("reason") or ""),
+                "request_contract_evidence": str(item.get("evidence") or ""),
+                "request_contract_target_count": target_count,
+                "rationale": "restored requested storage/display furniture",
+                "utility_score": 12.0,
+                "rep_dims_m": rep_dims,
+                **(
+                    {"requested_dims_mm": dict(requested_dims)}
+                    if isinstance(requested_dims, dict) and requested_dims
+                    else {}
+                ),
+            }
+        )
+    return out
+
+
 def _solver_footprint_mm(
     *,
     category: str,
@@ -447,6 +684,134 @@ def _solver_footprint_mm(
         "W": _RUSTIC_KITCHEN_BASE_CABINET_SOLVER_DEPTH_MM,
         "H": height_mm,
     }
+
+
+def _requested_dims_for_decision(
+    decision: dict[str, Any],
+    *,
+    request_contract: dict[str, Any],
+    base_object_id: str,
+) -> dict[str, Any]:
+    dims = decision.get("requested_dims_mm")
+    if isinstance(dims, dict) and dims:
+        return dict(dims)
+    item = contract_item_for_object_type(request_contract, base_object_id)
+    if item is None and base_object_id == "sectional_sofa":
+        item = contract_item_for_object_type(request_contract, "sofa")
+    if not isinstance(item, dict):
+        return {}
+    item_dims = item.get("requested_dims_mm")
+    return dict(item_dims) if isinstance(item_dims, dict) and item_dims else {}
+
+
+def _apply_requested_dims_mm(
+    *,
+    category: str,
+    requested_dims: dict[str, Any],
+    length_mm: int,
+    width_mm: int,
+    height_mm: int,
+) -> tuple[int, int, int]:
+    if not requested_dims:
+        return length_mm, width_mm, height_mm
+    if requested_dims.get("screen_diagonal_inch") and not (
+        requested_dims.get("L_mm") or requested_dims.get("W_mm")
+    ):
+        return length_mm, width_mm, height_mm
+
+    requested_length = _positive_mm(requested_dims.get("L_mm"))
+    requested_width = _positive_mm(requested_dims.get("W_mm"))
+    if requested_length > 0:
+        length_mm = requested_length
+    if requested_width > 0:
+        width_mm = requested_width
+    elif width_mm <= 0:
+        width_mm = _REQUESTED_DIM_DEFAULT_WIDTH_MM.get(category, width_mm)
+    if height_mm <= 0:
+        height_mm = _REQUESTED_DIM_DEFAULT_HEIGHT_MM.get(category, height_mm)
+    return length_mm, width_mm, height_mm
+
+
+def _positive_mm(value: Any) -> int:
+    try:
+        parsed = round(float(value))
+    except (TypeError, ValueError):
+        return 0
+    return parsed if parsed > 0 else 0
+
+
+def _rep_dims_m_with_requested_dims(
+    *,
+    object_type: str,
+    rep_dims: dict[str, float],
+    requested_dims: dict[str, Any],
+) -> dict[str, float]:
+    out = dict(rep_dims)
+    requested_length = _positive_mm(requested_dims.get("L_mm"))
+    requested_width = _positive_mm(requested_dims.get("W_mm"))
+    if requested_length > 0:
+        out["L"] = round(requested_length / 1000.0, 6)
+    if requested_width > 0:
+        out["W"] = round(requested_width / 1000.0, 6)
+    elif out.get("W", 0) <= 0:
+        default_width = _REQUESTED_DIM_DEFAULT_WIDTH_MM.get(object_type)
+        if default_width is not None:
+            out["W"] = round(default_width / 1000.0, 6)
+    if out.get("H", 0) <= 0:
+        default_height = _REQUESTED_DIM_DEFAULT_HEIGHT_MM.get(object_type)
+        if default_height is not None:
+            out["H"] = round(default_height / 1000.0, 6)
+    length = float(out.get("L") or 0)
+    width = float(out.get("W") or 0)
+    if length > 0 and width > 0:
+        out["A"] = round(length * width, 6)
+    return out
+
+
+def _ensure_storage_support_edges(
+    *,
+    support_edges: list[dict[str, Any]],
+    expanded_ids_by_base: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    existing_object_ids = {
+        str(edge.get("object_id") or "")
+        for edge in support_edges
+        if isinstance(edge.get("object_id"), str)
+    }
+    anchor_id = _primary_storage_anchor_id(expanded_ids_by_base)
+    if anchor_id is None:
+        return support_edges
+
+    out = list(support_edges)
+    for console_id in expanded_ids_by_base.get("console_table", []):
+        if console_id in existing_object_ids or console_id == anchor_id:
+            continue
+        out.append(
+            {
+                "object_id": console_id,
+                "relative_to": anchor_id,
+                "kind": "anchor_side",
+                "side_options": ["left", "right"],
+                "gap_min_mm": 50,
+                "gap_max_mm": 250,
+                "proximity": "balanced",
+                "selection": "best_fit",
+                "support_role": "wall_support",
+                "band_intent": "wall_band",
+                "orientation": "same_direction",
+            }
+        )
+    return out
+
+
+def _primary_storage_anchor_id(
+    expanded_ids_by_base: dict[str, list[str]],
+) -> str | None:
+    for base_id in ("bookshelf", "storage_cabinet", "media_shelf", "console_table"):
+        object_ids = expanded_ids_by_base.get(base_id)
+        if object_ids:
+            return object_ids[0]
+    return None
 
 
 def _ensure_media_support_edges(
@@ -554,6 +919,32 @@ def _is_dedicated_media_cluster(cluster: Mapping[str, object]) -> bool:
     )
     key = _norm_key(text)
     return any(token in key for token in ("media", "tv_focus", "entertainment"))
+
+
+def _is_storage_display_cluster(cluster: Mapping[str, object]) -> bool:
+    members = " ".join(_string_list(cluster.get("members")))
+    text = " ".join(
+        str(value or "")
+        for value in (
+            cluster.get("cluster_id"),
+            cluster.get("semantic_role"),
+            cluster.get("layout_role"),
+            cluster.get("tag"),
+            members,
+        )
+    )
+    key = _norm_key(text)
+    return any(
+        token in key
+        for token in (
+            "book",
+            "cabinet",
+            "console_table",
+            "display",
+            "shelf",
+            "storage",
+        )
+    )
 
 
 def _remove_key_recursive(value: Any, key: str) -> None:
@@ -721,6 +1112,38 @@ def _primary_expanded_id(
     return text if text in all_expanded_ids else None
 
 
+def _family_replacement_expanded_id(
+    value: Any,
+    expanded_ids_by_base: dict[str, list[str]],
+) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    key = _norm_key(value)
+    replacement_order = {
+        "sofa": ("sectional_sofa",),
+        "sectional_sofa": ("sofa",),
+    }.get(key, ())
+    for replacement in replacement_order:
+        object_ids = expanded_ids_by_base.get(replacement)
+        if object_ids:
+            return object_ids[0]
+    return None
+
+
+def _family_replacement_base_id(value: Any, kept_set: set[str]) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    key = _norm_key(value)
+    replacement_order = {
+        "sofa": ("sectional_sofa",),
+        "sectional_sofa": ("sofa",),
+    }.get(key, ())
+    for replacement in replacement_order:
+        if replacement in kept_set:
+            return replacement
+    return None
+
+
 def _placement_object_id(row: dict[str, Any]) -> str | None:
     value = row.get("id") or row.get("object_id") or row.get("target_id")
     if not isinstance(value, str):
@@ -745,7 +1168,14 @@ def _expand_access_requirements(
         base_object_id = _placement_object_id(row)
         if base_object_id is None:
             continue
-        for object_id in expanded_ids_by_base.get(base_object_id, []):
+        object_ids = expanded_ids_by_base.get(base_object_id, [])
+        if not object_ids:
+            replacement_id = _family_replacement_expanded_id(
+                base_object_id,
+                expanded_ids_by_base,
+            )
+            object_ids = [replacement_id] if replacement_id is not None else []
+        for object_id in object_ids:
             expanded_row = deepcopy(row)
             replaced = False
             for key in ("id", "object_id", "target_id"):
@@ -849,17 +1279,16 @@ def _filter_cluster_rules(
             and item.get("id") in kept_ids
             and (
                 not isinstance(item.get("relative_to"), str)
-                or item.get("relative_to") in kept_ids
+                or _kept_or_family_replaced(item.get("relative_to"), kept_ids)
             )
         ]
 
     dominant_candidates = out.get("dominant_anchor_candidates")
     if isinstance(dominant_candidates, list):
-        out["dominant_anchor_candidates"] = [
-            item
-            for item in dominant_candidates
-            if isinstance(item, str) and item in kept_ids
-        ]
+        out["dominant_anchor_candidates"] = _filter_policy_id_list(
+            dominant_candidates,
+            kept_ids=kept_ids,
+        )
 
     anchor_first_policy = out.get("anchor_first_policy")
     if isinstance(anchor_first_policy, dict):
@@ -890,19 +1319,17 @@ def _filter_anchor_first_policy(
 
     dominant_candidates = out.get("dominant_anchor_candidates")
     if isinstance(dominant_candidates, list):
-        out["dominant_anchor_candidates"] = [
-            item
-            for item in dominant_candidates
-            if isinstance(item, str) and item in kept_ids
-        ]
+        out["dominant_anchor_candidates"] = _filter_policy_id_list(
+            dominant_candidates,
+            kept_ids=kept_ids,
+        )
 
     placement_order = out.get("placement_order")
     if isinstance(placement_order, list):
-        out["placement_order"] = [
-            item
-            for item in placement_order
-            if isinstance(item, str) and item in kept_ids
-        ]
+        out["placement_order"] = _filter_policy_id_list(
+            placement_order,
+            kept_ids=kept_ids,
+        )
 
     support_chain = out.get("support_chain")
     if isinstance(support_chain, list):
@@ -917,7 +1344,7 @@ def _filter_anchor_first_policy(
             if (
                 isinstance(relative_to, str)
                 and relative_to
-                and relative_to not in kept_ids
+                and not _kept_or_family_replaced(relative_to, kept_ids)
             ):
                 continue
             kept_chain.append(deepcopy(row))
@@ -931,6 +1358,23 @@ def _filter_anchor_first_policy(
             ]
 
     return out
+
+
+def _filter_policy_id_list(values: list[Any], *, kept_ids: set[str]) -> list[str]:
+    out: list[str] = []
+    for item in values:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        kept = item if item in kept_ids else _family_replacement_base_id(item, kept_ids)
+        if kept is not None and kept not in out:
+            out.append(kept)
+    return out
+
+
+def _kept_or_family_replaced(value: Any, kept_ids: set[str]) -> bool:
+    return isinstance(value, str) and (
+        value in kept_ids or _family_replacement_base_id(value, kept_ids) is not None
+    )
 
 
 def _cluster_rules(cluster: dict[str, Any]) -> dict[str, Any]:

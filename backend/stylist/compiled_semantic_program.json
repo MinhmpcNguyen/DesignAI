@@ -31,10 +31,7 @@
           },
           "object_program": {
             "required": [
-              "coffee_table",
-              "armchair",
-              "side_table",
-              "floor_lamp"
+              "coffee_table"
             ],
             "required_if_kept": [],
             "choose_exactly_one_from": [
@@ -43,9 +40,14 @@
             ],
             "choose_exactly_one_from_if_kept": [],
             "choose_at_least_one_from": [],
-            "optional": [],
+            "optional": [
+              "armchair",
+              "side_table",
+              "floor_lamp",
+              "rug"
+            ],
             "optional_limits": {
-              "global": null,
+              "global": 2,
               "by_object": {}
             }
           },
@@ -54,19 +56,26 @@
               "sofa",
               "sectional_sofa"
             ],
-            "notes": []
+            "notes": [
+              "The sofa is the dominant anchor. Coffee table is required support.",
+              "Keep at most 2 optional support items (armchair, side_table, floor_lamp, rug) to avoid clutter.",
+              "Do NOT create a separate support cluster for items already included here."
+            ]
           },
           "degradation_hints": {
             "preserve_first": [
-              "coffee_table",
-              "armchair",
-              "side_table",
-              "floor_lamp",
               "sofa",
-              "sectional_sofa"
+              "sectional_sofa",
+              "coffee_table"
             ],
-            "shrink_before_drop": [],
-            "drop_first": []
+            "shrink_before_drop": [
+              "armchair",
+              "side_table"
+            ],
+            "drop_first": [
+              "floor_lamp",
+              "rug"
+            ]
           }
         },
         {
@@ -220,11 +229,49 @@
         }
       ],
       "global_program": {
-        "dominant_anchor_required": [],
+        "dominant_anchor_required": [
+          "sofa"
+        ],
         "dominant_workflow_required": [],
-        "group_caps": [],
+        "group_caps": [
+          {
+            "objects": [
+              "armchair"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "side_table"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "floor_lamp"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "rug"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "mirror",
+              "table_lamp",
+              "decorative_light",
+              "wall_art"
+            ],
+            "max_keep": 0
+          }
+        ],
         "group_minimums": [],
-        "soft_preferences": []
+        "soft_preferences": [
+          "prefer_completeness_without_clutter"
+        ]
       }
     },
     {
@@ -2566,6 +2613,344 @@
         "group_minimums": [],
         "soft_preferences": [
           "prefer_openness_and_lightness"
+        ]
+      }
+    },
+    {
+      "room_type": "combined_living_kitchen",
+      "policy": {
+        "intent": "combined_open_plan",
+        "use_all_objects": false,
+        "selection_policy": "curated"
+      },
+      "clusters": [
+        {
+          "cluster_id": "main_seating",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "coffee_table"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "armchair",
+              "side_table",
+              "floor_lamp",
+              "rug"
+            ],
+            "optional_limits": {
+              "global": 2,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "relation_intents": [
+              {
+                "type": "face",
+                "target_cluster": "media",
+                "strength": "high"
+              }
+            ],
+            "notes": [
+              "The sofa is the dominant anchor for the living zone.",
+              "Sofa must face the TV console (media cluster).",
+              "Keep at most 2 optional support items to avoid clutter.",
+              "Do NOT duplicate items in other clusters."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "sofa",
+              "sectional_sofa",
+              "coffee_table"
+            ],
+            "shrink_before_drop": [
+              "armchair",
+              "side_table"
+            ],
+            "drop_first": [
+              "floor_lamp",
+              "rug"
+            ]
+          }
+        },
+        {
+          "cluster_id": "media",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "tv_console"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "media_shelf"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "tv_console"
+            ],
+            "notes": [
+              "TV console must be against a wall, facing the sofa."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "tv_console"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "media_shelf"
+            ]
+          }
+        },
+        {
+          "cluster_id": "kitchen_core",
+          "priority": "core",
+          "activation": {
+            "base_rule": "must_include",
+            "always_consider": true,
+            "requires_usefulness_test": false,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "stove",
+              "sink"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "dishwasher"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "stove"
+            ],
+            "notes": [
+              "Kitchen core must be placed against a wall.",
+              "Keep all kitchen items clustered together in the kitchen zone."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "stove",
+              "sink"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "dishwasher"
+            ]
+          }
+        },
+        {
+          "cluster_id": "kitchen_storage",
+          "priority": "core",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": true,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "fridge",
+              "kitchen_base_cabinet"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "kitchen_tall_cabinet"
+            ],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "fridge"
+            ],
+            "notes": [
+              "Fridge and base cabinet must be wall-backed."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "fridge",
+              "kitchen_base_cabinet"
+            ],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "kitchen_tall_cabinet"
+            ]
+          }
+        },
+        {
+          "cluster_id": "dining_area",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": true,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [
+              "dining_table"
+            ],
+            "required_if_kept": [],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [
+              "dining_chair"
+            ],
+            "optional_limits": {
+              "global": 4,
+              "by_object": {
+                "dining_chair": 4
+              }
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [
+              "dining_table"
+            ],
+            "notes": [
+              "Dining table sits between the kitchen zone and living zone.",
+              "Place dining chairs around the table."
+            ]
+          },
+          "degradation_hints": {
+            "preserve_first": [
+              "dining_table"
+            ],
+            "shrink_before_drop": [
+              "dining_chair"
+            ],
+            "drop_first": []
+          }
+        },
+        {
+          "cluster_id": "kitchen_island_support",
+          "priority": "support",
+          "activation": {
+            "base_rule": "may_include_if_useful",
+            "always_consider": false,
+            "requires_usefulness_test": true,
+            "conditions": []
+          },
+          "object_program": {
+            "required": [],
+            "required_if_kept": [
+              "kitchen_island"
+            ],
+            "choose_exactly_one_from": [],
+            "choose_exactly_one_from_if_kept": [],
+            "choose_at_least_one_from": [],
+            "optional": [],
+            "optional_limits": {
+              "global": 1,
+              "by_object": {}
+            }
+          },
+          "semantic": {
+            "dominant_anchor_candidates": [],
+            "notes": []
+          },
+          "degradation_hints": {
+            "preserve_first": [],
+            "shrink_before_drop": [],
+            "drop_first": [
+              "kitchen_island"
+            ]
+          }
+        }
+      ],
+      "global_program": {
+        "dominant_anchor_required": [
+          "sofa"
+        ],
+        "dominant_workflow_required": [
+          "stove"
+        ],
+        "group_caps": [
+          {
+            "objects": [
+              "armchair"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "side_table"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "floor_lamp"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "rug"
+            ],
+            "max_keep": 1
+          },
+          {
+            "objects": [
+              "mirror",
+              "table_lamp",
+              "decorative_light",
+              "wall_art"
+            ],
+            "max_keep": 0
+          }
+        ],
+        "group_minimums": [],
+        "soft_preferences": [
+          "prefer_completeness_without_clutter"
         ]
       }
     }

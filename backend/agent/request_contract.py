@@ -44,6 +44,12 @@ _VIETNAMESE_OBJECT_ALIASES: dict[str, tuple[str, ...]] = {
         "ghe trang diem",
     ),
     "coffee_table": ("ban tra", "ban cafe", "ban ca phe"),
+    "console_table": (
+        "tu trang tri",
+        "tu trung bay",
+        "tu phu",
+        "tu goc",
+    ),
     "desk": ("ban", "ban lam viec", "ban hoc", "ban trang diem", "ban go lam viec"),
     "dining_table": ("ban an",),
     "floor_lamp": ("den cay", "den dung", "den san"),
@@ -56,10 +62,28 @@ _VIETNAMESE_OBJECT_ALIASES: dict[str, tuple[str, ...]] = {
         "tu canh giuong",
         "tab dau giuong",
     ),
+    "plant": (
+        "cay canh",
+        "cay trong nha",
+        "chau cay",
+    ),
     "rug": ("tham", "tham trai san"),
     "side_table": ("ban phu", "ban ben", "ban canh sofa", "ban don"),
     "sink": ("bon rua", "bon rua bat", "chau rua", "chau rua bat"),
+    "sofa": (
+        "sofa chu l",
+        "sofa goc",
+        "ghe sofa chu l",
+        "ghe sofa goc",
+    ),
     "stove": ("bep nau", "bep ga", "bep dien", "bep tu"),
+    "wall_art": (
+        "tranh treo tuong",
+        "trang treo tuong",
+        "tranh tuong",
+        "tranh trang tri",
+        "trang tri tuong",
+    ),
     "wardrobe": (
         "tu ao",
         "tu do",
@@ -102,6 +126,22 @@ _GENERIC_DESK_TABLE_BLOCKERS = (
     "ban phu",
     "ban ben",
     "ban don",
+    # positional phrases that describe placement of a living-room table, not a work desk
+    "ban nam",       # "bàn nằm" = table lying/positioned (coffee table between sofa/TV)
+    "ban giua",      # "bàn giữa" = table in the middle
+    "ban dat",       # "bàn đặt" = table placed (as in "bàn đặt giữa sofa")
+    "ban o giua",    # "bàn ở giữa" = table in the middle
+    "ban duoi",      # "bàn dưới" = table below (under)
+    "ban trang tri", # "bàn trang trí" = decorative table (not a desk)
+)
+# Living-room context words: if "ban" is immediately followed by (within 50 chars) any of
+# these, it is describing a table in a seating arrangement, not a work desk.
+_GENERIC_TABLE_LIVING_ROOM_CONTEXT = (
+    "sofa",
+    "tivi",
+    "tv",
+    "ghe sofa",
+    "tham",
 )
 _GENERIC_CHAIR_ALIAS = "ghe"
 _GENERIC_CHAIR_BLOCKERS = (
@@ -180,6 +220,23 @@ _EXPLICIT_HARD_MARKERS = (
 _MIN_GROUP_MEMBERS = 2
 _PRIMARY_SOFA_COUNT = 1
 _OPTIONAL_SECONDARY_SEAT_COUNT = 2
+
+# Dimension extraction patterns (applied to normalized/ASCII-folded text)
+# 2D: "2.6m x 1.6m", "100cm x 60cm"
+_DIM_2D_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*([cm]m?)\s*[xX\u00d7]\s*(\d+(?:[.,]\d+)?)\s*([cm]m?)",
+    re.IGNORECASE,
+)
+# Length only with keyword: "dài 2m", "rộng 1.6m", "long 2m", "dai 2m"
+_DIM_LEN_KEYWORD_RE = re.compile(
+    r"(?:dai|rong|long|width|length|wide|cao|high)\s+(\d+(?:[.,]\d+)?)\s*([cm]m?)\b",
+    re.IGNORECASE,
+)
+# Screen diagonal: "55 inch", "55\"", "55in"
+_DIM_INCH_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*(?:inch|in|\")\b",
+    re.IGNORECASE,
+)
 _BEDROOM_NIGHTSTAND_CLUSTER_ID = "sleep_core"
 _BEDROOM_DEFAULT_NIGHTSTAND_TYPE = "nightstand"
 _CONTRACT_INTENT_ALIASES = {
@@ -538,6 +595,8 @@ def missing_functional_contract_types(
     }
     missing: list[str] = []
     for item in _contract_objects(contract):
+        if item.get("available_in_program") is False:
+            continue
         object_type = canonical_object_type(str(item.get("object_type") or ""))
         if not object_type or object_type in _NON_FUNCTIONAL_CONTRACT_TYPES:
             continue
@@ -613,6 +672,57 @@ def canonical_object_type(object_type: str) -> str:
     return normalized
 
 
+def _parse_dim_mm(value_str: str, unit: str) -> float:
+    """Convert a dimension value string + unit to millimetres."""
+    val = float(value_str.replace(",", "."))
+    u = unit.lower().strip()
+    if u == "cm":
+        return val * 10.0
+    # "m", "mm" — if <20 assume metres (people don't specify 2mm furniture)
+    if u == "mm":
+        return val
+    # metres
+    return val * 1000.0
+
+
+def _extract_dimension_hint(window: str) -> dict[str, Any] | None:
+    """Extract explicit user-specified dimensions from a normalized clause window.
+
+    Returns a dict with some of:
+      L_mm  — largest dimension in mm
+      W_mm  — second dimension in mm (if 2D measurement given)
+      screen_diagonal_inch  — set when the dimension is a TV diagonal in inches
+    Returns None if no dimension found.
+    """
+    # 2D: "2.6m x 1.6m", "100cm x 60cm"
+    m = _DIM_2D_RE.search(window)
+    if m:
+        d1 = _parse_dim_mm(m.group(1), m.group(2))
+        d2 = _parse_dim_mm(m.group(3), m.group(4))
+        return {"L_mm": round(max(d1, d2)), "W_mm": round(min(d1, d2))}
+
+    # Length keyword: "dai 2m", "rong 1.6m"
+    m = _DIM_LEN_KEYWORD_RE.search(window)
+    if m:
+        d = _parse_dim_mm(m.group(1), m.group(2))
+        return {"L_mm": round(d)}
+
+    # Inch (TV screen diagonal): "55 inch"
+    m = _DIM_INCH_RE.search(window)
+    if m:
+        inch = float(m.group(1).replace(",", "."))
+        # Convert diagonal inches → approximate width (16:9 display)
+        # width_mm ≈ diagonal_mm * cos(atan(9/16))
+        diag_mm = inch * 25.4
+        width_mm = diag_mm * (16.0 / (16.0**2 + 9.0**2) ** 0.5)
+        return {
+            "L_mm": round(width_mm),
+            "screen_diagonal_inch": round(inch),
+        }
+
+    return None
+
+
 def _best_mention_contract(
     text: str,
     object_type: str,
@@ -631,22 +741,35 @@ def _best_mention_contract(
             intent = "target_if_viable"
         count_hint = _count_hint_for_object(window, object_type=object_type)
         min_keep, preferred_count, max_keep = _counts_for_intent(intent, count_hint)
-        scored.append(
-            (
-                _intent_rank(intent),
-                {
-                    "object_type": object_type,
-                    "intent": intent,
-                    "min_keep": min_keep,
-                    "target_count": preferred_count,
-                    "preferred_count": preferred_count,
-                    "max_keep": max_keep,
-                    "evidence": window.strip(),
-                    "reason": _reason_for_intent(intent),
-                },
-            )
+        # Use a wider window for dimension extraction so decimal values like
+        # "2.6m" are not truncated by the period-sensitive _clause_window.
+        dim_window = _dim_search_window(text, start, end)
+        dim_hint = _extract_dimension_hint(dim_window)
+        item: dict[str, Any] = {
+            "object_type": object_type,
+            "intent": intent,
+            "min_keep": min_keep,
+            "target_count": preferred_count,
+            "preferred_count": preferred_count,
+            "max_keep": max_keep,
+            "evidence": window.strip(),
+            "reason": _reason_for_intent(intent),
+        }
+        if dim_hint and not dim_hint.get("screen_diagonal_inch"):
+            # Dimension hints from TV-diagonal inches are less reliable as a
+            # furniture-size signal; don't store them on the contract item.
+            item["requested_dims_mm"] = dim_hint
+        elif dim_hint and dim_hint.get("screen_diagonal_inch"):
+            # Store screen diagonal separately so tier logic can ignore it.
+            item["requested_dims_mm"] = dim_hint
+        # Sort key: (intent_rank, no_dims) — dimension-bearing mentions are
+        # preferred over same-intent mentions that lack dimension info because
+        # they are more specific (e.g., "ke tv dai 2m" beats bare "tv").
+        no_dims_key = (
+            0 if (dim_hint and not dim_hint.get("screen_diagonal_inch")) else 1
         )
-    return sorted(scored, key=lambda row: row[0])[0][1]
+        scored.append((_intent_rank(intent), no_dims_key, item))
+    return sorted(scored, key=lambda row: (row[0], row[1]))[0][2]
 
 
 def _intent_for_window(window: str, *, object_type: str) -> str:
@@ -779,6 +902,8 @@ def _has_direct_negative_intent(window: str, *, object_type: str) -> bool:
             rf"\b(?:do not include|don't include|avoid|without)\s+"
             rf"(?:a\s+|an\s+|the\s+|any\s+)?{alias_pattern}s?\b",
             rf"\bno\s+{alias_pattern}s?\b",
+            rf"\b(?:khong\s+(?:co|can|dat|de|dung|su\s+dung)|"
+            rf"tranh|loai\s+bo)\b(?:\s+\w+){{0,6}}\s+{alias_pattern}s?\b",
         )
         if any(re.search(pattern, window) for pattern in direct_patterns):
             return True
@@ -976,6 +1101,36 @@ def _clause_window(text: str, start: int, end: int) -> str:
     return text[left:right].strip()
 
 
+def _dim_search_window(text: str, start: int, end: int, radius: int = 120) -> str:
+    """Window for dimension extraction: breaks only on ';', newline, or ','.
+    Dimensions should appear AFTER the object mention (user pattern is
+    "[count] [object] [dims] [placement desc]"), so we scan forward from
+    the mention end and include a short lookback for context.
+
+    We do NOT break on '.' so decimal values like '2.6m' are preserved.
+    """
+    # Look forward from mention end up to `radius` characters
+    right = min(len(text), end + radius)
+    # Narrow right: stop at the nearest ';' or newline after `end`
+    chunk_right = text[end:right]
+    for sep in (";", "\n"):
+        pos = chunk_right.find(sep)
+        if pos >= 0:
+            right = end + pos
+            break
+    # Look a short distance backward (only to include the object name itself
+    # and any number prefix, e.g. "1 sofa ") — stop at the same delimiters
+    lookback = min(40, start)
+    left = start - lookback
+    chunk_left = text[left:start]
+    for sep in (";", "\n", ","):
+        pos = chunk_left.rfind(sep)
+        if pos >= 0:
+            left = left + pos + 1
+            break
+    return text[left:right].strip()
+
+
 def _intent_rank(intent: str) -> int:
     return {
         "must_keep": 0,
@@ -1014,7 +1169,14 @@ def _blocks_generic_alias_match(
     tail = text[start:]
     if "coffee_table" in tail[:32] or "side_table" in tail[:32]:
         return True
-    return any(tail.startswith(blocker) for blocker in _GENERIC_DESK_TABLE_BLOCKERS)
+    if any(tail.startswith(blocker) for blocker in _GENERIC_DESK_TABLE_BLOCKERS):
+        return True
+    # Block bare "ban" that appears within 50 chars of living-room context keywords —
+    # this catches layout-description phrases like "bàn nằm giữa sofa và TV".
+    window = tail[:50]
+    if any(ctx in window for ctx in _GENERIC_TABLE_LIVING_ROOM_CONTEXT):
+        return True
+    return False
 
 
 def _ascii_fold(text: str) -> str:

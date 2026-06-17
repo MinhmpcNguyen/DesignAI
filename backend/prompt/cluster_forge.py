@@ -288,6 +288,12 @@ RULES
 - All constraints must be cluster-local and geometry-checkable.
 - grid_mm must be 100.
 
+8) DEDUPLICATION
+- Each object type (e.g. armchair, side_table, floor_lamp, rug) should appear in at most ONE cluster.
+- If structured guidance specifies a global_selection_rules cap (e.g. max_keep: 1 for armchair), never assign multiple instances of that type across clusters.
+- Do NOT create a secondary seating/support cluster (e.g. support_optional) whose members are already covered by main_seating or another must_include cluster.
+- If global_selection_rules includes max_keep: 0 for an object type (e.g. mirror, table_lamp, decorative_light), exclude those objects entirely — do not assign them to any cluster.
+
 FINAL CHECK
 - No redundant competing furniture
 - No missing anchor for an explicitly requested function
@@ -295,6 +301,7 @@ FINAL CHECK
 - No floating objects
 - Result feels complete, selective, and balanced
 - Respect structured guidance limits when present
+- No object type appears in more than one cluster unless explicitly required by different functional zones
 
 EDGE
 - Unclear object -> tag="misc"

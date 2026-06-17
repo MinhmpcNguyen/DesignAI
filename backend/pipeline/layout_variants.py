@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
@@ -317,6 +318,10 @@ def build_final_layout_variants_payload(
                 "concept_signature": candidate.concept_signature,
                 "anchor_signature": candidate.anchor_signature,
                 "gallery_selection_mode": str(raw.get("gallery_selection_mode") or ""),
+                "objects": _variant_objects(
+                    absolute_layout=candidate.absolute_layout,
+                    styled_result=candidate.styled_result,
+                ),
                 "absolute_layout": deepcopy(candidate.absolute_layout),
                 "styled_result": deepcopy(candidate.styled_result)
                 if isinstance(candidate.styled_result, dict)
@@ -335,6 +340,21 @@ def build_final_layout_variants_payload(
             requested_count=max_variants,
         ),
     }
+
+
+def _variant_objects(
+    *,
+    absolute_layout: Mapping[str, Any],
+    styled_result: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if isinstance(styled_result, Mapping):
+        styled_objects = styled_result.get("objects")
+        if isinstance(styled_objects, list):
+            return [deepcopy(row) for row in styled_objects if isinstance(row, dict)]
+    layout_objects = absolute_layout.get("objects")
+    if isinstance(layout_objects, list):
+        return [deepcopy(row) for row in layout_objects if isinstance(row, dict)]
+    return []
 
 
 def build_final_gallery_selection_summary(
@@ -623,9 +643,9 @@ def _macro_layout_signature(layout: dict[str, Any]) -> str:
         box = boxes[cluster_id]
         center_x = (box["min_x"] + box["max_x"]) / 2.0
         center_y = (box["min_y"] + box["max_y"]) / 2.0
-        rows.append(
-            f"{cluster_id}:{_bucket(center_x, min_x, width)}{_bucket(center_y, min_y, height)}"
-        )
+        bucket_x = _bucket(center_x, min_x, width)
+        bucket_y = _bucket(center_y, min_y, height)
+        rows.append(f"{cluster_id}:{bucket_x}{bucket_y}")
     return "|".join(rows)
 
 

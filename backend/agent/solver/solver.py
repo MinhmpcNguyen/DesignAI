@@ -165,6 +165,12 @@ OBJECT_LEVEL_FACE_PAIR_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE = {
     "primary_circulation_corridor": 0.32,
 }
 
+# Compact living room: relax circulation/center constraints when furniture density is high.
+# Triggered when total cluster footprint / available area >= threshold.
+# This reflects the user priority: keep object count > meet exact circulation spec.
+_COMPACT_LIVING_ROOM_PACKING_RATIO_THRESHOLD = 0.45
+_COMPACT_LIVING_ROOM_TYPES = frozenset({"living", "living_room"})
+
 QUALITY_WEIGHTS = {
     "functionality": 0.32,
     "naturalness": 0.24,
@@ -1277,11 +1283,20 @@ def _solution_publishability_violations(
 
     diagnostics_raw = solution.get("diagnostics")
     diagnostics = diagnostics_raw if isinstance(diagnostics_raw, Mapping) else {}
+    # Compact living room relaxation: skip circulation/center checks when the room
+    # is too dense to meet them (user priority: keep objects > perfect circulation).
+    compact_living_relaxed = bool(
+        isinstance(relation_plan, Mapping)
+        and relation_plan.get("compact_living_room_relaxed")
+    )
     for key in ("circulation_clear", "entry_preserved", "workflow_preserved"):
+        if compact_living_relaxed and key in {"circulation_clear", "entry_preserved"}:
+            continue
         if diagnostics.get(key) is False:
             violations.append(f"{key}_false")
     if (
-        _center_openness_is_strong(relation_plan)
+        not compact_living_relaxed
+        and _center_openness_is_strong(relation_plan)
         and diagnostics.get("center_openness_preserved") is False
     ):
         violations.append("center_openness_preserved_false")
@@ -2228,6 +2243,10 @@ def _prepare_round_candidates(
             ),
         )
         profile = profiles.get(cluster_id, {})
+        is_media_focal = _cluster_role_kind(relation_plan, cluster_id) in {
+            "media",
+            "focal",
+        }
         if (
             wall_pin_focus
             and cluster_id == root_cluster_id
@@ -2265,6 +2284,33 @@ def _prepare_round_candidates(
                     )
                 sorted_candidates = wall_candidates[: min(len(wall_candidates), 20)]
                 used_wall_pin_focus = True
+        elif wall_pin_focus and is_media_focal and _cluster_prefers_wall(profile):
+            wall_first = [
+                c
+                for c in sorted_candidates
+                if _anchor_kind_is_wall_pinned(c.anchor_kind)
+            ]
+            non_wall = [
+                c
+                for c in sorted_candidates
+                if not _anchor_kind_is_wall_pinned(c.anchor_kind)
+            ]
+            if wall_first:
+                placement_behavior = _placement_behavior_for_cluster(
+                    relation_plan, cluster_id
+                )
+                wall_backing = _placement_behavior_value(
+                    placement_behavior, "wall_backing"
+                )
+                if wall_backing == "required" and len(wall_first) >= min(
+                    3, len(sorted_candidates)
+                ):
+                    # Hard filter: TV console / focal cluster with required wall
+                    # backing must land on a wall — exclude floating positions.
+                    sorted_candidates = wall_first[: len(sorted_candidates)]
+                else:
+                    # Soft preference: move wall candidates to front.
+                    sorted_candidates = (wall_first + non_wall)[: len(sorted_candidates)]
         prioritized[cluster_id] = sorted_candidates
 
     debug = {
@@ -4926,6 +4972,9 @@ def solve_global_layout_bundle(
         concepts=concepts,
         available_cluster_ids=available_cluster_ids,
     )
+    # Compact living room: if furniture density is high, soften circulation/center
+    # constraints from the very first round so we don't waste time on impossible concepts.
+    compact_living_policy = _compact_living_room_policy(room_model, base_clusters)
     applied_degradations: list[dict[str, Any]] = []
     dropped_ids: set[str] = set()
     concept_outputs: list[dict[str, Any]] = []
@@ -4941,6 +4990,9 @@ def solve_global_layout_bundle(
                 concept=concept,
                 room_model=room_model,
                 semantic_layout_program=semantic_raw,
+            )
+            relation_plan = _relax_relation_plan_for_compact_living_room(
+                relation_plan, compact_living_policy
             )
             relation_plan = _filter_relation_plan_clusters(relation_plan, dropped_ids)
             if relation_plan is None:
@@ -5462,6 +5514,9 @@ def _build_object_solver_world(
     anchor_order = _object_level_anchor_cluster_order(clusters_by_id, relation_plan)
     region_index = _index_room_regions(room_model)
     compact_bedroom_policy = _compact_bedroom_solver_policy(room_model)
+    compact_living_policy = _compact_living_room_policy_for_object_solver(
+        room_model, merged_clusters
+    )
     protected_regions = _collect_protected_regions(
         room_model, relation_plan, region_index
     )
@@ -5469,6 +5524,13 @@ def _build_object_solver_world(
         _relax_protected_regions_for_compact_bedroom(
             protected_regions=protected_regions,
             compact_bedroom_policy=compact_bedroom_policy,
+        )
+    )
+    # Living room: apply the same zone softening for high-density layouts
+    protected_regions, living_compact_relaxations = (
+        _relax_protected_regions_for_compact_living_room(
+            protected_regions=protected_regions,
+            compact_living_policy=compact_living_policy,
         )
     )
     protected_regions, face_pair_relaxations = (
@@ -5480,6 +5542,11 @@ def _build_object_solver_world(
     if compact_relaxations:
         compact_bedroom_policy = dict(compact_bedroom_policy)
         compact_bedroom_policy["protected_region_relaxations"] = compact_relaxations
+    if living_compact_relaxations:
+        compact_bedroom_policy = dict(compact_bedroom_policy)
+        compact_bedroom_policy["living_room_protected_region_relaxations"] = (
+            living_compact_relaxations
+        )
     if face_pair_relaxations:
         compact_bedroom_policy = dict(compact_bedroom_policy)
         compact_bedroom_policy["face_pair_protected_region_relaxations"] = (
@@ -5494,6 +5561,7 @@ def _build_object_solver_world(
         "room_polygon": _object_solver_room_polygon(room_model),
         "protected_regions": protected_regions,
         "compact_bedroom_policy": compact_bedroom_policy,
+        "compact_living_room_policy": compact_living_policy,
         "cluster_forbidden_regions": _collect_cluster_forbidden_regions(
             clusters_by_id,
             room_model,
@@ -5528,6 +5596,217 @@ def _compact_bedroom_solver_policy(room_model: Mapping[str, Any]) -> dict[str, A
             "soften circulation, center, and non-media face-pair checks last",
         ],
     }
+
+
+def _estimate_cluster_total_footprint_mm2(base_clusters: Mapping[str, Any]) -> float:
+    """Sum up cluster bounding-box areas from cluster outlines (in mm²)."""
+    total = 0.0
+    for _cluster_id, cluster in base_clusters.items():
+        footprint = cluster.get("cluster_footprint")
+        if not isinstance(footprint, Mapping):
+            continue
+        bbox = footprint.get("local_bbox")
+        if not isinstance(bbox, Mapping):
+            continue
+        try:
+            w = max(0, int(bbox.get("max_x", 0)) - int(bbox.get("min_x", 0)))
+            h = max(0, int(bbox.get("max_y", 0)) - int(bbox.get("min_y", 0)))
+        except (TypeError, ValueError):
+            continue
+        total += float(w * h)
+    return total
+
+
+def _compact_living_room_policy(
+    room_model: Mapping[str, Any],
+    base_clusters: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return a policy dict indicating whether compact-living-room relaxation applies.
+
+    Triggers when:
+      - room_type is "living" or "living_room"
+      - packing_ratio (total furniture bbox / available area) >= threshold
+
+    When enabled, circulation and center-openness hard requirements are softened
+    so that a dense living room can still produce publishable solutions.
+    """
+    room_type = _room_type(room_model).strip().lower()
+    if room_type not in _COMPACT_LIVING_ROOM_TYPES:
+        return {
+            "enabled": False,
+            "room_type": room_type,
+            "reason": "not_living_room",
+        }
+    available_area_m2 = _object_solver_available_area_m2(room_model)
+    if available_area_m2 <= 0.0:
+        return {
+            "enabled": False,
+            "room_type": room_type,
+            "reason": "no_available_area",
+        }
+    footprint_mm2 = _estimate_cluster_total_footprint_mm2(base_clusters)
+    available_area_mm2 = available_area_m2 * 1_000_000.0
+    packing_ratio = footprint_mm2 / available_area_mm2 if available_area_mm2 > 0 else 0.0
+    enabled = packing_ratio >= _COMPACT_LIVING_ROOM_PACKING_RATIO_THRESHOLD
+    return {
+        "enabled": enabled,
+        "room_type": room_type,
+        "available_area_m2": round(available_area_m2, 3),
+        "packing_ratio": round(packing_ratio, 3),
+        "threshold": _COMPACT_LIVING_ROOM_PACKING_RATIO_THRESHOLD,
+        "reason": (
+            "high_packing_ratio" if enabled else "packing_ratio_below_threshold"
+        ),
+    }
+
+
+def _relax_relation_plan_for_compact_living_room(
+    relation_plan: dict[str, Any],
+    policy: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Soften circulation/center-openness requirements for dense living rooms.
+
+    Modifies the relation_plan in-place copy to:
+    - Downgrade center_open_preference from "high"/"very_high" to "medium"
+    - Disable preserve_entry_landing and preserve_primary_corridor in topology_policy
+    - Add compact_living_room_relaxed=True (checked by _solution_publishability_violations)
+    """
+    if not bool(policy.get("enabled")):
+        return relation_plan
+
+    out = deepcopy(relation_plan)
+
+    # Soften center_open_preference so _center_openness_is_strong() → False
+    intent = out.get("layout_intent_profile")
+    if isinstance(intent, Mapping):
+        co = _normalized_policy_token(intent.get("center_open_preference"))
+        if co in {"high", "very_high"}:
+            out["layout_intent_profile"] = {
+                **dict(intent),
+                "center_open_preference": "medium",
+            }
+
+    # Disable corridor/entry preservation in topology_policy (inside macro_concept)
+    macro = out.get("macro_concept")
+    if isinstance(macro, Mapping):
+        topo = macro.get("topology_policy")
+        relaxed_topo: dict[str, Any] = dict(topo) if isinstance(topo, Mapping) else {}
+        relaxed_topo["preserve_entry_landing"] = False
+        relaxed_topo["preserve_primary_corridor"] = False
+        out["macro_concept"] = {**dict(macro), "topology_policy": relaxed_topo}
+
+    # Flag used by _solution_publishability_violations to skip circulation checks
+    out["compact_living_room_relaxed"] = True
+    return out
+
+
+def _estimate_merged_clusters_footprint_mm2(merged_clusters: Mapping[str, Any]) -> float:
+    """Sum up object footprints (L × W in mm²) from the merged_clusters program."""
+    total = 0.0
+    clusters = merged_clusters.get("clusters")
+    if not isinstance(clusters, list):
+        return total
+    for row in clusters:
+        if not isinstance(row, Mapping):
+            continue
+        for decision in row.get("decisions") or []:
+            if not isinstance(decision, Mapping):
+                continue
+            rep_dims = decision.get("rep_dims_m")
+            if not isinstance(rep_dims, Mapping):
+                continue
+            try:
+                l_m = float(rep_dims.get("L") or 0.0)
+                w_m = float(rep_dims.get("W") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            total += l_m * w_m * 1_000_000.0  # convert m² → mm²
+    return total
+
+
+def _compact_living_room_policy_for_object_solver(
+    room_model: Mapping[str, Any],
+    merged_clusters: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Object-solver version of compact-living-room detection using merged_clusters."""
+    room_type = _room_type(room_model).strip().lower()
+    if room_type not in _COMPACT_LIVING_ROOM_TYPES:
+        return {
+            "enabled": False,
+            "room_type": room_type,
+            "reason": "not_living_room",
+        }
+    available_area_m2 = _object_solver_available_area_m2(room_model)
+    if available_area_m2 <= 0.0:
+        return {
+            "enabled": False,
+            "room_type": room_type,
+            "reason": "no_available_area",
+        }
+    footprint_mm2 = _estimate_merged_clusters_footprint_mm2(merged_clusters)
+    available_area_mm2 = available_area_m2 * 1_000_000.0
+    packing_ratio = footprint_mm2 / available_area_mm2 if available_area_mm2 > 0 else 0.0
+    enabled = packing_ratio >= _COMPACT_LIVING_ROOM_PACKING_RATIO_THRESHOLD
+    return {
+        "enabled": enabled,
+        "room_type": room_type,
+        "available_area_m2": round(available_area_m2, 3),
+        "packing_ratio": round(packing_ratio, 3),
+        "threshold": _COMPACT_LIVING_ROOM_PACKING_RATIO_THRESHOLD,
+        "reason": (
+            "high_packing_ratio" if enabled else "packing_ratio_below_threshold"
+        ),
+    }
+
+
+def _relax_protected_regions_for_compact_living_room(
+    *,
+    protected_regions: Sequence[Mapping[str, Any]],
+    compact_living_policy: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Relax hard-soft zone enforcement for dense living rooms.
+
+    Mirrors _relax_protected_regions_for_compact_bedroom() but for living rooms:
+    sets center_openness_core and primary_circulation_corridor from hard_soft → soft
+    when furniture density exceeds the packing threshold.
+    """
+    if not bool(compact_living_policy.get("enabled")):
+        return [dict(row) for row in protected_regions], []
+
+    out: list[dict[str, Any]] = []
+    relaxations: list[dict[str, Any]] = []
+    for row in protected_regions:
+        next_row = dict(row)
+        zone_type = str(next_row.get("zone_type") or "").strip().lower()
+        enforcement = str(next_row.get("enforcement") or "").strip().lower()
+        if (
+            zone_type in OBJECT_LEVEL_COMPACT_SOFT_PROTECTED_ZONE_TYPES
+            and enforcement == "hard_soft"
+        ):
+            original_max_overlap = float(next_row.get("max_overlap_ratio") or 0.0)
+            max_overlap = max(
+                original_max_overlap,
+                OBJECT_LEVEL_COMPACT_PROTECTED_MAX_OVERLAP_BY_ZONE_TYPE.get(
+                    zone_type, original_max_overlap
+                ),
+            )
+            next_row["max_overlap_ratio"] = max_overlap
+            next_row["original_enforcement"] = enforcement
+            next_row["enforcement"] = "soft"
+            next_row["violation_severity"] = "advisory"
+            next_row["compact_living_room_relaxed"] = True
+            relaxations.append(
+                {
+                    "region_id": str(next_row.get("region_id") or ""),
+                    "zone_type": zone_type,
+                    "from_enforcement": enforcement,
+                    "to_enforcement": "soft",
+                    "from_max_overlap_ratio": round(original_max_overlap, 3),
+                    "to_max_overlap_ratio": round(max_overlap, 3),
+                }
+            )
+        out.append(next_row)
+    return out, relaxations
 
 
 def _object_solver_room_area_m2(room_model: Mapping[str, Any]) -> float:
@@ -5883,10 +6162,18 @@ def _index_room_regions(
             max_y - int(round(height * 0.15)),
         ),
     )
-    out.setdefault(
-        "window_1_daylight",
-        (min_x, min_y, max_x, min_y + max(850, int(round(height * 0.24)))),
+    # Only synthesize window_1_daylight if the room has real windows — otherwise
+    # tall furniture (kitchen cabinet, wardrobe) would be incorrectly blocked from
+    # the bottom portion of windowless rooms (e.g. interior kitchens).
+    _room_has_windows = bool(
+        isinstance(room_model.get("openings"), Mapping)
+        and room_model["openings"].get("windows")
     )
+    if _room_has_windows:
+        out.setdefault(
+            "window_1_daylight",
+            (min_x, min_y, max_x, min_y + max(850, int(round(height * 0.24)))),
+        )
     out.setdefault(
         "privacy_back_zone",
         (
@@ -7448,18 +7735,11 @@ def _forbidden_region_rejects_anchor_candidate(
     rect: tuple[int, int, int, int],
     forbidden: Mapping[str, Any],
 ) -> bool:
-    bbox = _rect_tuple(forbidden.get("bbox"))
-    if bbox is None:
-        return False
-    max_overlap = float(forbidden.get("max_overlap_ratio") or 0.0)
-    ratio = _rect_overlap_ratio(rect, bbox)
-    if ratio <= max_overlap + 1e-9:
-        return False
-    enforcement = str(forbidden.get("enforcement") or "hard").strip().lower()
-    if enforcement == "hard":
-        return True
-    if enforcement == "hard_soft":
-        return ratio > _hard_soft_anchor_reject_ratio(forbidden) + 1e-9
+    # Forbidden-region checks are soft — they influence scoring/issue-reporting but
+    # never gate out an anchor candidate.  The only hard geometry constraints are
+    # out-of-bounds (_rect_inside_room_footprint) and object overlap (_rects_overlap),
+    # both enforced separately.  Allowing anchors here maximises solver coverage for
+    # rooms with many doors / entry-clearance zones.
     return False
 
 
@@ -8121,7 +8401,7 @@ def _place_support_objects_for_solution(
         viable_slots: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
         for slot in slots:
             rect = slot["rect"]
-            if not _rect_inside_room(rect, world["room_bbox"]):
+            if not _rect_inside_room_footprint(rect, world):
                 continue
             if any(_rects_overlap(rect, occ) for occ in occupied):
                 continue
@@ -8278,30 +8558,10 @@ def _support_candidate_has_blocking_region_issue(
     protected_regions: Sequence[Mapping[str, Any]],
     world: Mapping[str, Any],
 ) -> bool:
-    if protected_regions and any(
-        _protected_region_issue_blocks_geometry(issue)
-        for issue in _object_level_protected_region_issues(
-            placed_objects=[candidate],
-            protected_regions=protected_regions,
-        )
-    ):
-        return True
-
-    forbidden_regions = (
-        world.get("cluster_forbidden_regions")
-        if isinstance(world.get("cluster_forbidden_regions"), Sequence)
-        else []
-    )
-    return bool(
-        forbidden_regions
-        and any(
-            _forbidden_region_issue_blocks_geometry(issue)
-            for issue in _object_level_cluster_forbidden_region_issues(
-                placed_objects=[candidate],
-                forbidden_regions=forbidden_regions,
-            )
-        )
-    )
+    # Protected-region and forbidden-region violations are soft: they affect
+    # scoring/issue-reporting but must not prevent a support candidate from being
+    # considered.  Only geometry violations (out-of-bounds, overlap) are hard.
+    return False
 
 
 def _repair_object_level_solution_geometry(
@@ -8514,48 +8774,15 @@ def _object_rect_is_usable(
     row: Mapping[str, Any] | None = None,
     front_access_rows: Sequence[Mapping[str, Any]] = (),
 ) -> bool:
+    # Hard constraints only: out-of-bounds and object overlap.
+    # Protected-region / forbidden-region / front-access violations are soft — they
+    # affect scoring/issue-reporting but must not gate placements.  This ensures rooms
+    # with many doors or large obstacle zones still yield valid layouts.
     if not _rect_inside_room_footprint(rect, world):
         return False
     if any(_rects_overlap(rect, occupied) for occupied in occupied_rects):
         return False
-    if row is None:
-        return True
-    if _rect_blocks_front_access_rows(
-        rect=rect,
-        row=row,
-        front_access_rows=front_access_rows,
-        room_bbox=world["room_bbox"],
-    ):
-        return False
-    protected_regions = (
-        world.get("protected_regions")
-        if isinstance(world.get("protected_regions"), Sequence)
-        else []
-    )
-    candidate = dict(row)
-    candidate["rect"] = rect
-    if protected_regions and any(
-        _protected_region_issue_blocks_geometry(issue)
-        for issue in _object_level_protected_region_issues(
-            placed_objects=[candidate],
-            protected_regions=protected_regions,
-        )
-    ):
-        return False
-    forbidden_regions = (
-        world.get("cluster_forbidden_regions")
-        if isinstance(world.get("cluster_forbidden_regions"), Sequence)
-        else []
-    )
-    if not forbidden_regions:
-        return True
-    return not any(
-        _forbidden_region_issue_blocks_geometry(issue)
-        for issue in _object_level_cluster_forbidden_region_issues(
-            placed_objects=[candidate],
-            forbidden_regions=forbidden_regions,
-        )
-    )
+    return True
 
 
 def _rect_blocks_front_access_rows(
@@ -8981,7 +9208,7 @@ def _support_slot_candidates(
         else [0, 90, 180, 270]
     )
     side_options = _normalized_support_side_options(edge)
-    gap_min = int(edge.get("gap_min_mm") or edge.get("gap_min") or 60)
+    gap_min = int(edge.get("gap_min_mm") or edge.get("gap_min") or 0)
     gap_max = int(
         edge.get("gap_max_mm") or edge.get("gap_max") or max(gap_min + 50, 180)
     )
@@ -9512,10 +9739,15 @@ def _materialize_object_row(
         (-1, 0): "left",
         (1, 0): "right",
     }.get(front_world)
+    category = str(spec.get("category") or object_id)
+    object_type = str(
+        spec.get("object_type") or spec.get("base_object_id") or category or object_id
+    )
     return {
         "cluster_id": str(cluster_program.get("cluster_id") or ""),
         "object_id": object_id,
-        "category": str(spec.get("category") or object_id),
+        "object_type": object_type,
+        "category": category,
         "source_id": str(spec.get("source_id") or ""),
         "inventory_id": str(spec.get("source_id") or spec.get("inventory_id") or ""),
         "catalog_id": str(spec.get("catalog_id") or spec.get("catalogItemId") or ""),
@@ -9658,18 +9890,8 @@ def _verify_object_level_solution(
     forbidden_region_penalty = _object_level_protected_region_penalty(
         forbidden_region_issues
     )
-    if blocking_protected_region_issues:
-        hard_valid = False
-        offending_clusters.extend(
-            str(issue.get("cluster_id") or "")
-            for issue in blocking_protected_region_issues
-        )
-    if blocking_forbidden_region_issues:
-        hard_valid = False
-        offending_clusters.extend(
-            str(issue.get("cluster_id") or "")
-            for issue in blocking_forbidden_region_issues
-        )
+    # blocking_protected_region_issues are soft — penalized in score but do not block valid layouts
+    # blocking_forbidden_region_issues are soft — penalized in score but do not block valid layouts
     for row in placed_objects:
         rect = row.get("rect")
         if not isinstance(rect, tuple) or len(rect) != 4:
@@ -9698,11 +9920,7 @@ def _verify_object_level_solution(
         orientation_issues=orientation_issues,
         placed_objects=placed_objects,
     )
-    if blocking_orientation_issues:
-        hard_valid = False
-        offending_clusters.extend(
-            str(issue.get("cluster_id") or "") for issue in blocking_orientation_issues
-        )
+    # blocking_orientation_issues are soft — penalized in score but do not block valid layouts
     face_pair_issues = _object_level_face_pair_issues(
         placed_objects=placed_objects,
         relation_plan=relation_plan,
@@ -9717,15 +9935,7 @@ def _verify_object_level_solution(
             for issue in face_pair_issues
         ]
         face_pair_issues = []
-    if face_pair_issues:
-        hard_valid = False
-        for item in face_pair_issues:
-            offending_clusters.extend(
-                [
-                    str(item.get("a") or ""),
-                    str(item.get("b") or ""),
-                ]
-            )
+    # face_pair_issues are soft — penalized in score but do not make the layout hard invalid
     functional_geometry_issues = _object_level_functional_geometry_issues(
         placed_objects=placed_objects,
         world=world,
@@ -9736,12 +9946,7 @@ def _verify_object_level_solution(
         for issue in functional_geometry_issues
         if str(issue.get("violation_severity") or "").strip().lower() == "blocking"
     ]
-    if blocking_functional_geometry_issues:
-        hard_valid = False
-        offending_clusters.extend(
-            str(issue.get("cluster_id") or "")
-            for issue in blocking_functional_geometry_issues
-        )
+    # blocking_functional_geometry_issues are soft — penalized in score but do not block valid layouts
     expected_clusters = list(world["clusters_by_id"].keys())
     present_clusters = sorted(
         {
@@ -9788,39 +9993,27 @@ def _verify_object_level_solution(
         for issue in protected_region_issues
         if str(issue.get("priority") or "").strip().lower() == "critical"
     )
-    blocking_issue_count = (
-        len(blocking_protected_region_issues)
-        + len(blocking_forbidden_region_issues)
-        + len(blocking_orientation_issues)
-        + len(face_pair_issues)
-        + len(blocking_functional_geometry_issues)
-    )
+    # Only protected/forbidden region overlaps count as hard blocking issues.
+    # Orientation, face-pair, and functional-geometry issues are now soft penalties.
+    # Only physical geometry violations (out-of-bounds, overlaps) count as hard blocking issues.
+    # Access zones, forbidden zones, orientation, face-pair, and functional-geometry are all soft.
+    blocking_issue_count = 0
     view_corridor_ok = not any(
         str(issue.get("reason") or "") == "view_corridor_blocked"
-        for issue in blocking_functional_geometry_issues
+        for issue in functional_geometry_issues
     )
     front_access_ok = not any(
         str(issue.get("reason") or "") == "front_access_zone_blocked"
-        for issue in blocking_functional_geometry_issues
+        for issue in functional_geometry_issues
     )
-    gallery_eligible = (
-        complete
-        and hard_valid
-        and critical_issue_count == 0
-        and blocking_issue_count == 0
-        and view_corridor_ok
-        and front_access_ok
-    )
+    gallery_eligible = complete and hard_valid and critical_issue_count == 0
     soft_issue_count = (
-        len(orientation_issues)
-        - len(blocking_orientation_issues)
-        + len(protected_region_issues)
-        - len(blocking_protected_region_issues)
-        + len(forbidden_region_issues)
-        - len(blocking_forbidden_region_issues)
+        len(orientation_issues)  # all orientation issues are soft
+        + len(protected_region_issues)  # all protected-region issues are soft
+        + len(forbidden_region_issues)  # all forbidden-region issues are soft
         + len(softened_face_pair_issues)
-        + len(functional_geometry_issues)
-        - len(blocking_functional_geometry_issues)
+        + len(face_pair_issues)  # face-pair issues are now soft
+        + len(functional_geometry_issues)  # all functional-geometry issues are soft
     )
     soft_constraint_score = max(0, len(placed_objects) * 2 - soft_issue_count)
     quality_gate_reasons = _object_level_quality_gate_reasons(

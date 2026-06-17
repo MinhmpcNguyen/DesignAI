@@ -84,8 +84,18 @@ def ListInventoryByTypes(
             "items": [],
             "disabled": True,
         }
-    repo = PostgresAssetRepository()
-    assets = list(repo.list_assets(AssetFilter(tenant_id=TenantId(resolved_tenant))))
+    try:
+        repo = PostgresAssetRepository()
+        assets = list(repo.list_assets(AssetFilter(tenant_id=TenantId(resolved_tenant))))
+    except Exception:
+        logger.debug("DB unavailable — ListInventoryByTypes returning empty.")
+        return {
+            "tenant_id": resolved_tenant,
+            "requested_types": _stable_unique_strs(types),
+            "count": 0,
+            "items": [],
+            "disabled": True,
+        }
 
     normalized = _normalize_lookup_set(types)
     results: list[dict[str, Any]] = []
@@ -151,17 +161,25 @@ def ListDesignKnowledge(
     category: str | None = None,
     limit: int | None = 20,
 ) -> Dict[str, Any]:
-    repo = PostgresDesignKnowledgeRepository()
+    try:
+        repo = PostgresDesignKnowledgeRepository()
+    except Exception:
+        logger.debug("DB unavailable — ListDesignKnowledge returning empty.")
+        return {"tenant_id": tenant_id, "count": 0, "items": []}
     normalized_tags = _stable_unique_strs(tags)
 
     if not SemanticSearchConfig.ENABLED:
-        return _list_design_knowledge_lexically(
-            repo=repo,
-            tenant_id=tenant_id,
-            tags=normalized_tags,
-            category=category,
-            limit=limit,
-        )
+        try:
+            return _list_design_knowledge_lexically(
+                repo=repo,
+                tenant_id=tenant_id,
+                tags=normalized_tags,
+                category=category,
+                limit=limit,
+            )
+        except Exception:
+            logger.debug("DB unavailable — ListDesignKnowledge (lexical) returning empty.")
+            return {"tenant_id": tenant_id, "count": 0, "items": []}
 
     # Prefer tenant-specific knowledge first, then fall back to global knowledge.
     filters: list[DesignKnowledgeFilter] = []

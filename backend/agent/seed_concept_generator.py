@@ -80,10 +80,10 @@ CONCEPT_FAMILIES: tuple[ConceptFamily, ...] = (
 )
 MACRO_REGION_CAP = 16
 MAX_REGION_CANDIDATES_PER_CLUSTER = 4
-MAX_ASSIGNMENT_CANDIDATES_PER_CONCEPT = 32
+MAX_ASSIGNMENT_CANDIDATES_PER_CONCEPT = 48
 DEDUPE_THRESHOLD = 0.75
 MIN_CONCEPT_DISTANCE = 0.25
-MAX_VARIANT_FAMILIES_PER_CLUSTER = 4
+MAX_VARIANT_FAMILIES_PER_CLUSTER = 6
 MIN_VARIANT_FAMILIES_PER_CLUSTER = 2
 _RESPONSE_MIME_TYPE = "application/json"
 _GUIDANCE_LLM_TEMPERATURE = 0.2
@@ -942,6 +942,23 @@ def _apply_zone_forbidden_guardrails(
     region_index = _guardrail_region_index(room_model)
     clusters_by_id = {cluster.cluster_id: cluster for cluster in cluster_programs}
     rows = [dict(row) for row in cluster_zone_plan]
+
+    # Build the set of zones that are already validly claimed (no forbidden overlap),
+    # so that clusters being reassigned can prefer unclaimed walls instead of
+    # pile-ing onto the same fallback zone (e.g. right_wall_zone).
+    already_claimed_zones: set[str] = {
+        zone
+        for row in rows
+        if (zone := _clean_str(row.get("zone_assignment"))) is not None
+        and not _zone_overlaps_forbidden_regions(
+            zone_id=zone,
+            forbidden_region_ids=_string_list(row.get("forbidden_region_ids")),
+            region_index=region_index,
+            macro_region_map=macro_region_map,
+            room_model=room_model,
+        )
+    }
+
     for row in rows:
         cluster_id = _clean_str(row.get("cluster_id"))
         if cluster_id is None:
@@ -969,6 +986,7 @@ def _apply_zone_forbidden_guardrails(
             region_index=region_index,
             macro_region_map=macro_region_map,
             room_model=room_model,
+            already_claimed_zones=frozenset(already_claimed_zones),
         )
         if replacement is None or replacement == current_zone:
             row["zone_guardrail_notes"] = [
@@ -984,6 +1002,8 @@ def _apply_zone_forbidden_guardrails(
         row["zone_guardrail_notes"] = [
             f"Reassigned from {current_zone} because it overlaps a forbidden region."
         ]
+        # Mark the chosen zone as claimed so the next cluster avoids it too.
+        already_claimed_zones.add(replacement)
     return rows
 
 
@@ -994,7 +1014,19 @@ def _non_conflicting_zone_assignment(
     region_index: Mapping[str, tuple[int, int, int, int]],
     macro_region_map: Mapping[str, object],
     room_model: Mapping[str, object],
+    already_claimed_zones: frozenset[str] = frozenset(),
 ) -> str | None:
+    """Return the best zone to reassign this cluster to.
+
+    Prefers zones with no forbidden-region overlap AND that are not already
+    claimed by another cluster in the same concept (cross-cluster awareness).
+    If every clean zone is claimed, falls back to the least-overlap option.
+    """
+    # A penalty applied to zones already claimed by another cluster.
+    # Scores are overlap ratios in [0, 1]; 0.5 pushes claimed zones below any
+    # clean unclaimed zone but still lets them win over heavily-forbidden zones.
+    _CLAIMED_ZONE_PENALTY = 0.5
+
     current_zone = _clean_str(row.get("zone_assignment"))
     candidate_ids = [
         _clean_str(candidate.get("region_id"))
@@ -1005,10 +1037,14 @@ def _non_conflicting_zone_assignment(
         [
             "edge_loading_zone",
             "storage_service_edge_zone",
-            "top_wall_zone",
+            # Main wall zones ordered from largest/most-versatile to narrowest.
+            # right/bottom come before top/left so that large clusters (sofas,
+            # large cabinets) land on a full-length wall rather than the potentially
+            # narrow usable segment that top_wall_zone resolves to after door gaps.
             "right_wall_zone",
             "bottom_wall_zone",
             "left_wall_zone",
+            "top_wall_zone",
             "primary_focal_wall_zone",
             "quiet_private_deep_zone",
             "daylight_biased_zone",
@@ -1031,6 +1067,10 @@ def _non_conflicting_zone_assignment(
             macro_region_map=macro_region_map,
             room_model=room_model,
         )
+        # Add a penalty for zones already occupied by another cluster so we
+        # spread storage/support onto different walls rather than pile-up.
+        if candidate_id in already_claimed_zones:
+            score = max(score, _CLAIMED_ZONE_PENALTY)
         if score <= 1e-9:
             return candidate_id
         if score < best_score:
@@ -1101,6 +1141,14 @@ def _guardrail_region_index(
             bbox = _guardrail_bbox_from_mapping(value)
             if region_id is not None and bbox is not None:
                 out.setdefault(region_id, bbox)
+                # Also index the underscore-normalised form so that forbidden_region_ids
+                # that were serialised with underscores (e.g. UUID separators converted
+                # from hyphens) resolve to the correct bbox rather than the keyword
+                # fallback.  Example: "02f2b838-ddbf-..._entry_clearance" in the room
+                # model must match "02f2b838_ddbf_..._entry_clearance" in the zone plan.
+                normalized = region_id.replace("-", "_")
+                if normalized != region_id:
+                    out.setdefault(normalized, bbox)
             for child in value.values():
                 walk(child)
         elif isinstance(value, Sequence) and not isinstance(value, str):
@@ -1109,6 +1157,7 @@ def _guardrail_region_index(
 
     walk(room_model)
     _add_guardrail_primary_corridor_aliases(room_model, out)
+    _add_guardrail_wall_zone_refinements(room_model, out)
     return out
 
 
@@ -1219,6 +1268,122 @@ def _guardrail_bbox_from_polyline(
         points_bbox[2] + pad,
         points_bbox[3] + pad,
     )
+
+
+def _add_guardrail_wall_zone_refinements(
+    room_model: Mapping[str, object],
+    region_index: dict[str, tuple[int, int, int, int]],
+) -> None:
+    """Refine generic wall-zone bboxes to match actually-usable wall segments.
+
+    Without this, ``top_wall_zone`` maps to the full top strip (including door
+    clearances), so any concept that assigns a cluster there gets the guardrail
+    triggered even when most of the wall is clear.  We read ``focal_surfaces``
+    from the affordance map — these segments already have door gaps removed —
+    and register the usable extent as the canonical bbox for each side-wall zone
+    (using ``setdefault`` so hand-coded entries in the index are never overwritten).
+    """
+    affordance = _mapping_or_empty(room_model.get("affordance_map"))
+    focal_surfaces = _sequence_or_empty(affordance.get("focal_surfaces"))
+    if not focal_surfaces:
+        return
+
+    room_bbox = _guardrail_room_bbox(room_model)
+    if room_bbox is None:
+        return
+    r_min_x, r_min_y, r_max_x, r_max_y = room_bbox
+    r_width = r_max_x - r_min_x
+    r_height = r_max_y - r_min_y
+    wall_depth = max(700, int(round(min(r_width, r_height) * 0.18)))
+    # A point is "near" a wall if within this tolerance
+    wall_tol = max(150, int(round(min(r_width, r_height) * 0.04)))
+
+    # Collect the usable extents along each wall side.
+    # For horizontal walls (top/bottom) we collect x-ranges.
+    # For vertical walls (left/right) we collect y-ranges.
+    top_xs: list[tuple[float, float]] = []
+    bot_xs: list[tuple[float, float]] = []
+    left_ys: list[tuple[float, float]] = []
+    right_ys: list[tuple[float, float]] = []
+
+    for seg in focal_surfaces:
+        if not isinstance(seg, Mapping):
+            continue
+        pts = [
+            p
+            for p in _sequence_or_empty(seg.get("segment_mm"))
+            if isinstance(p, Mapping)
+        ]
+        if len(pts) < 2:
+            continue
+        try:
+            xs = [float(p["x"]) for p in pts]
+            ys = [float(p["y"]) for p in pts]
+        except (TypeError, ValueError, KeyError):
+            continue
+        x1, x2 = min(xs), max(xs)
+        y1, y2 = min(ys), max(ys)
+
+        # Horizontal segment (top or bottom wall)
+        if y2 - y1 < wall_tol:
+            mid_y = (y1 + y2) / 2
+            if mid_y < r_min_y + wall_tol:
+                top_xs.append((x1, x2))
+            elif mid_y > r_max_y - wall_tol:
+                bot_xs.append((x1, x2))
+
+        # Vertical segment (left or right wall)
+        elif x2 - x1 < wall_tol:
+            mid_x = (x1 + x2) / 2
+            if mid_x < r_min_x + wall_tol:
+                left_ys.append((y1, y2))
+            elif mid_x > r_max_x - wall_tol:
+                right_ys.append((y1, y2))
+
+    def _union_extent(
+        segs: list[tuple[float, float]],
+    ) -> tuple[int, int] | None:
+        if not segs:
+            return None
+        lo = int(round(min(s[0] for s in segs)))
+        hi = int(round(max(s[1] for s in segs)))
+        return (lo, hi) if hi - lo >= 500 else None
+
+    # Top wall: strip at y=r_min_y, width = usable x-extent
+    top_ext = _union_extent(top_xs)
+    if top_ext is not None:
+        bbox = _guardrail_bbox_tuple(
+            top_ext[0], r_min_y, top_ext[1], r_min_y + wall_depth
+        )
+        if bbox is not None:
+            region_index.setdefault("top_wall_zone", bbox)
+
+    # Bottom wall: strip at y=r_max_y, width = usable x-extent
+    bot_ext = _union_extent(bot_xs)
+    if bot_ext is not None:
+        bbox = _guardrail_bbox_tuple(
+            bot_ext[0], r_max_y - wall_depth, bot_ext[1], r_max_y
+        )
+        if bbox is not None:
+            region_index.setdefault("bottom_wall_zone", bbox)
+
+    # Left wall: strip at x=r_min_x, height = usable y-extent
+    left_ext = _union_extent(left_ys)
+    if left_ext is not None:
+        bbox = _guardrail_bbox_tuple(
+            r_min_x, left_ext[0], r_min_x + wall_depth, left_ext[1]
+        )
+        if bbox is not None:
+            region_index.setdefault("left_wall_zone", bbox)
+
+    # Right wall: strip at x=r_max_x, height = usable y-extent
+    right_ext = _union_extent(right_ys)
+    if right_ext is not None:
+        bbox = _guardrail_bbox_tuple(
+            r_max_x - wall_depth, right_ext[0], r_max_x, right_ext[1]
+        )
+        if bbox is not None:
+            region_index.setdefault("right_wall_zone", bbox)
 
 
 def _add_guardrail_primary_corridor_aliases(
@@ -1463,6 +1628,9 @@ def _score_cluster_region(
     if role in {"media", "focal"} and "focal" in tags:
         score += 2.2
         reasons.append("focal_compatible")
+    if role == "kitchen" and ("wall" in tags or "edge" in tags):
+        score += 3.0
+        reasons.append("kitchen_wall_preferred")
     if role in {"storage", "service"} and ("storage" in tags or "edge" in tags):
         score += 2.0
         reasons.append("storage_edge_compatible")
@@ -1582,8 +1750,9 @@ def _macro_scenario_for_family(family: ConceptFamily) -> MacroScenario:
 def _macro_scenarios_for_family(family: ConceptFamily) -> list[MacroScenario]:
     primary = _macro_scenario_for_family(family)
     if family == "focal_axis":
+        # Cover all 4 axis orientations: sofa at top, bottom, left, right
         return [
-            primary,
+            primary,  # top→bottom: sofa on top wall, TV on bottom
             MacroScenario(
                 scenario_id="focal_axis_left_right",
                 label="primary seating left wall, focal media opposite right",
@@ -1599,6 +1768,102 @@ def _macro_scenarios_for_family(family: ConceptFamily) -> list[MacroScenario]:
                 primary_anchor_strength="strong",
                 secondary_anchor_strength="strong",
                 support_anchor_strength="medium",
+            ),
+            MacroScenario(
+                scenario_id="focal_axis_bottom_top",
+                label="primary seating bottom wall, focal media on top wall",
+                primary_zone_id="bottom_wall_zone",
+                secondary_zone_id="top_wall_zone",
+                storage_zone_id="left_wall_zone",
+                support_zone_id="right_wall_zone",
+                primary_wall_side="bottom_wall",
+                secondary_wall_side="top_wall",
+                storage_wall_side="left_wall",
+                pair_type="opposite_walls",
+                center_policy="balanced_open",
+                primary_anchor_strength="strong",
+                secondary_anchor_strength="strong",
+                support_anchor_strength="medium",
+            ),
+            MacroScenario(
+                scenario_id="focal_axis_right_left",
+                label="primary seating right wall, focal media on left wall",
+                primary_zone_id="right_wall_zone",
+                secondary_zone_id="left_wall_zone",
+                storage_zone_id="bottom_wall_zone",
+                support_zone_id="top_wall_zone",
+                primary_wall_side="right_wall",
+                secondary_wall_side="left_wall",
+                storage_wall_side="bottom_wall",
+                pair_type="opposite_walls",
+                center_policy="balanced_open",
+                primary_anchor_strength="strong",
+                secondary_anchor_strength="strong",
+                support_anchor_strength="medium",
+            ),
+        ]
+    if family == "open_center":
+        # Cover both axis orientations with open center preserved
+        return [
+            primary,  # left↔right
+            MacroScenario(
+                scenario_id="open_center_top_bottom",
+                label="primary seating top wall, media bottom wall, open center",
+                primary_zone_id="top_wall_zone",
+                secondary_zone_id="bottom_wall_zone",
+                storage_zone_id="left_wall_zone",
+                support_zone_id="right_wall_zone",
+                primary_wall_side="top_wall",
+                secondary_wall_side="bottom_wall",
+                storage_wall_side="left_wall",
+                pair_type="opposite_walls",
+                center_policy="open_reserved",
+                primary_anchor_strength="strong",
+                secondary_anchor_strength="strong",
+                support_anchor_strength="medium",
+            ),
+        ]
+    if family == "edge_weighted":
+        # Cover both axis orientations with heavy perimeter loading
+        return [
+            primary,  # bottom↔top
+            MacroScenario(
+                scenario_id="edge_weighted_left_right",
+                label="perimeter loaded layout with primary left and media right",
+                primary_zone_id="left_wall_zone",
+                secondary_zone_id="right_wall_zone",
+                storage_zone_id="bottom_wall_zone",
+                support_zone_id="top_wall_zone",
+                primary_wall_side="left_wall",
+                secondary_wall_side="right_wall",
+                storage_wall_side="bottom_wall",
+                pair_type="opposite_walls",
+                center_policy="open_reserved",
+                primary_anchor_strength="strong",
+                secondary_anchor_strength="strong",
+                support_anchor_strength="strong",
+            ),
+        ]
+    if family == "zoned":
+        # Floating primary with media on different walls
+        return [
+            primary,  # floating center + media right
+            MacroScenario(
+                scenario_id="floating_primary_bottom_media",
+                label="floating primary seating with wall-backed media on bottom wall",
+                primary_zone_id="floating_center_zone",
+                secondary_zone_id="bottom_wall_zone",
+                storage_zone_id="right_wall_zone",
+                support_zone_id="left_wall_zone",
+                primary_wall_side="center",
+                secondary_wall_side="bottom_wall",
+                storage_wall_side="right_wall",
+                pair_type="floating_to_wall",
+                center_policy="floating_primary",
+                primary_anchor_strength="strong",
+                secondary_anchor_strength="strong",
+                support_anchor_strength="medium",
+                allow_primary_center_overlap=True,
             ),
         ]
     return [primary]
@@ -1664,6 +1929,7 @@ def _instantiate_concept_families(
                 secondary_cluster_id=secondary_cluster_id,
                 region_candidates=region_candidates,
                 topology_policy=topology_policy,
+                room_type=room_type,
             )
             for cluster in cluster_programs
         ]
@@ -1981,6 +2247,7 @@ def _cluster_zone_assignment(
     secondary_cluster_id: str | None,
     region_candidates: Sequence[RegionCandidate],
     topology_policy: Mapping[str, object],
+    room_type: str = "",
 ) -> dict[str, object]:
     preferred_region_id = _preferred_region_for_family(
         family=family,
@@ -1988,6 +2255,7 @@ def _cluster_zone_assignment(
         cluster=cluster,
         primary_cluster_id=primary_cluster_id,
         secondary_cluster_id=secondary_cluster_id,
+        room_type=room_type,
     )
     candidates = [
         candidate
@@ -1999,9 +2267,22 @@ def _cluster_zone_assignment(
         candidates[0] if candidates else None,
     )
     zone_assignment = preferred_region_id
+    # Compute scenario_role early so the dining-center override and the final
+    # scenario-locked override both use a consistent value.
+    scenario_role = _scenario_role_for_cluster(
+        cluster=cluster,
+        primary_cluster_id=primary_cluster_id,
+        secondary_cluster_id=secondary_cluster_id,
+    )
+    # Force dining clusters to the floating center *only* when they are not the
+    # primary or secondary cluster in the scenario.  Kitchen dining clusters that
+    # carry a "secondary" role (e.g. concept open_center_left_right assigns the
+    # dining table to right_wall_zone) would otherwise always end up in the center
+    # of the room, directly inside the kitchen workflow cluster's front-clearance
+    # zone and causing front_access_zone_blocked violations.
     if cluster.role_kind == "dining" and any(
         item.region_id == "floating_center_zone" for item in candidates
-    ):
+    ) and scenario_role not in {"primary", "secondary"}:
         preferred_region_id = "floating_center_zone"
         zone_assignment = "floating_center_zone"
         candidate = next(
@@ -2009,12 +2290,12 @@ def _cluster_zone_assignment(
         )
     if candidate is not None and family not in {"open_center", "edge_weighted"}:
         zone_assignment = candidate.region_id
-    scenario_role = _scenario_role_for_cluster(
-        cluster=cluster,
-        primary_cluster_id=primary_cluster_id,
-        secondary_cluster_id=secondary_cluster_id,
-    )
-    if scenario_role in {"primary", "secondary"} or (
+    # Scenario-locked override: the preferred region from _preferred_region_for_family
+    # encodes the concept author's intent (primary→primary_zone_id, secondary→secondary,
+    # support/optional→support_zone_id).  Always honour it so that e.g. a support
+    # cluster with high daylight_affinity doesn't get silently reassigned to the
+    # window_side_zone already claimed by the primary seating cluster.
+    if scenario_role in {"primary", "secondary", "support", "optional"} or (
         family == "focal_axis" and cluster.role_kind in {"media", "focal"}
     ):
         zone_assignment = preferred_region_id
@@ -2050,6 +2331,28 @@ def _cluster_zone_assignment(
             if region_id not in {"floating_center_zone", "keep_open_center"}
             and "corridor" not in region_id
         ]
+    # In combined living+kitchen rooms enforce hard zone separation:
+    # kitchen items must not drift onto the sofa/TV walls, and living items
+    # must not drift onto the kitchen wall. This prevents sofa-facing-sink or
+    # sink-far-from-cabinet situations.
+    if room_type == "combined_living_kitchen":
+        if cluster.role_kind == "kitchen":
+            # Also forbid the affordance-derived focal wall where the sofa is anchored.
+            forbidden_region_ids = _uniq(
+                [
+                    *forbidden_region_ids,
+                    scenario.primary_zone_id,
+                    scenario.secondary_zone_id,
+                    "primary_focal_wall_zone",
+                ]
+            )
+        elif cluster.role_kind in {"social_anchor", "media"}:
+            forbidden_region_ids = _uniq(
+                [
+                    *forbidden_region_ids,
+                    scenario.storage_zone_id,
+                ]
+            )
     return {
         "cluster_id": cluster.cluster_id,
         "semantic_role": cluster.semantic_role,
@@ -2405,15 +2708,30 @@ def _preferred_region_for_family(
     cluster: ClusterProgram,
     primary_cluster_id: str | None,
     secondary_cluster_id: str | None,
+    room_type: str = "",
 ) -> str:
     scenario_role = _scenario_role_for_cluster(
         cluster=cluster,
         primary_cluster_id=primary_cluster_id,
         secondary_cluster_id=secondary_cluster_id,
     )
-    if cluster.role_kind == "dining" and bool(
-        cluster.zone_claims.get("floating_allowed")
+    # In combined living+kitchen rooms, anchor the sofa to the affordance-derived
+    # focal wall (primary_focal_wall_zone) rather than a scenario-specific 18% strip.
+    # This ensures the sofa lands on the room's most usable/prominent back wall
+    # regardless of which scenario orientation is used.
+    if (
+        room_type == "combined_living_kitchen"
+        and cluster.role_kind == "social_anchor"
+        and scenario_role == "primary"
     ):
+        return "primary_focal_wall_zone"
+    if cluster.role_kind == "dining" and scenario_role not in {"primary", "secondary"}:
+        # Float dining to the center between kitchen and living zones.
+        # When it is the primary or secondary cluster the concept author has
+        # already chosen a wall zone — forcing it to floating_center_zone in
+        # that case puts the table inside the kitchen front-clearance area.
+        # Previously required floating_allowed=True in zone_claims, but that
+        # claim is not reliably set for combined rooms without profile traits.
         return "floating_center_zone"
     if scenario_role == "primary":
         return scenario.primary_zone_id
@@ -2426,6 +2744,12 @@ def _preferred_region_for_family(
         # the face_each_other contract instead of placing them on the same wall
         # as the primary cluster (top_wall).
         return scenario.secondary_zone_id
+    # Kitchen clusters need a dedicated wall zone — they must not share the
+    # support_zone_id with generic support items, and must not land on the TV wall.
+    # Routing them to storage_zone_id (a third distinct wall) keeps kitchen,
+    # sofa, and TV each on their own wall.
+    if cluster.role_kind == "kitchen" and scenario_role in {"support", "optional"}:
+        return scenario.storage_zone_id
     if scenario_role in {"support", "optional"} and cluster.role_kind not in {
         "work",
         "sleep",
@@ -4079,7 +4403,7 @@ def _cluster_avoids_entry(cluster: ClusterProgram) -> bool:
     return (
         "entry" in avoid_regions
         or "avoid_entry" in relation_types
-        or cluster.role_kind in {"sleep", "media"}
+        or cluster.role_kind in {"sleep", "media", "kitchen"}
     )
 
 
@@ -4215,9 +4539,10 @@ def _wall_claim_for(
         "wall" in zone_assignment or "edge" in zone_assignment
     ):
         return "strong"
-    if family in {"focal_axis", "edge_weighted"} and (
-        cluster.role_kind == "media" or "wall" in zone_assignment
-    ):
+    # Media clusters (TV console, shelf) must always be wall-backed regardless of concept family.
+    if cluster.role_kind == "media":
+        return "strong"
+    if family in {"focal_axis", "edge_weighted"} and "wall" in zone_assignment:
         return "strong"
     if "wall" in zone_assignment or "edge" in zone_assignment:
         return "medium"

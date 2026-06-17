@@ -64,6 +64,19 @@ class MediaTvConsoleContractTest(unittest.TestCase):
             ["armchair", "floor_lamp", "rug", "side_table"],
         )
 
+    def test_living_wall_art_typo_and_plant_are_detected(self) -> None:
+        contract = build_request_contract(
+            brief_text="Trang tri them trang treo tuong va cay canh.",
+            available_object_types=["plant", "wall_art"],
+        )
+
+        object_types = [
+            item.get("object_type")
+            for item in cast(list[dict[str, object]], contract["objects"])
+        ]
+
+        self.assertEqual(object_types, ["plant", "wall_art"])
+
     def test_one_or_two_sofas_keeps_one_primary_sofa_contract(self) -> None:
         contract = build_request_contract(
             brief_text=(
@@ -118,6 +131,24 @@ class MediaTvConsoleContractTest(unittest.TestCase):
 
         self.assertNotIn("desk", object_types)
 
+    def test_living_room_position_phrase_does_not_create_desk_contract(self) -> None:
+        # "bàn nằm giữa sofa và TV" is a layout description, not a desk request.
+        # The generic "ban" alias should be blocked when sofa/TV context is nearby.
+        contract = build_request_contract(
+            brief_text=(
+                "Bo cuc phai co sofa quay mat truc tiep ve ke tv, "
+                "ban nam giua sofa va tv, armchair dat lech canh sofa."
+            ),
+            available_object_types=["desk", "coffee_table", "sofa"],
+        )
+
+        object_types = [
+            item.get("object_type")
+            for item in cast(list[dict[str, object]], contract["objects"])
+        ]
+
+        self.assertNotIn("desk", object_types)
+
     def test_coffee_table_annotation_does_not_create_desk_contract(self) -> None:
         contract = build_request_contract(
             brief_text="Them ban (coffee_table) vao trung tam phong.",
@@ -131,7 +162,7 @@ class MediaTvConsoleContractTest(unittest.TestCase):
 
         self.assertEqual(object_types, ["coffee_table"])
 
-    def test_tv_console_generates_surface_child_tv(self) -> None:
+    def test_tv_console_generates_wall_mounted_tv(self) -> None:
         payload = build_deterministic_stylist_payload(
             {
                 "room": {
@@ -162,13 +193,13 @@ class MediaTvConsoleContractTest(unittest.TestCase):
         tv = next(item for item in objects if item.get("object_type") == "tv")
 
         self.assertEqual(tv.get("source"), "inventory")
-        self.assertEqual(tv.get("collision_layer"), "surface_child")
+        self.assertEqual(tv.get("collision_layer"), "wall_mounted")
         self.assertEqual(
             tv.get("place_on"),
-            {"target_instance_id": "tv_console", "method": "on_top"},
+            {"target_instance_id": "wall", "method": "hang_on"},
         )
 
-    def test_tv_stand_alias_generates_surface_child_tv(self) -> None:
+    def test_tv_stand_alias_generates_wall_mounted_tv(self) -> None:
         payload = build_deterministic_stylist_payload(
             {
                 "room": {
@@ -198,10 +229,10 @@ class MediaTvConsoleContractTest(unittest.TestCase):
         objects = cast(list[dict[str, object]], payload["objects"])
         tv = next(item for item in objects if item.get("object_type") == "tv")
 
-        self.assertEqual(tv.get("collision_layer"), "surface_child")
+        self.assertEqual(tv.get("collision_layer"), "wall_mounted")
         self.assertEqual(
             tv.get("place_on"),
-            {"target_instance_id": "tv_stand", "method": "on_top"},
+            {"target_instance_id": "wall", "method": "hang_on"},
         )
 
 

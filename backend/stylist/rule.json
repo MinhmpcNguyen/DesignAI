@@ -12,10 +12,19 @@
                         "sectional_sofa"
                     ],
                     "required_all_of": [
-                        "coffee_table",
+                        "coffee_table"
+                    ],
+                    "optional_from": [
                         "armchair",
                         "side_table",
-                        "floor_lamp"
+                        "floor_lamp",
+                        "rug"
+                    ],
+                    "optional_at_most": 2,
+                    "notes": [
+                        "The sofa is the dominant seating anchor.",
+                        "Keep at most 2 optional support items from the list to avoid clutter.",
+                        "Do NOT create a separate support cluster for armchair/side_table/floor_lamp if they are already placed here."
                     ]
                 },
                 {
@@ -50,6 +59,54 @@
                             "shoe_rack"
                         ]
                     }
+                }
+            ],
+            "global_selection_rules": [
+                {
+                    "type": "dominant_anchor_required",
+                    "object": "sofa"
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "armchair"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "side_table"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "floor_lamp"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "rug"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "mirror",
+                        "table_lamp",
+                        "decorative_light",
+                        "wall_art"
+                    ],
+                    "max_keep": 0
+                },
+                {
+                    "type": "prefer_completeness_without_clutter",
+                    "enabled": true
                 }
             ]
         }
@@ -976,5 +1033,163 @@
                 ]
             }
         }
-    ]
+    ],
+    {
+        "room_type": "combined_living_kitchen",
+        "selection_guidance": {
+            "intent": "open-plan living and kitchen in one unified space",
+            "use_all_objects": false,
+            "cluster_templates": [
+                {
+                    "cluster_id": "main_seating",
+                    "selection_rule": "must_include",
+                    "exactly_one_of": [
+                        "sofa",
+                        "sectional_sofa"
+                    ],
+                    "required_all_of": [
+                        "coffee_table"
+                    ],
+                    "optional_from": [
+                        "armchair",
+                        "side_table",
+                        "floor_lamp",
+                        "rug"
+                    ],
+                    "optional_at_most": 2,
+                    "notes": [
+                        "The sofa is the dominant anchor for the living zone.",
+                        "Keep at most 2 optional support items to avoid clutter.",
+                        "All living zone items must stay in one cluster \u2014 do NOT scatter armchairs or side_tables into separate clusters."
+                    ]
+                },
+                {
+                    "cluster_id": "media",
+                    "selection_rule": "must_include",
+                    "required_all_of": [
+                        "tv_console"
+                    ],
+                    "optional_from": [
+                        "media_shelf"
+                    ],
+                    "optional_at_most": 1,
+                    "notes": [
+                        "TV console must be wall-backed and face the sofa.",
+                        "This cluster represents the media/focal wall in the living zone."
+                    ]
+                },
+                {
+                    "cluster_id": "kitchen_core",
+                    "selection_rule": "must_include",
+                    "required_all_of": [
+                        "stove",
+                        "sink"
+                    ],
+                    "optional_from": [
+                        "dishwasher"
+                    ],
+                    "optional_at_most": 1,
+                    "notes": [
+                        "All kitchen appliances must be grouped in the kitchen zone, placed against walls.",
+                        "Never scatter kitchen items into the living zone."
+                    ]
+                },
+                {
+                    "cluster_id": "kitchen_storage",
+                    "selection_rule": "may_include_if_useful",
+                    "required_all_of": [
+                        "fridge",
+                        "kitchen_base_cabinet"
+                    ],
+                    "optional_from": [
+                        "kitchen_tall_cabinet"
+                    ],
+                    "optional_at_most": 1,
+                    "notes": [
+                        "Fridge and base cabinets are always wall-backed.",
+                        "Must stay in the kitchen zone."
+                    ]
+                },
+                {
+                    "cluster_id": "dining_area",
+                    "selection_rule": "may_include_if_useful",
+                    "required_all_of": [
+                        "dining_table"
+                    ],
+                    "optional_from": [
+                        "dining_chair"
+                    ],
+                    "optional_at_most": 4,
+                    "notes": [
+                        "Dining table sits between the kitchen and living zones.",
+                        "Place 2\u20134 dining chairs around the table."
+                    ]
+                },
+                {
+                    "cluster_id": "kitchen_island_support",
+                    "selection_rule": "may_include_if_useful",
+                    "conditional": {
+                        "kitchen_island_present": [
+                            "kitchen_island"
+                        ]
+                    },
+                    "notes": [
+                        "Kitchen island is optional and only used if space permits."
+                    ]
+                }
+            ],
+            "global_selection_rules": [
+                {
+                    "type": "dominant_anchor_required",
+                    "object": "sofa"
+                },
+                {
+                    "type": "dominant_anchor_required",
+                    "object": "stove"
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "armchair"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "side_table"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "floor_lamp"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "rug"
+                    ],
+                    "max_keep": 1
+                },
+                {
+                    "type": "max_keep_from_group",
+                    "objects": [
+                        "mirror",
+                        "table_lamp",
+                        "decorative_light",
+                        "wall_art"
+                    ],
+                    "max_keep": 0
+                },
+                {
+                    "type": "prefer_completeness_without_clutter",
+                    "enabled": true
+                }
+            ]
+        }
+    }
 ]

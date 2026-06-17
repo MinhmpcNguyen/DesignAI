@@ -1274,6 +1274,16 @@ def _compose_hospitality_open_side_seed(
     )
 
 
+_DINING_6CHAIR_SLOTS: list[tuple[str, str]] = [
+    ("top", "center"),    # 1 ghế đầu bàn trên (giữa)
+    ("left", "start"),    # 2 ghế bên trái (trên)
+    ("right", "start"),   # 3 ghế bên phải (trên)
+    ("left", "end"),      # 4 ghế bên trái (dưới)
+    ("right", "end"),     # 5 ghế bên phải (dưới)
+    ("bottom", "center"), # 6 ghế đầu bàn dưới (giữa)
+]
+
+
 def _compose_dining_seed(
     cluster: dict[str, Any],
     ctx: SemanticContext,
@@ -1292,18 +1302,34 @@ def _compose_dining_seed(
         if oid != anchor_id
         and any(token in _object_kind(oid) for token in ("chair", "bench", "stool"))
     ]
-    for idx, oid in enumerate(seats):
-        _place_object_on_side(
-            cluster=cluster,
-            ctx=ctx,
-            placements=placements,
-            object_id=oid,
-            base_id=anchor_id,
-            side=sides[idx % len(sides)],
-            gap=max(ctx.grid_mm * 2, 150),
-            align="center",
-            face_base=True,
-        )
+
+    if len(seats) == 6:
+        # Fixed 6-chair arrangement: 1 top, 2 left, 2 right, 1 bottom
+        for oid, (side, align) in zip(seats, _DINING_6CHAIR_SLOTS):
+            _place_object_on_side(
+                cluster=cluster,
+                ctx=ctx,
+                placements=placements,
+                object_id=oid,
+                base_id=anchor_id,
+                side=side,
+                gap=max(ctx.grid_mm * 2, 150),
+                align=align,
+                face_base=True,
+            )
+    else:
+        for idx, oid in enumerate(seats):
+            _place_object_on_side(
+                cluster=cluster,
+                ctx=ctx,
+                placements=placements,
+                object_id=oid,
+                base_id=anchor_id,
+                side=sides[idx % len(sides)],
+                gap=max(ctx.grid_mm * 2, 150),
+                align="center",
+                face_base=True,
+            )
     service_ids = [
         oid
         for oid in ctx.members

@@ -530,11 +530,11 @@ def _collect_object_types(payloads: list[dict[str, Any]]) -> list[str]:
             object_type = _string_or_none(obj.get("object_type"))
             if object_type is None:
                 object_type = _string_or_none(obj.get("type"))
-            normalized = _catalog_key(object_type)
+            normalized = _base_object_type(object_type)
             if not normalized or normalized in seen:
                 continue
             seen.add(normalized)
-            out.append(object_type or normalized)
+            out.append(normalized)
             if normalized.endswith("_lamp") and "lamp" not in seen:
                 seen.add("lamp")
                 out.append("lamp")
@@ -629,7 +629,7 @@ def _match_catalog_payload(
 ) -> dict[str, Any] | None:
     by_id = _mapping(catalog_index.get("by_id"))
     by_type = _mapping(catalog_index.get("by_type"))
-    type_key = _catalog_key(obj.get("object_type") or obj.get("type"))
+    type_key = _base_object_type(obj.get("object_type") or obj.get("type"))
     style_keys = {
         key for value in style_preferences if (key := _ascii_catalog_key(value))
     }
@@ -825,19 +825,16 @@ def _normalize_run_room_objects(
         catalog_item_id = _catalog_item_id(catalog_payload, obj)
         if catalog_payload is None and catalog_item_id is None:
             continue
-        size_mm = _catalog_size_mm(catalog_payload)
+        # Use the solver's plan-bbox footprint for X/Z so the 3D render always
+        # matches the floor plan, even when tier count used requested_dims_mm to
+        # select a non-catalog size. Height comes from the catalog item.
+        size_mm = _size_mm_from_bbox(bbox, catalog_payload=catalog_payload)
         size_mm = _no_stove_sink_kitchen_cabinet_size(
             catalog_payload=catalog_payload,
             obj=obj,
             bbox=bbox,
             current_size=size_mm,
         )
-        if size_mm is None:
-            size_mm = [
-                max(1.0, bbox["max_x"] - bbox["min_x"]),
-                300.0,
-                max(1.0, bbox["max_y"] - bbox["min_y"]),
-            ]
         model_url = _catalog_model_url(catalog_payload, obj)
         if model_url is None:
             message = (
@@ -950,6 +947,7 @@ def _normalize_run_restored_objects(
     catalog_index: dict[str, Any],
     transform: dict[str, Any],
     room_id: str,
+    room_polygon: list[tuple[float, float]] | None = None,
 ) -> list[dict[str, Any]]:
     local_objects, rotations_ccw, default_rotations = _normalize_run_room_objects(
         styled_payload=styled_payload,
@@ -974,11 +972,30 @@ def _normalize_run_restored_objects(
         ) from exc
     restored_payload = restored.get("restored_payload")
     restored_objects = restored_payload if isinstance(restored_payload, list) else []
-    return _finalize_normalize_run_objects(
+    finalized = _finalize_normalize_run_objects(
         restored_objects=restored_objects,
         rotations_ccw=rotations_ccw,
         default_rotations=default_rotations,
     )
+    if room_polygon and len(room_polygon) >= 3:
+        finalized = [
+            obj for obj in finalized
+            if _object_within_room_polygon(obj, room_polygon)
+        ]
+    return finalized
+
+
+def _object_within_room_polygon(
+    obj: dict[str, Any],
+    polygon: list[tuple[float, float]],
+) -> bool:
+    """Check if object center (position.x, position.z) is within the room polygon."""
+    position = _mapping(obj.get("position"))
+    x = _number(position.get("x"))
+    z = _number(position.get("z"))
+    if x is None or z is None:
+        return True  # không có position → giữ lại
+    return _is_point_in_polygon_2d(x, z, polygon)
 
 
 def _normalize_run_debug_split_payload(
@@ -1154,6 +1171,33 @@ def _catalog_size_mm(catalog_payload: dict[str, Any] | None) -> list[float] | No
     return None
 
 
+def _catalog_height_mm(catalog_payload: dict[str, Any] | None) -> float:
+    """Return only the vertical (Y) height from the catalog item, falling back to 300mm."""
+    size = _catalog_size_mm(catalog_payload)
+    if size is not None and len(size) >= 2 and size[1] > 0:
+        return size[1]
+    return 300.0
+
+
+def _size_mm_from_bbox(
+    bbox: Mapping[str, float],
+    *,
+    catalog_payload: dict[str, Any] | None,
+) -> list[float]:
+    """Build output size from the solver's plan-space bbox, using catalog height.
+
+    The frontend scales the GLB model to fill whatever [X, Y, Z] the backend
+    sends. Using the plan bbox for X and Z ensures the 3D render always matches
+    the floor-plan footprint, even when requested_dims_mm overrode the catalog
+    size during tier count.  Height (Y) stays at the catalog value so the model
+    looks proportionally correct vertically.
+    """
+    plan_x = max(1.0, float(bbox["max_x"]) - float(bbox["min_x"]))
+    plan_z = max(1.0, float(bbox["max_y"]) - float(bbox["min_y"]))
+    height = _catalog_height_mm(catalog_payload)
+    return [plan_x, height, plan_z]
+
+
 def _env_flag_enabled(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -1174,8 +1218,8 @@ def _no_stove_sink_kitchen_cabinet_size(
         return current_size
     if _catalog_item_id(catalog_payload, dict(obj)) != _RUSTIC_KITCHEN_BASE_CABINET_ID:
         return current_size
-    if current_size is not None:
-        return current_size
+    # Always enforce the correct height for this specific cabinet model regardless
+    # of whether current_size was already computed from the plan bbox.
     length = max(0.1, float(bbox["max_x"] - bbox["min_x"]))
     width = max(0.1, float(bbox["max_y"] - bbox["min_y"]))
     return [length, _RUSTIC_KITCHEN_BASE_CABINET_HEIGHT, width]
@@ -1486,6 +1530,76 @@ def _catalog_key(value: Any) -> str:
     return clean.lower().replace("-", "_").replace(" ", "_")
 
 
+def _base_object_type(value: Any) -> str:
+    """Strip trailing numeric suffix from object types.
+    E.g. 'dining_chair_2' → 'dining_chair', 'dining_chair_6' → 'dining_chair'.
+    """
+    import re
+    key = _catalog_key(value)
+    if not key:
+        return key
+    return re.sub(r"_\d+$", "", key)
+
+
+def _is_point_in_polygon_2d(
+    x: float, z: float, polygon: list[tuple[float, float]]
+) -> bool:
+    """Ray-casting point-in-polygon test. polygon uses (x, y) where y maps to z."""
+    n = len(polygon)
+    if n < 3:
+        return True  # can't test, allow
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+        if ((yi > z) != (yj > z)) and (x < (xj - xi) * (z - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _room_polygon_map_source_units(
+    system_inputs: list[Any],
+    transform: dict[str, Any],
+) -> dict[str, list[tuple[float, float]]]:
+    """Build room_id → polygon in source units from system_inputs.
+
+    shape_points in user_input are room-local mm (after wall inset).
+    Convert to source units: (room_local_mm + origin_in_original) / source_scale_to_mm.
+    """
+    source_scale = _number(transform.get("source_scale_to_mm")) or 1.0
+    rooms_transform = _mapping(transform.get("rooms"))
+    result: dict[str, list[tuple[float, float]]] = {}
+    for si in system_inputs:
+        if not isinstance(si, dict):
+            continue
+        room_id = _string_or_none(si.get("room_id"))
+        if not room_id:
+            continue
+        pr = _mapping(si.get("pipeline_run_request"))
+        ip = _mapping(pr.get("input_payload"))
+        user_input = _mapping(ip.get("user_input"))
+        shape_points = user_input.get("shape_points")
+        if not isinstance(shape_points, list):
+            continue
+        room_transform = _mapping(rooms_transform.get(room_id))
+        origin = _mapping(room_transform.get("origin_in_original"))
+        ox = _number(origin.get("x")) or 0.0
+        oy = _number(origin.get("y")) or 0.0
+        points: list[tuple[float, float]] = []
+        for pt in shape_points:
+            if not isinstance(pt, dict):
+                continue
+            px = _number(pt.get("x"))
+            py = _number(pt.get("y"))
+            if px is not None and py is not None:
+                points.append(((px + ox) / source_scale, (py + oy) / source_scale))
+        if len(points) >= 3:
+            result[room_id] = points
+    return result
+
+
 def _ascii_catalog_key(value: Any) -> str:
     clean = _string_or_none(value)
     if clean is None:
@@ -1656,6 +1770,7 @@ def _execute_normalize_run_pipeline(
             style=req.style,
             split_largest_room=req.split_largest_room
             and (not single_room_payload or combined_living_kitchen_room),
+            combine_living_kitchen=False,
         )
     except ValueError as exc:
         raise api_exception(
@@ -1754,12 +1869,15 @@ def _execute_normalize_run_pipeline(
             progress_current=total_rooms,
             progress_total=total_rooms,
         )
+    _transform = _mapping(normalized.get("transform"))
+    _room_polygon_map = _room_polygon_map_source_units(system_inputs, _transform)
     response_options = _restore_normalize_run_options(
         coordinate_service=coordinate_service,
         room_options=room_options,
         catalog_index=catalog_index,
-        transform=_mapping(normalized.get("transform")),
+        transform=_transform,
         openings=frontend_openings,
+        room_polygon_map=_room_polygon_map,
     )
     selected_option = _select_normalize_run_response_option(response_options)
     selected_objects = (
@@ -1973,6 +2091,7 @@ def _restore_normalize_run_options(
     catalog_index: dict[str, Any],
     transform: dict[str, Any],
     openings: list[dict[str, Any]],
+    room_polygon_map: dict[str, list[tuple[float, float]]] | None = None,
 ) -> list[dict[str, Any]]:
     option_count = max((len(options) for _, options in room_options), default=0)
     response_options: list[dict[str, Any]] = []
@@ -1992,6 +2111,7 @@ def _restore_normalize_run_options(
             styled_payload = option.get("styled_payload")
             if not isinstance(styled_payload, dict):
                 continue
+            room_polygon = (room_polygon_map or {}).get(room_id)
             option_objects.extend(
                 _normalize_run_restored_objects(
                     coordinate_service=coordinate_service,
@@ -1999,6 +2119,7 @@ def _restore_normalize_run_options(
                     catalog_index=catalog_index,
                     transform=transform,
                     room_id=room_id,
+                    room_polygon=room_polygon,
                 )
             )
         all_options_for_reason = [option for _, option in selected_room_options]
