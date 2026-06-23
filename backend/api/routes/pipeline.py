@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
 
 from adapters.catalog_api import (
     CatalogApiError,
@@ -1829,6 +1829,73 @@ def normalize_run_pipeline_result(
             context={"id": job_id},
         )
     return result
+
+
+@router.post(
+    "/normalize-run/{job_id}/metrics",
+    summary="Compute evaluation metrics for a completed normalize-run job",
+)
+def normalize_run_pipeline_metrics(
+    job_id: str,
+    expected: dict[str, Any] = Body(default={}),
+    manager: NormalizeRunJobManagerDep = Depends(get_normalize_run_job_manager),
+) -> dict[str, Any]:
+    from pipeline.metrics_eval import compute_metrics  # local import to avoid circular
+
+    if not manager.is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job id")
+
+    record = manager._repository.get(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if record.status != "ready":
+        raise HTTPException(status_code=409, detail=f"Job not ready: {record.status}")
+
+    case_ids: list[str] = record.case_ids or []
+    if not case_ids:
+        raise HTTPException(status_code=404, detail="No cases found for job")
+
+    results_by_case: dict[str, dict[str, Any]] = {}
+    for case_id in case_ids:
+        paths = case_paths(case_id)
+        variants_path = paths.layout_variants
+        if not variants_path.exists():
+            continue
+        with open(variants_path) as f:
+            variants_payload = json.load(f)
+        variants = variants_payload.get("variants", [])
+        if not variants:
+            continue
+        best = variants[0]
+        al = best.get("absolute_layout", {})
+        room = al.get("room", {})
+        room_poly = room.get("polygon_ccw", [])
+        openings = al.get("openings", {})
+        metrics = compute_metrics(best.get("objects", []), room_poly, openings, expected)
+        results_by_case[case_id] = metrics
+
+    if not results_by_case:
+        raise HTTPException(status_code=404, detail="No layout data found for job")
+
+    if len(results_by_case) == 1:
+        return next(iter(results_by_case.values()))
+
+    # Multi-room job: aggregate numeric metrics across cases
+    all_vals = list(results_by_case.values())
+    agg: dict[str, Any] = {}
+    for key in ("type_coverage_pct", "request_following"):
+        vals = [v[key] for v in all_vals if v.get(key) is not None]
+        agg[key] = round(sum(vals) / len(vals), 1) if vals else None
+    for key in ("out_of_bounds_count", "overlap_count", "solid_count", "checks_passed", "checks_total"):
+        agg[key] = sum(v.get(key, 0) for v in all_vals)
+    size_devs = [v["size_deviation_pct"] for v in all_vals if v.get("size_deviation_pct") is not None]
+    agg["size_deviation_pct"] = round(sum(size_devs) / len(size_devs), 1) if size_devs else None
+    placed: set[str] = set()
+    for v in all_vals:
+        placed.update(v.get("placed_types", []))
+    agg["placed_types"] = sorted(placed)
+    agg["cases"] = results_by_case
+    return agg
 
 
 def _execute_normalize_run_pipeline(
