@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 from typing import cast
 
-from agent.request_contract import build_request_contract
+from agent.request_contract import (
+    attach_request_contract_to_semantic_program,
+    build_request_contract,
+    sanitize_request_contract,
+)
 from stylist.deterministic_layout import build_deterministic_stylist_payload
 
 
@@ -40,13 +44,135 @@ class MediaTvConsoleContractTest(unittest.TestCase):
             available_object_types=["sofa", "coffee_table", "tv_console"],
         )
 
-        object_types = [
-            item.get("object_type")
-            for item in cast(list[dict[str, object]], contract["objects"])
-        ]
+        objects = cast(list[dict[str, object]], contract["objects"])
+        object_types = [item.get("object_type") for item in objects]
 
         self.assertIn("sofa", object_types)
+        self.assertIn("coffee_table", object_types)
         self.assertNotIn("chair", object_types)
+        coffee_table = next(
+            item for item in objects if item.get("object_type") == "coffee_table"
+        )
+        self.assertEqual(coffee_table.get("min_keep"), 1)
+        self.assertEqual(
+            coffee_table.get("requested_dims_mm"),
+            {"L_mm": 900, "W_mm": 550},
+        )
+
+    def test_living_generic_table_request_targets_coffee_table(self) -> None:
+        contract = build_request_contract(
+            brief_text=(
+                "Toi can phong khach co day du sofa, ban, tv; "
+                "phong bep thi co tu bep, tu lanh, bon rua, ban an va ghe."
+            ),
+            available_object_types=[
+                "sofa",
+                "coffee_table",
+                "tv_console",
+                "kitchen_base_cabinet",
+                "fridge",
+                "sink",
+                "dining_table",
+                "chair",
+            ],
+        )
+
+        objects = cast(list[dict[str, object]], contract["objects"])
+        object_types = [item.get("object_type") for item in objects]
+
+        self.assertIn("coffee_table", object_types)
+        self.assertIn("dining_table", object_types)
+        self.assertNotIn("desk", object_types)
+        coffee_table = next(
+            item for item in objects if item.get("object_type") == "coffee_table"
+        )
+        self.assertEqual(
+            coffee_table.get("requested_dims_mm"),
+            {"L_mm": 900, "W_mm": 550},
+        )
+
+    def test_sanitize_merges_missing_hard_living_table_heuristic(self) -> None:
+        contract = sanitize_request_contract(
+            {
+                "objects": [
+                    {
+                        "object_type": "sofa",
+                        "intent": "must_keep",
+                        "min_keep": 1,
+                        "target_count": 1,
+                        "evidence": "phong khach co day du sofa",
+                    },
+                    {
+                        "object_type": "tv_console",
+                        "intent": "must_keep",
+                        "min_keep": 1,
+                        "target_count": 1,
+                        "evidence": "tv",
+                    },
+                ]
+            },
+            brief_text="Phong khach co day du sofa, ban, tv.",
+            available_object_types=["sofa", "coffee_table", "tv_console"],
+            fallback_to_heuristic=True,
+        )
+
+        objects = cast(list[dict[str, object]], contract["objects"])
+        coffee_table = next(
+            item for item in objects if item.get("object_type") == "coffee_table"
+        )
+
+        self.assertEqual(coffee_table.get("min_keep"), 1)
+        self.assertEqual(
+            coffee_table.get("requested_dims_mm"),
+            {"L_mm": 900, "W_mm": 550},
+        )
+
+    def test_attach_contract_injects_missing_living_coffee_table_candidate(
+        self,
+    ) -> None:
+        program = {
+            "room_type": "living_room",
+            "active_clusters": [
+                {
+                    "cluster_id": "main_seating",
+                    "required_bundles": [
+                        {
+                            "bundle_id": "main_seating_bundle",
+                            "objects": [
+                                {
+                                    "object_type": "sofa",
+                                    "role": "dominant_anchor",
+                                    "required": True,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+        updated = attach_request_contract_to_semantic_program(
+            program,
+            brief_text="Phong khach co sofa, ban va tv.",
+        )
+
+        clusters = cast(list[dict[str, object]], updated["active_clusters"])
+        bundle = cast(
+            dict[str, object],
+            cast(list[object], clusters[0]["required_bundles"])[0],
+        )
+        objects = cast(list[dict[str, object]], bundle["objects"])
+        object_types = [row.get("object_type") for row in objects]
+        contract_objects = cast(
+            list[dict[str, object]],
+            cast(dict[str, object], updated["request_contract"])["objects"],
+        )
+        coffee_table = next(
+            row for row in contract_objects if row.get("object_type") == "coffee_table"
+        )
+
+        self.assertIn("coffee_table", object_types)
+        self.assertTrue(coffee_table.get("available_in_program"))
 
     def test_vietnamese_living_support_items_are_detected(self) -> None:
         contract = build_request_contract(

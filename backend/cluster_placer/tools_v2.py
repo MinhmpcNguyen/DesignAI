@@ -249,6 +249,114 @@ def _room_model(payload: Dict[str, Any]) -> Dict[str, Any]:
     return deepcopy(((payload.get("room_context") or {}).get("room_model_used") or {}))
 
 
+def _normalize_wall_side_token(value: Any) -> str | None:
+    token = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "bottom": "bottom_wall",
+        "bottom_wall": "bottom_wall",
+        "down": "bottom_wall",
+        "front_wall": "bottom_wall",
+        "left": "left_wall",
+        "left_wall": "left_wall",
+        "right": "right_wall",
+        "right_wall": "right_wall",
+        "top": "top_wall",
+        "top_wall": "top_wall",
+        "up": "top_wall",
+        "wall_bottom": "bottom_wall",
+        "wall_left": "left_wall",
+        "wall_right": "right_wall",
+        "wall_top": "top_wall",
+    }
+    return aliases.get(token)
+
+
+def _normalized_wall_side_set(values: object) -> set[str]:
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, (list, tuple, set)):
+        return set()
+    return {
+        side
+        for side in (_normalize_wall_side_token(value) for value in values)
+        if side is not None
+    }
+
+
+def _room_open_wall_sides(payload: Dict[str, Any]) -> set[str]:
+    room_model = _room_model(payload)
+    room = room_model.get("room") if isinstance(room_model.get("room"), dict) else {}
+    return _normalized_wall_side_set(
+        room.get("open_wall_sides") if isinstance(room, dict) else ()
+    )
+
+
+def _room_virtual_wall_segments(payload: Dict[str, Any]) -> list[dict[str, Any]]:
+    room_model = _room_model(payload)
+    room = room_model.get("room") if isinstance(room_model.get("room"), dict) else {}
+    return _normalized_virtual_wall_segments(
+        room.get("virtual_wall_segments") if isinstance(room, dict) else ()
+    )
+
+
+def _normalized_virtual_wall_segments(values: Any) -> list[dict[str, Any]]:
+    if not isinstance(values, (list, tuple)):
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[tuple[int, int], tuple[int, int]]] = set()
+    for index, row in enumerate(values, start=1):
+        if not isinstance(row, dict):
+            continue
+        points = _point_rows(row.get("segment_mm"))
+        if len(points) < 2:
+            points = _point_rows(
+                [
+                    row.get("startPoint") or row.get("start"),
+                    row.get("endPoint") or row.get("end"),
+                ]
+            )
+        if len(points) < 2:
+            continue
+        p1 = points[0]
+        p2 = points[1]
+        a = (int(p1["x"]), int(p1["y"]))
+        b = (int(p2["x"]), int(p2["y"]))
+        if a == b:
+            continue
+        signature = (a, b) if a <= b else (b, a)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        out.append(
+            {
+                "id": str(
+                    row.get("id") or row.get("wall_id") or f"virtual_wall_{index}"
+                ),
+                "segment_mm": [p1, p2],
+            }
+        )
+    return out
+
+
+def _point_rows(values: Any) -> list[dict[str, int]]:
+    if not isinstance(values, (list, tuple)):
+        return []
+    out: list[dict[str, int]] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        try:
+            out.append(
+                {
+                    "x": int(round(float(item.get("x")))),
+                    "y": int(round(float(item.get("y")))),
+                }
+            )
+        except Exception:
+            continue
+    return out
+
+
 def _room_notes(payload: Dict[str, Any]) -> List[str]:
     notes = _room_model(payload).get("notes") or []
     out: List[str] = []
@@ -1089,9 +1197,48 @@ def _nearest_opening_line_direction(
     return best_dir
 
 
+def _wall_side_for_segment(line: Any, room_poly: Any) -> str | None:
+    try:
+        min_x, min_y, max_x, max_y = room_poly.bounds
+        line_min_x, line_min_y, line_max_x, line_max_y = line.bounds
+    except Exception:
+        return None
+    tol = 5.0
+    if abs(line_min_x - line_max_x) <= tol:
+        x = (float(line_min_x) + float(line_max_x)) / 2.0
+        if abs(x - float(min_x)) <= tol:
+            return "left_wall"
+        if abs(x - float(max_x)) <= tol:
+            return "right_wall"
+    if abs(line_min_y - line_max_y) <= tol:
+        y = (float(line_min_y) + float(line_max_y)) / 2.0
+        if abs(y - float(min_y)) <= tol:
+            return "top_wall"
+        if abs(y - float(max_y)) <= tol:
+            return "bottom_wall"
+    return None
+
+
 def _nearest_boundary_point(
-    point: Tuple[float, float], room_poly: Any
+    point: Tuple[float, float], room_poly: Any, open_wall_sides: object = ()
 ) -> tuple[float, float] | None:
+    open_set = _normalized_wall_side_set(open_wall_sides)
+    if open_set:
+        segments = _room_wall_segments(room_poly, open_wall_sides=open_set)
+        best: tuple[float, tuple[float, float]] | None = None
+        point_geom = Point(point)
+        for segment in segments:
+            try:
+                boundary_point, _ = nearest_points(segment["line"], point_geom)
+            except Exception:
+                continue
+            candidate = (float(boundary_point.x), float(boundary_point.y))
+            distance = math.hypot(candidate[0] - point[0], candidate[1] - point[1])
+            if best is None or distance < best[0]:
+                best = (distance, candidate)
+        if best is not None:
+            return best[1]
+        return None
     try:
         boundary_point, _ = nearest_points(room_poly.boundary, Point(point))
     except Exception:
@@ -1100,9 +1247,9 @@ def _nearest_boundary_point(
 
 
 def _nearest_wall_inward_dir(
-    point: Tuple[float, float], room_poly: Any
+    point: Tuple[float, float], room_poly: Any, open_wall_sides: object = ()
 ) -> tuple[float, float] | None:
-    boundary_point = _nearest_boundary_point(point, room_poly)
+    boundary_point = _nearest_boundary_point(point, room_poly, open_wall_sides)
     if boundary_point is None:
         return None
     return _vec_from_to(boundary_point, point)
@@ -1117,6 +1264,9 @@ def _back_to_wall_penalty(
     desired_back_clear_mm: float,
     desired_front_advantage_mm: float,
     weight_scale: float,
+    open_wall_sides: object = (),
+    virtual_wall_segments: object = (),
+    geom: Any | None = None,
 ) -> tuple[float, float | None, dict[str, int]]:
     if front is None:
         return 0.0, None, {}
@@ -1134,28 +1284,182 @@ def _back_to_wall_penalty(
         + max(0.0, desired_front_advantage_mm - front_advantage) * 0.85
         + max(0.0, back_clear - front_clear) * 0.35
     ) * weight_scale
+    real_wall_inward = _nearest_wall_inward_dir(
+        point, room_poly, open_wall_sides=open_wall_sides
+    )
+    real_wall_dot = _dot(front, real_wall_inward)
+    if real_wall_dot is not None:
+        penalty += max(0.0, 1.0 - real_wall_dot) * 760.0 * weight_scale
+    open_wall_penalty = _open_wall_back_pressure(
+        point=point,
+        front=front,
+        room_poly=room_poly,
+        open_wall_sides=open_wall_sides,
+        virtual_wall_segments=virtual_wall_segments,
+        geom=geom,
+    )
+    penalty += open_wall_penalty * weight_scale
     debug = {
         "front_clear_mm": int(round(front_clear)),
         "back_clear_mm": int(round(back_clear)),
         "front_advantage_mm": int(round(front_advantage)),
     }
+    if real_wall_dot is not None:
+        debug["real_wall_dot_x1000"] = int(round(real_wall_dot * 1000.0))
+    if open_wall_penalty > 0:
+        debug["virtual_wall_back_penalty_mm"] = int(round(open_wall_penalty))
     return penalty, front_advantage, debug
 
 
-def _room_wall_segments(room_poly: Any) -> list[dict[str, Any]]:
+def _open_wall_back_pressure(
+    *,
+    point: Tuple[float, float],
+    front: Tuple[float, float],
+    room_poly: Any,
+    open_wall_sides: object,
+    virtual_wall_segments: object = (),
+    geom: Any | None = None,
+) -> float:
+    open_set = _normalized_wall_side_set(open_wall_sides)
+    segments = (
+        virtual_wall_segments
+        if isinstance(virtual_wall_segments, (list, tuple))
+        else ()
+    )
+    if not open_set and not segments:
+        return 0.0
+    try:
+        min_x, min_y, max_x, max_y = room_poly.bounds
+    except Exception:
+        return 0.0
+    side_rows = {
+        "bottom_wall": (abs(float(max_y) - point[1]), (0.0, -1.0)),
+        "left_wall": (abs(point[0] - float(min_x)), (1.0, 0.0)),
+        "right_wall": (abs(float(max_x) - point[0]), (-1.0, 0.0)),
+        "top_wall": (abs(point[1] - float(min_y)), (0.0, 1.0)),
+    }
+    pressure = 0.0
+    for side in open_set:
+        row = side_rows.get(side)
+        if row is None:
+            continue
+        distance, inward = row
+        dot = _dot(front, inward)
+        if dot is None or dot < 0.45 or distance > 700.0:
+            continue
+        pressure = max(pressure, 5000.0 + max(0.0, 700.0 - distance) * 2.0)
+    pressure = max(
+        pressure,
+        _virtual_wall_segment_back_pressure(
+            point=point,
+            front=front,
+            virtual_wall_segments=segments,
+            geom=geom,
+        ),
+    )
+    return pressure
+
+
+def _virtual_wall_segment_back_pressure(
+    *,
+    point: Tuple[float, float],
+    front: Tuple[float, float],
+    virtual_wall_segments: object,
+    geom: Any | None = None,
+) -> float:
+    if not isinstance(virtual_wall_segments, (list, tuple)):
+        return 0.0
+    point_geom = Point(point)
+    target_geom = geom if geom is not None else point_geom
+    pressure = 0.0
+    for segment in virtual_wall_segments:
+        if not isinstance(segment, dict):
+            continue
+        points = _point_rows(segment.get("segment_mm"))
+        if len(points) < 2:
+            continue
+        line = LineString(
+            [
+                (float(points[0]["x"]), float(points[0]["y"])),
+                (float(points[1]["x"]), float(points[1]["y"])),
+            ]
+        )
+        try:
+            distance = float(line.distance(target_geom))
+            nearest_on_wall, _ = nearest_points(line, point_geom)
+        except Exception:
+            continue
+        direction = _vec_from_to(
+            (float(nearest_on_wall.x), float(nearest_on_wall.y)), point
+        )
+        dot = _dot(front, direction)
+        if dot is None or dot < 0.45 or distance > 900.0:
+            continue
+        pressure = max(pressure, 6500.0 + max(0.0, 900.0 - distance) * 2.4)
+    return pressure
+
+
+def _wall_back_weight_scale(
+    *,
+    cluster_id: str,
+    object_id: str | None = None,
+) -> float:
+    token = f"{cluster_id} {object_id or ''}".lower().replace("-", "_")
+    if any(
+        part in token
+        for part in (
+            "kitchen",
+            "fridge",
+            "sink",
+            "stove",
+            "tu_bep",
+            "cabinet",
+            "wardrobe",
+            "bookshelf",
+            "media_console",
+            "media_shelf",
+            "tv_cabinet",
+            "tv_console",
+            "tv_stand",
+            "ke_tv",
+            "tu_tv",
+        )
+    ):
+        return 2.35
+    if any(part in token for part in ("media", "storage")):
+        return 1.85
+    return 1.0
+
+
+def _wall_back_desired_clearance_mm(scale: float, fallback: float) -> float:
+    if scale >= 2.0:
+        return min(float(fallback), 110.0)
+    if scale > 1.0:
+        return min(float(fallback), 180.0)
+    return float(fallback)
+
+
+def _room_wall_segments(
+    room_poly: Any, open_wall_sides: object = ()
+) -> list[dict[str, Any]]:
     try:
         coords = list(room_poly.exterior.coords)
     except Exception:
         return []
+    open_set = _normalized_wall_side_set(open_wall_sides)
     segments: list[dict[str, Any]] = []
     for idx in range(max(0, len(coords) - 1)):
         p1 = coords[idx]
         p2 = coords[idx + 1]
         line = LineString([p1, p2])
+        side = _wall_side_for_segment(line, room_poly)
+        if side in open_set:
+            continue
         segments.append(
             {
                 "line": line,
                 "length": float(line.length),
+                "side": side,
                 "direction": normalize_vec(
                     (
                         float(p2[0]) - float(p1[0]),
@@ -1167,23 +1471,44 @@ def _room_wall_segments(room_poly: Any) -> list[dict[str, Any]]:
     return segments
 
 
-def _longest_wall_segment(room_poly: Any) -> dict[str, Any] | None:
-    segments = _room_wall_segments(room_poly)
+def _longest_wall_segment(
+    room_poly: Any, open_wall_sides: object = ()
+) -> dict[str, Any] | None:
+    segments = _room_wall_segments(room_poly, open_wall_sides=open_wall_sides)
     if not segments:
         return None
     return max(segments, key=lambda item: float(item.get("length") or 0.0))
 
 
 def _distance_to_longest_wall(
-    point: Tuple[float, float], room_poly: Any
+    point: Tuple[float, float], room_poly: Any, open_wall_sides: object = ()
 ) -> float | None:
-    longest = _longest_wall_segment(room_poly)
+    longest = _longest_wall_segment(room_poly, open_wall_sides=open_wall_sides)
     if not longest:
         return None
     try:
         return float(longest["line"].distance(Point(point)))
     except Exception:
         return None
+
+
+def _distance_to_nearest_wall_geom(
+    geom: Any, room_poly: Any, open_wall_sides: object = ()
+) -> float:
+    segments = _room_wall_segments(room_poly, open_wall_sides=open_wall_sides)
+    if segments:
+        distances: list[float] = []
+        for segment in segments:
+            try:
+                distances.append(float(segment["line"].distance(geom)))
+            except Exception:
+                continue
+        if distances:
+            return min(distances)
+    try:
+        return float(room_poly.boundary.distance(geom))
+    except Exception:
+        return 0.0
 
 
 def _window_clearance_hits(state: Dict[str, Any], cluster_id: str | None = None) -> int:
@@ -2174,6 +2499,7 @@ def _score_global_layout_metrics(
     room_bounds = room_poly.bounds
     max_span = max(room_bounds[2] - room_bounds[0], room_bounds[3] - room_bounds[1])
     cluster_preferences = _cluster_preference_profile(payload)
+    open_wall_sides = _room_open_wall_sides(payload)
     opening_bands = _opening_bands(payload, openings, room_poly)
     path_corridors = _main_path_corridors(
         payload, openings, room_center, room_poly, state
@@ -2198,7 +2524,11 @@ def _score_global_layout_metrics(
         poly = _cluster_poly(cluster)
         area_mm2 = max(float(getattr(poly, "area", 0.0) or 0.0), 1.0)
         area_ratio = area_mm2 / room_area
-        edge_distance = float(room_poly.boundary.distance(poly))
+        edge_distance = _distance_to_nearest_wall_geom(
+            poly,
+            room_poly,
+            open_wall_sides=open_wall_sides,
+        )
         actual_zone = _classify_cluster_zone(center, room_center, openings)
         profile = cluster_preferences.get(
             cid, {"prefer": set(), "avoid": set(), "intents": set()}
@@ -2249,7 +2579,12 @@ def _score_global_layout_metrics(
                 (
                     "long_wall",
                     float(
-                        _distance_to_longest_wall(center, room_poly) or edge_distance
+                        _distance_to_longest_wall(
+                            center,
+                            room_poly,
+                            open_wall_sides=open_wall_sides,
+                        )
+                        or edge_distance
                     ),
                     "edge_side",
                 )
@@ -2364,6 +2699,7 @@ def _score_global_layout_metrics(
         edge_weight = (
             2.8 if edge_pref or window_pref or "far_from_entry" in prefer_tags else 1.2
         )
+        edge_weight *= _wall_back_weight_scale(cluster_id=cid)
         edge_fit_penalty = edge_distance * max(area_ratio, 0.08) * edge_weight
         if edge_fit_penalty > 0:
             cluster_penalty[cid] = cluster_penalty.get(cid, 0.0) + edge_fit_penalty
@@ -3286,6 +3622,8 @@ def score_phase2_state(
 ) -> Dict[str, Any]:
     room_poly = state["room_polygon"]
     room_center = state["room_center"]
+    open_wall_sides = _room_open_wall_sides(payload)
+    virtual_wall_segments = _room_virtual_wall_segments(payload)
     openings = _openings(payload)
     goals = payload.get("goals") or {}
     relation_plan = goals.get("relation_plan_used") or {}
@@ -3453,6 +3791,7 @@ def score_phase2_state(
                     dot = _dot(front_world, _vec_from_to(center, mid))
                     pen = max(0.0, 1.0 - (dot if dot is not None else -1.0)) * 520.0
             elif intent == "back_to_wall":
+                wall_scale = _wall_back_weight_scale(cluster_id=cid, object_id=oid)
                 blockers = [ob["poly"] for ob in state.get("obstacles") or []]
                 for other in state_objects:
                     if (
@@ -3466,9 +3805,15 @@ def score_phase2_state(
                     front=front_world,
                     room_poly=room_poly,
                     blockers=blockers,
-                    desired_back_clear_mm=260.0,
-                    desired_front_advantage_mm=220.0,
-                    weight_scale=1.0,
+                    desired_back_clear_mm=_wall_back_desired_clearance_mm(
+                        wall_scale,
+                        260.0,
+                    ),
+                    desired_front_advantage_mm=300.0 if wall_scale > 1.0 else 220.0,
+                    weight_scale=wall_scale,
+                    open_wall_sides=open_wall_sides,
+                    virtual_wall_segments=virtual_wall_segments,
+                    geom=target.get("poly"),
                 )
             elif intent == "preserve_front_access":
                 front_clear = next(
@@ -3654,6 +3999,7 @@ def score_phase2_state(
                     dot = _dot(front, _vec_from_to(center, mid))
                     pen = max(0.0, 1.0 - (dot if dot is not None else -1.0)) * 760.0
             elif intent == "back_to_wall":
+                wall_scale = _wall_back_weight_scale(cluster_id=cid)
                 blockers = [ob["poly"] for ob in state.get("obstacles") or []]
                 for row in state.get("objects") or []:
                     if row["cluster_id"] != cid:
@@ -3663,9 +4009,15 @@ def score_phase2_state(
                     front=front,
                     room_poly=room_poly,
                     blockers=blockers,
-                    desired_back_clear_mm=320.0,
-                    desired_front_advantage_mm=260.0,
-                    weight_scale=1.0,
+                    desired_back_clear_mm=_wall_back_desired_clearance_mm(
+                        wall_scale,
+                        320.0,
+                    ),
+                    desired_front_advantage_mm=340.0 if wall_scale > 1.0 else 260.0,
+                    weight_scale=wall_scale,
+                    open_wall_sides=open_wall_sides,
+                    virtual_wall_segments=virtual_wall_segments,
+                    geom=cluster.get("poly"),
                 )
             elif intent == "axis_parallel_window":
                 window_dir = _nearest_opening_line_direction(
@@ -3724,12 +4076,20 @@ def score_phase2_state(
 
         primary_dot = _dot(primary_front, primary_target)
         secondary_dot = _dot(secondary_front, secondary_target)
+        wall_pair_scale = max(
+            _wall_back_weight_scale(cluster_id=primary_cluster_id),
+            _wall_back_weight_scale(cluster_id=secondary_cluster_id),
+        )
+        face_pair_scale = 0.62 if wall_pair_scale > 1.0 else 1.0
         primary_penalty = (
-            max(0.0, 1.0 - (primary_dot if primary_dot is not None else -1.0)) * 980.0
+            max(0.0, 1.0 - (primary_dot if primary_dot is not None else -1.0))
+            * 980.0
+            * face_pair_scale
         )
         secondary_penalty = (
             max(0.0, 1.0 - (secondary_dot if secondary_dot is not None else -1.0))
             * 880.0
+            * face_pair_scale
         )
 
         primary_edge_distance = float(
@@ -3738,11 +4098,18 @@ def score_phase2_state(
         secondary_edge_distance = float(
             room_poly.boundary.distance(Point(secondary_center))
         )
-        depth_penalty = max(0.0, primary_edge_distance - secondary_edge_distance) * 0.55
+        depth_weight = 0.24 if wall_pair_scale > 1.0 else 0.55
+        depth_penalty = (
+            max(0.0, primary_edge_distance - secondary_edge_distance) * depth_weight
+        )
 
         pair_axis = _vec_from_to(primary_center, secondary_center)
         axis_alignment = max(abs(pair_axis[0]), abs(pair_axis[1])) if pair_axis else 0.0
-        axis_penalty = max(0.0, 0.94 - axis_alignment) * 520.0
+        axis_penalty = (
+            max(0.0, 0.94 - axis_alignment)
+            * 520.0
+            * (0.72 if wall_pair_scale > 1.0 else 1.0)
+        )
 
         pair_penalties = (
             (
@@ -4033,6 +4400,7 @@ def EnumeratePhase2RepairMoves(
     }
     room_poly = state["room_polygon"]
     room_center = state["room_center"]
+    open_wall_sides = _room_open_wall_sides(payload)
     state_objects = [
         row for row in (state.get("objects") or []) if isinstance(row, dict)
     ]
@@ -4244,7 +4612,11 @@ def EnumeratePhase2RepairMoves(
             "back_to_wall",
             "access_to_open_space",
         }:
-            edge_point = _nearest_boundary_point(center, room_poly)
+            edge_point = _nearest_boundary_point(
+                center,
+                room_poly,
+                open_wall_sides=open_wall_sides,
+            )
             if edge_point is not None:
                 targets.append(
                     (
@@ -4256,7 +4628,10 @@ def EnumeratePhase2RepairMoves(
                     )
                 )
         if "long_wall" in prefer_tags:
-            longest = _longest_wall_segment(room_poly)
+            longest = _longest_wall_segment(
+                room_poly,
+                open_wall_sides=open_wall_sides,
+            )
             if longest:
                 try:
                     wall_point, _ = nearest_points(longest["line"], Point(center))
@@ -4703,7 +5078,13 @@ def EnumeratePhase2RepairMoves(
             best_dir, _ = _best_open_dir(center, room_center, room_poly, blockers)
             world_targets.append(best_dir)
         if "back_to_wall" in intents:
-            world_targets.append(_nearest_wall_inward_dir(center, room_poly))
+            world_targets.append(
+                _nearest_wall_inward_dir(
+                    center,
+                    room_poly,
+                    open_wall_sides=open_wall_sides,
+                )
+            )
         relation_target = relation_object_targets.get((cluster_id, object_id)) or {}
         if intents & {"face_object", "face_away_from_object"}:
             target = _resolve_relation_target_object(

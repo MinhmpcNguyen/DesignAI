@@ -56,6 +56,7 @@ _COMPACT_BEDROOM_RELAXED_TYPES = frozenset(
     }
 )
 _COMPACT_BEDROOM_DEFAULT_SUPPORT_TYPES = frozenset({"nightstand"})
+_COMPACT_BEDROOM_REQUESTED_WORK_TYPES = frozenset({"chair", "desk", "office_chair"})
 _COMPACT_BEDROOM_SUPPORT_TRIAL_MAX_FOOTPRINT_M2 = 0.6
 _MEDIA_CONSOLE_TYPES = frozenset(
     {
@@ -437,6 +438,8 @@ def _run_hardcoded_tier_count(
         )
     draft["budget_valid"] = draft["status"] == "OK"
 
+    room_bbox_m = _room_bbox_from_model(context.get("room_model_json"))
+
     tool_registry = _get_tool_registry()
     if "estimate_budget" in tool_registry and isinstance(draft.get("decisions"), list):
         budget_out = _run_budget_check_for_result(
@@ -458,6 +461,7 @@ def _run_hardcoded_tier_count(
                     base_draft=draft,
                     size_profiles_by_category=size_profiles,
                     budget_mode="input",
+                    room_bbox_m=room_bbox_m,
                 )
 
             recommended_decisions = budget_out.get("recommended_decisions")
@@ -470,6 +474,7 @@ def _run_hardcoded_tier_count(
                     base_draft=draft,
                     size_profiles_by_category=size_profiles,
                     budget_mode="recommended",
+                    room_bbox_m=room_bbox_m,
                 )
 
             if isinstance(recommended_decisions, list) and recommended_decisions:
@@ -491,6 +496,7 @@ def _run_hardcoded_tier_count(
                             base_draft=repaired_draft,
                             size_profiles_by_category=size_profiles,
                             budget_mode="repair_pass",
+                            room_bbox_m=room_bbox_m,
                         )
                     repair_recommended = repair_budget_out.get("recommended_decisions")
                     if bool(
@@ -501,14 +507,16 @@ def _run_hardcoded_tier_count(
                             base_draft=repaired_draft,
                             size_profiles_by_category=size_profiles,
                             budget_mode="repair_recommended",
+                            room_bbox_m=room_bbox_m,
                         )
             draft["budget_valid"] = False
 
-    _attach_rep_dims(draft, size_profiles)
+    _attach_rep_dims(draft, size_profiles, room_bbox_m=room_bbox_m)
     return _repair_overfull_draft_if_needed(
         draft,
         capacity_model=capacity_model,
         size_profiles_by_category=size_profiles,
+        room_bbox_m=room_bbox_m,
     )
 
 
@@ -1020,6 +1028,9 @@ def _relax_request_contract_for_compact_bedroom(
             object_type in _COMPACT_BEDROOM_RELAXED_TYPES
             and intent in _HARD_REQUEST_CONTRACT_INTENTS
         ):
+            if object_type in _COMPACT_BEDROOM_REQUESTED_WORK_TYPES:
+                relaxed_objects.append(row)
+                continue
             row["compact_bedroom_original_intent"] = intent
             row["intent"] = "optional_if_surplus"
             row["min_keep"] = 0
@@ -1100,6 +1111,10 @@ def _apply_compact_bedroom_policy_to_bundles(
                     space_surplus_threshold=0.46,
                 )
                 relaxed_count += 1
+                changed = True
+            elif _is_requested_compact_bedroom_work_object(next_obj):
+                next_obj = _preserve_requested_compact_bedroom_work_object(next_obj)
+                core_count += 1
                 changed = True
             elif base_type in _COMPACT_BEDROOM_RELAXED_TYPES:
                 next_obj = _relax_compact_bedroom_object(
@@ -1195,6 +1210,29 @@ def _preserve_compact_bedroom_core_object(obj: dict[str, Any]) -> dict[str, Any]
         "highest",
     )
     out["compact_bedroom_core"] = True
+    return out
+
+
+def _is_requested_compact_bedroom_work_object(obj: dict[str, Any]) -> bool:
+    base_type = str(
+        obj.get("base_type")
+        or _profile_category_for_member(str(obj.get("object_type") or ""))
+    )
+    return (
+        base_type in _COMPACT_BEDROOM_REQUESTED_WORK_TYPES
+        and str(obj.get("request_contract_intent") or "")
+        in _HARD_REQUEST_CONTRACT_INTENTS
+        and _request_contract_min_keep_from_object(obj) > 0
+    )
+
+
+def _preserve_requested_compact_bedroom_work_object(
+    obj: dict[str, Any],
+) -> dict[str, Any]:
+    out = _preserve_compact_bedroom_core_object(obj)
+    out["compact_bedroom_requested_work"] = True
+    if str(out.get("role") or "") in {"optional", "decor_light"}:
+        out["role"] = "support"
     return out
 
 
@@ -3760,6 +3798,7 @@ def _copy_compact_bedroom_trace(
         "compact_bedroom_relaxed",
         "compact_bedroom_relaxation_reason",
         "compact_bedroom_original_intent",
+        "compact_bedroom_requested_work",
     ):
         if key in source:
             target[key] = source[key]
@@ -3986,12 +4025,16 @@ def _ensure_size_profiles(
         categories=categories,
         tenant_id=tenant_id,
     )
+    profiles: dict[str, Any] = {}
     if _tool_output_has_error(result):
-        raise RuntimeError(f"get_size_profiles failed: {_tool_error_text(result)}")
-
-    profiles = result.get("size_profiles_by_category")
-    if not isinstance(profiles, dict) or not profiles:
-        raise ValueError("Deterministic tier count could not load size profiles.")
+        logger.warning(
+            "TierCount size profile lookup failed; using local fallback profiles: %s",
+            _tool_error_text(result),
+        )
+    else:
+        raw_profiles = result.get("size_profiles_by_category")
+        if isinstance(raw_profiles, dict):
+            profiles = dict(raw_profiles)
     _enrich_profiles_for_required_types(
         profiles=profiles,
         required_types=required_types,
@@ -4001,6 +4044,17 @@ def _ensure_size_profiles(
         required_types=required_types,
         room_type=room_type,
     )
+    if not profiles:
+        profiles = _fallback_size_profiles_for_required_types(required_types)
+    if not profiles:
+        logger.warning(
+            "TierCount could not infer any category-specific size profiles; using generic fallback."
+        )
+        profiles["__generic__"] = _generic_fallback_profile_size()
+    if "__generic__" not in profiles:
+        profiles["__generic__"] = (
+            _first_available_profile(profiles) or _generic_fallback_profile_size()
+        )
     return profiles
 
 
@@ -4197,6 +4251,38 @@ def _enrich_profiles_for_required_types(
         if profile_size is not None:
             profiles.setdefault(alias, profile_size)
             profiles[member] = profile_size
+
+
+def _fallback_size_profiles_for_required_types(
+    required_types: list[str],
+) -> dict[str, Any]:
+    profiles: dict[str, Any] = {}
+    _enrich_profiles_for_required_types(
+        profiles=profiles,
+        required_types=required_types,
+    )
+    if "__generic__" not in profiles:
+        profiles["__generic__"] = (
+            _first_available_profile(profiles) or _generic_fallback_profile_size()
+        )
+    return profiles
+
+
+def _first_available_profile(profiles: dict[str, Any]) -> dict[str, Any] | None:
+    return next(
+        (profile for profile in profiles.values() if isinstance(profile, dict)),
+        None,
+    )
+
+
+def _generic_fallback_profile_size() -> dict[str, Any]:
+    return {
+        "rep_dims_m": {
+            "S": {"L": 0.6, "W": 0.45, "A": 0.27},
+            "M": {"L": 0.9, "W": 0.6, "A": 0.54},
+            "L": {"L": 1.2, "W": 0.75, "A": 0.9},
+        }
+    }
 
 
 def _apply_room_profile_overrides(
@@ -5461,6 +5547,7 @@ def _build_ok_result(
     base_draft: dict[str, Any] | None,
     size_profiles_by_category: dict[str, Any] | None,
     budget_mode: str | None,
+    room_bbox_m: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     draft_decisions = _decision_rows(
         base_draft.get("decisions") if isinstance(base_draft, dict) else None
@@ -5486,7 +5573,7 @@ def _build_ok_result(
     if min_keep_restores:
         result["request_contract_min_keep_restores"] = min_keep_restores
     if isinstance(size_profiles_by_category, dict):
-        _attach_rep_dims(result, size_profiles_by_category)
+        _attach_rep_dims(result, size_profiles_by_category, room_bbox_m=room_bbox_m)
     _refresh_budget_adjusted_trace(result, draft_decisions=draft_decisions)
     return result
 
@@ -5497,6 +5584,7 @@ def _build_unsat_result(
     fallback_decisions: list[dict[str, Any]],
     budget_out: dict[str, Any],
     size_profiles_by_category: dict[str, Any] | None,
+    room_bbox_m: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     result = dict(base_draft) if isinstance(base_draft, dict) else {}
     result["status"] = "OK"
@@ -5527,7 +5615,7 @@ def _build_unsat_result(
     result["budget_reason"] = "hard_unsat_degraded_to_usable_plan"
 
     if isinstance(size_profiles_by_category, dict):
-        _attach_rep_dims(result, size_profiles_by_category)
+        _attach_rep_dims(result, size_profiles_by_category, room_bbox_m=room_bbox_m)
     _refresh_budget_adjusted_trace(
         result,
         draft_decisions=_decision_rows(
@@ -5542,6 +5630,7 @@ def _repair_overfull_draft_if_needed(
     *,
     capacity_model: dict[str, Any],
     size_profiles_by_category: dict[str, Any],
+    room_bbox_m: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     decisions = _decision_rows(draft.get("decisions"))
     if not decisions:
@@ -5599,7 +5688,7 @@ def _repair_overfull_draft_if_needed(
         )
     )
     repaired["global_notes"] = _uniq([str(note) for note in notes if str(note)])
-    _attach_rep_dims(repaired, size_profiles_by_category)
+    _attach_rep_dims(repaired, size_profiles_by_category, room_bbox_m=room_bbox_m)
     _refresh_budget_adjusted_trace(
         repaired,
         draft_decisions=original_decisions,
@@ -6547,8 +6636,117 @@ def _tool_reports_hard_unsat(budget_out: dict[str, Any]) -> bool:
 # ============================================================
 
 
+_CATEGORY_SCALE_RANGE_TIER_COUNT: dict[str, tuple[float, float]] = {
+    "sofa": (0.75, 1.25),
+    "sectional_sofa": (0.75, 1.25),
+    "armchair": (0.80, 1.20),
+    "lounge_chair": (0.80, 1.20),
+    "coffee_table": (0.70, 1.30),
+    "side_table": (0.70, 1.30),
+    "dining_table": (0.65, 1.35),
+    "dining_chair": (0.85, 1.15),
+    "tv_console": (0.70, 1.50),
+    "media_console": (0.70, 1.50),
+    "wardrobe": (0.75, 1.50),
+    "bookshelf": (0.70, 1.50),
+    "desk": (0.75, 1.25),
+    "dresser": (0.80, 1.20),
+    "nightstand": (0.80, 1.20),
+    "kitchen_base_cabinet": (0.50, 1.50),
+    "kitchen_wall_cabinet": (0.50, 1.50),
+    "kitchen_tall_cabinet": (0.70, 1.20),
+    "rug": (0.60, 1.50),
+    "bench": (0.75, 1.30),
+}
+_WALL_CLEARANCE_M = 0.10  # minimum clearance between item and room wall
+
+
+def _clamp_rep_dims_to_room(
+    rep: dict[str, Any],
+    *,
+    category: str,
+    room_bbox_m: tuple[float, float],
+) -> dict[str, Any]:
+    """Scale rep dims down if they exceed the room's usable envelope.
+
+    room_bbox_m is (width, depth) in metres.  The item's L and W are clamped
+    so neither exceeds the room's usable span (room_dim - 2 * WALL_CLEARANCE).
+    Scaling is proportional and respects the per-category minimum scale factor.
+    Height is never changed.
+    """
+    lo, hi = _CATEGORY_SCALE_RANGE_TIER_COUNT.get(
+        str(category or "").strip().lower().replace("-", "_").replace(" ", "_"),
+        (1.0, 1.0),
+    )
+    if lo >= 1.0:
+        return rep  # non-scalable item: never shrink
+
+    L = _positive_float(rep.get("L"))
+    W = _positive_float(rep.get("W"))
+    if L <= 0 or W <= 0:
+        return rep
+
+    room_w, room_d = room_bbox_m
+    max_L = max(room_w, room_d) - 2 * _WALL_CLEARANCE_M
+    max_W = min(room_w, room_d) - 2 * _WALL_CLEARANCE_M
+
+    if max_L <= 0 or max_W <= 0:
+        return rep
+
+    # Need scale so that scaled_L <= max_L and scaled_W <= max_W
+    scale = 1.0
+    if L > max_L:
+        scale = min(scale, max_L / L)
+    if W > max_W:
+        scale = min(scale, max_W / W)
+
+    scale = max(lo, scale)  # never shrink below minimum allowed scale
+
+    if scale >= 1.0 - 1e-6:
+        return rep  # no change needed
+
+    out = dict(rep)
+    new_L = round(L * scale, 6)
+    new_W = round(W * scale, 6)
+    out["L"] = new_L
+    out["W"] = new_W
+    out["A"] = round(new_L * new_W, 6)
+    if new_W > 1e-9:
+        out["R"] = round(new_L / new_W, 6)
+    out["scaled_for_room_fit"] = True
+    out["scale_applied"] = round(scale, 4)
+    return out
+
+
+def _room_bbox_from_model(room_model_json: Any) -> tuple[float, float] | None:
+    """Return (width_m, depth_m) from the room polygon bounding box."""
+    if not isinstance(room_model_json, dict):
+        return None
+    room = room_model_json.get("room") or room_model_json
+    polygon = None
+    if isinstance(room, dict):
+        polygon = room.get("polygon_ccw")
+    if not isinstance(polygon, list) or len(polygon) < 3:
+        return None
+    try:
+        xs = [float(p["x"]) for p in polygon if isinstance(p, dict)]
+        ys = [float(p["y"]) for p in polygon if isinstance(p, dict)]
+    except (TypeError, KeyError, ValueError):
+        return None
+    if not xs or not ys:
+        return None
+    w_mm = max(xs) - min(xs)
+    d_mm = max(ys) - min(ys)
+    if w_mm <= 0 or d_mm <= 0:
+        return None
+    return (w_mm / 1000.0, d_mm / 1000.0)
+
+
 def _attach_rep_dims(
-    result: dict[str, Any], size_profiles_by_category: dict[str, Any]
+    result: dict[str, Any],
+    size_profiles_by_category: dict[str, Any],
+    *,
+    room_bbox_m: tuple[float, float] | None = None,
 ) -> None:
     decisions = result.get("decisions")
     if not isinstance(decisions, list):
@@ -6558,6 +6756,12 @@ def _attach_rep_dims(
         if not isinstance(d, dict):
             continue
         if "rep_dims_m" in d and isinstance(d.get("rep_dims_m"), dict):
+            if room_bbox_m is not None:
+                d["rep_dims_m"] = _clamp_rep_dims_to_room(
+                    d["rep_dims_m"],
+                    category=str(d.get("object_type") or d.get("category") or ""),
+                    room_bbox_m=room_bbox_m,
+                )
             continue
 
         tier = d.get("size_tier")
@@ -6580,11 +6784,22 @@ def _attach_rep_dims(
 
         rep = (profile.get("rep_dims_m") or {}).get(tier.upper())
         if isinstance(rep, dict):
-            d["rep_dims_m"] = _rep_dims_with_requested_size(d, rep)
+            rep_with_req = _rep_dims_with_requested_size(d, rep)
+            if room_bbox_m is not None:
+                cat = str(object_type or category or "")
+                rep_with_req = _clamp_rep_dims_to_room(
+                    rep_with_req, category=cat, room_bbox_m=room_bbox_m
+                )
+            d["rep_dims_m"] = rep_with_req
             continue
 
         requested_rep = _rep_dims_with_requested_size(d, {})
         if requested_rep:
+            if room_bbox_m is not None:
+                cat = str(object_type or category or "")
+                requested_rep = _clamp_rep_dims_to_room(
+                    requested_rep, category=cat, room_bbox_m=room_bbox_m
+                )
             d["rep_dims_m"] = requested_rep
 
 

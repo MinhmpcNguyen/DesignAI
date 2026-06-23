@@ -265,7 +265,12 @@ class ClusterOutputMergeMediaSupportTest(unittest.TestCase):
                     "min_keep": 1,
                     "role": "dominant_anchor",
                     "priority": "anchor",
-                    "rep_dims_m": {"L": 2.1, "W": 0.9, "H": 0.8},
+                    "rep_dims_m": {
+                        "L": 2.1,
+                        "W": 0.9,
+                        "H": 0.8,
+                        "source_id": "sofa-catalog-id",
+                    },
                 },
                 {
                     "cluster_id": "main_seating",
@@ -275,7 +280,12 @@ class ClusterOutputMergeMediaSupportTest(unittest.TestCase):
                     "min_keep": 1,
                     "role": "support",
                     "priority": "primary",
-                    "rep_dims_m": {"L": 0.6, "W": 0.45, "H": 0.35},
+                    "rep_dims_m": {
+                        "L": 0.6,
+                        "W": 0.45,
+                        "H": 0.35,
+                        "source_id": "misleading-round-coffee-table",
+                    },
                 },
                 {
                     "cluster_id": "main_seating",
@@ -319,6 +329,10 @@ class ClusterOutputMergeMediaSupportTest(unittest.TestCase):
             main_specs["coffee_table"]["rep_dims_mm"],
             {"L": 1000, "W": 600, "H": 350},
         )
+        self.assertEqual(main_specs["sofa"]["source_id"], "sofa-catalog-id")
+        self.assertEqual(main_specs["coffee_table"]["source_id"], "")
+        self.assertEqual(main_specs["coffee_table"]["render_as"], "primitive_box")
+        self.assertIs(main_specs["coffee_table"]["generic_visual"], True)
         self.assertEqual(
             main_specs["rug"]["rep_dims_mm"],
             {"L": 2300, "W": 1600, "H": 20},

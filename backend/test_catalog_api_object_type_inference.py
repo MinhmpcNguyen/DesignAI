@@ -6,7 +6,7 @@ from typing import cast
 from unittest.mock import patch
 
 from adapters.catalog_api import CatalogItem, infer_catalog_object_type
-from api.routes.pipeline import _match_catalog_payload
+from api.routes.pipeline import _match_catalog_payload, _normalize_run_room_objects
 from stylist.style_policy import compile_style_policy
 
 
@@ -239,6 +239,57 @@ class CatalogApiObjectTypeInferenceTest(unittest.TestCase):
         if match is None:
             raise AssertionError("Expected a matching kitchen cabinet.")
         self.assertEqual(match["id"], "rustic-cabinet")
+
+    def test_generic_visual_coffee_table_bypasses_catalog_model_matching(
+        self,
+    ) -> None:
+        objects, rotations, default_rotations = _normalize_run_room_objects(
+            styled_payload={
+                "objects": [
+                    {
+                        "instance_id": "coffee_table",
+                        "object_type": "coffee_table",
+                        "bbox": {
+                            "min_x": 100,
+                            "min_y": 200,
+                            "max_x": 1000,
+                            "max_y": 750,
+                        },
+                        "render_as": "primitive_box",
+                        "generic_visual": True,
+                        "visual_dims_mm": {"L": 900, "W": 550, "H": 380},
+                        "source_id": "misleading-round-coffee-table",
+                        "rotation_ccw": 90,
+                    }
+                ]
+            },
+            catalog_index={
+                "by_id": {
+                    "misleading_round_coffee_table": {
+                        "id": "misleading-round-coffee-table",
+                        "object_type": "coffee_table",
+                        "modelUrl": "/catalog/models/round-table.glb",
+                    }
+                },
+                "by_type": {
+                    "coffee_table": [
+                        {
+                            "id": "catalog-coffee-table",
+                            "object_type": "coffee_table",
+                            "modelUrl": "/catalog/models/catalog-table.glb",
+                        }
+                    ]
+                },
+            },
+        )
+
+        self.assertEqual(rotations, [90])
+        self.assertEqual(default_rotations, [None])
+        self.assertEqual(len(objects), 1)
+        self.assertEqual(objects[0]["name"], "Bàn phòng khách")
+        self.assertEqual(objects[0]["size"], [900.0, 380.0, 550.0])
+        self.assertIsNone(objects[0]["modelUrl"])
+        self.assertIsNone(objects[0]["catalogItemId"])
 
     def test_style_policy_detects_rustic_from_requested_cabinet_name(self) -> None:
         with patch.dict(os.environ, {"TKNT_STYLE_POLICY_REQUIRE_LLM": "0"}):

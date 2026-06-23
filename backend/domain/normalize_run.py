@@ -157,7 +157,7 @@ class PipelineNormalizeRunObject(BaseModel):
     size: list[float] | None = None
     type: str | None = None
     color: str | None = None
-    modelUrl: str
+    modelUrl: str | None = None
     position: PipelineNormalizeRunPosition
     rotation: PipelineNormalizeRunRotation
     objectRole: str | None = None

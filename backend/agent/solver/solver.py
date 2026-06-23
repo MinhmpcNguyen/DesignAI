@@ -149,6 +149,7 @@ OBJECT_LEVEL_HARD_SOFT_ANCHOR_REJECT_RATIO = 0.16
 OBJECT_LEVEL_BEDSIDE_HEAD_WALL_MAX_GAP_MM = 350
 OBJECT_LEVEL_BEDSIDE_HEAD_MIN_PROJECTION_RATIO = 0.1
 OBJECT_LEVEL_BEDSIDE_HEAD_MAX_SIDE_GAP_MM = 260
+OBJECT_LEVEL_VIRTUAL_WALL_BACK_CONTACT_TOLERANCE_MM = 350
 OBJECT_LEVEL_COMPACT_BEDROOM_MAX_AREA_M2 = 12.0
 OBJECT_LEVEL_COMPACT_BEDROOM_ROOM_TYPES = frozenset(
     {"bedroom", "guest_bedroom", "primary_bedroom"}
@@ -642,6 +643,99 @@ def _placement_behavior_orientation_intents(
     if front_space in {"preferred", "required"}:
         intents.update({"access_to_open_space", "front_to_open_space"})
     return intents
+
+
+def _effective_object_wall_backing(
+    *,
+    cluster_id: str,
+    object_id: str,
+    spec: Mapping[str, Any],
+    current: str,
+) -> str:
+    current = str(current or "optional").strip().lower()
+    if current == "required":
+        return current
+    token = (
+        " ".join(
+            str(value or "")
+            for value in (
+                cluster_id,
+                object_id,
+                spec.get("category"),
+                spec.get("object_type"),
+                spec.get("base_object_id"),
+            )
+        )
+        .lower()
+        .replace("-", "_")
+    )
+    required_tokens = {
+        "fridge",
+        "kitchen_base_cabinet",
+        "kitchen_tall_cabinet",
+        "media_console",
+        "sink",
+        "stove",
+        "tv_cabinet",
+        "tv_console",
+        "tv_stand",
+        "wardrobe",
+    }
+    preferred_tokens = {
+        "bookshelf",
+        "cabinet",
+        "dresser",
+        "media_shelf",
+        "shelving",
+        "storage_cabinet",
+        "tall_cabinet",
+        "tu_bep",
+        "tu_tv",
+        "ke_tv",
+    }
+    if any(part in token for part in required_tokens):
+        return "required"
+    if current == "preferred" or any(part in token for part in preferred_tokens):
+        return "preferred"
+    return current
+
+
+def _row_requires_real_wall_only(row: Mapping[str, Any]) -> bool:
+    token = (
+        " ".join(
+            str(value or "")
+            for value in (
+                row.get("cluster_id"),
+                row.get("object_id"),
+                row.get("object_type"),
+                row.get("category"),
+            )
+        )
+        .lower()
+        .replace("-", "_")
+    )
+    return any(
+        part in token
+        for part in {
+            "bookshelf",
+            "cabinet",
+            "fridge",
+            "kitchen",
+            "media_console",
+            "media_shelf",
+            "sink",
+            "stove",
+            "storage_cabinet",
+            "tall_cabinet",
+            "tv_cabinet",
+            "tv_console",
+            "tv_stand",
+            "wardrobe",
+            "ke_tv",
+            "tu_bep",
+            "tu_tv",
+        }
+    )
 
 
 def _concept_family_from_relation_plan(relation_plan: Mapping[str, Any] | None) -> str:
@@ -2310,7 +2404,9 @@ def _prepare_round_candidates(
                     sorted_candidates = wall_first[: len(sorted_candidates)]
                 else:
                     # Soft preference: move wall candidates to front.
-                    sorted_candidates = (wall_first + non_wall)[: len(sorted_candidates)]
+                    sorted_candidates = (wall_first + non_wall)[
+                        : len(sorted_candidates)
+                    ]
         prioritized[cluster_id] = sorted_candidates
 
     debug = {
@@ -5552,6 +5648,8 @@ def _build_object_solver_world(
         compact_bedroom_policy["face_pair_protected_region_relaxations"] = (
             face_pair_relaxations
         )
+    _open_wall_sides = _open_wall_sides_from_model(room_model)
+    _virtual_wall_segments = _virtual_wall_segments_from_model(room_model)
     return {
         "clusters_by_id": clusters_by_id,
         "anchor_cluster_order": anchor_order,
@@ -5559,6 +5657,8 @@ def _build_object_solver_world(
         "region_index": region_index,
         "room_bbox": _object_solver_room_bbox(room_model),
         "room_polygon": _object_solver_room_polygon(room_model),
+        "open_wall_sides": _open_wall_sides,
+        "virtual_wall_segments": _virtual_wall_segments,
         "protected_regions": protected_regions,
         "compact_bedroom_policy": compact_bedroom_policy,
         "compact_living_room_policy": compact_living_policy,
@@ -5646,7 +5746,9 @@ def _compact_living_room_policy(
         }
     footprint_mm2 = _estimate_cluster_total_footprint_mm2(base_clusters)
     available_area_mm2 = available_area_m2 * 1_000_000.0
-    packing_ratio = footprint_mm2 / available_area_mm2 if available_area_mm2 > 0 else 0.0
+    packing_ratio = (
+        footprint_mm2 / available_area_mm2 if available_area_mm2 > 0 else 0.0
+    )
     enabled = packing_ratio >= _COMPACT_LIVING_ROOM_PACKING_RATIO_THRESHOLD
     return {
         "enabled": enabled,
@@ -5700,7 +5802,9 @@ def _relax_relation_plan_for_compact_living_room(
     return out
 
 
-def _estimate_merged_clusters_footprint_mm2(merged_clusters: Mapping[str, Any]) -> float:
+def _estimate_merged_clusters_footprint_mm2(
+    merged_clusters: Mapping[str, Any],
+) -> float:
     """Sum up object footprints (L × W in mm²) from the merged_clusters program."""
     total = 0.0
     clusters = merged_clusters.get("clusters")
@@ -5745,7 +5849,9 @@ def _compact_living_room_policy_for_object_solver(
         }
     footprint_mm2 = _estimate_merged_clusters_footprint_mm2(merged_clusters)
     available_area_mm2 = available_area_m2 * 1_000_000.0
-    packing_ratio = footprint_mm2 / available_area_mm2 if available_area_mm2 > 0 else 0.0
+    packing_ratio = (
+        footprint_mm2 / available_area_mm2 if available_area_mm2 > 0 else 0.0
+    )
     enabled = packing_ratio >= _COMPACT_LIVING_ROOM_PACKING_RATIO_THRESHOLD
     return {
         "enabled": enabled,
@@ -6683,6 +6789,103 @@ def _room_id(room_model: Mapping[str, Any]) -> str:
     return "room_1"
 
 
+def _open_wall_sides_from_model(room_model: Mapping[str, Any]) -> list[str]:
+    room = room_model.get("room") if isinstance(room_model.get("room"), Mapping) else {}
+    sides = room.get("open_wall_sides") if isinstance(room, Mapping) else None
+    if isinstance(sides, list):
+        return [
+            side
+            for side in (_normalize_wall_side_token(s) for s in sides)
+            if side is not None
+        ]
+    return []
+
+
+def _virtual_wall_segments_from_model(
+    room_model: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    room = room_model.get("room") if isinstance(room_model.get("room"), Mapping) else {}
+    return _normalized_virtual_wall_segments(
+        room.get("virtual_wall_segments") if isinstance(room, Mapping) else ()
+    )
+
+
+def _normalized_virtual_wall_segments(values: object) -> list[dict[str, Any]]:
+    if not isinstance(values, Sequence) or isinstance(values, str):
+        return []
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[tuple[int, int], tuple[int, int]]] = set()
+    for index, row in enumerate(values, start=1):
+        if not isinstance(row, Mapping):
+            continue
+        points = _normalize_point_list(row.get("segment_mm"))
+        if len(points) < 2:
+            points = _normalize_point_list(
+                [
+                    row.get("startPoint") or row.get("start"),
+                    row.get("endPoint") or row.get("end"),
+                ]
+            )
+        if len(points) < 2:
+            continue
+        p1 = points[0]
+        p2 = points[1]
+        a = (int(p1["x"]), int(p1["y"]))
+        b = (int(p2["x"]), int(p2["y"]))
+        if a == b:
+            continue
+        signature = (a, b) if a <= b else (b, a)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        out.append(
+            {
+                "id": str(
+                    row.get("id") or row.get("wall_id") or f"virtual_wall_{index}"
+                ),
+                "segment_mm": [p1, p2],
+                "virtual": True,
+            }
+        )
+    return out
+
+
+def _normalize_wall_side_token(value: Any) -> str | None:
+    token = _normalized_policy_token(value)
+    if not token:
+        return None
+    aliases = {
+        "bottom": "bottom_wall",
+        "bottom_wall": "bottom_wall",
+        "down": "bottom_wall",
+        "front_wall": "bottom_wall",
+        "left": "left_wall",
+        "left_wall": "left_wall",
+        "right": "right_wall",
+        "right_wall": "right_wall",
+        "top": "top_wall",
+        "top_wall": "top_wall",
+        "up": "top_wall",
+        "wall_bottom": "bottom_wall",
+        "wall_left": "left_wall",
+        "wall_right": "right_wall",
+        "wall_top": "top_wall",
+    }
+    return aliases.get(token)
+
+
+def _normalized_wall_side_set(values: object) -> set[str]:
+    if isinstance(values, str):
+        values = [values]
+    if not isinstance(values, Sequence):
+        return set()
+    return {
+        side
+        for side in (_normalize_wall_side_token(value) for value in values)
+        if side is not None
+    }
+
+
 def _room_type(room_model: Mapping[str, Any]) -> str:
     meta = room_model.get("meta") if isinstance(room_model.get("meta"), Mapping) else {}
     value = meta.get("room_type") if isinstance(meta, Mapping) else None
@@ -6934,6 +7137,8 @@ def _cluster_can_be_dropped_for_object_solver(
         if isinstance(cluster_program.get("object_program"), Mapping)
         else {}
     )
+    if _object_program_has_protected_inventory(object_program):
+        return False
     protected = {str(item) for item in object_program.get("protected_ids") or []}
     if anchor_id in protected:
         return False
@@ -6951,6 +7156,37 @@ def _cluster_can_be_dropped_for_object_solver(
     droppable = {str(item) for item in object_program.get("droppable_ids") or []}
     optional = {str(item) for item in object_program.get("optional_object_ids") or []}
     return anchor_id in droppable or anchor_id in optional
+
+
+def _object_program_has_protected_inventory(
+    object_program: Mapping[str, Any],
+) -> bool:
+    protected = {str(item) for item in object_program.get("protected_ids") or []}
+    required = {
+        str(item)
+        for item in (object_program.get("required_object_ids") or [])
+        if str(item)
+    }
+    object_specs = (
+        object_program.get("object_specs_by_id")
+        if isinstance(object_program.get("object_specs_by_id"), Mapping)
+        else {}
+    )
+    if not isinstance(object_specs, Mapping):
+        return bool(protected or required)
+    for object_id, spec in object_specs.items():
+        object_key = str(object_id)
+        if object_key in protected:
+            return True
+        if not isinstance(spec, Mapping):
+            if object_key in required:
+                return True
+            continue
+        if bool(spec.get("protected")) or _spec_min_keep(spec) > 0:
+            return True
+        if object_key in required and not bool(spec.get("droppable")):
+            return True
+    return any(item not in object_specs for item in required)
 
 
 def _spec_min_keep(spec: Mapping[str, Any]) -> int:
@@ -7118,6 +7354,15 @@ def _generate_anchor_pose_candidates(
     if not hint and region_preference:
         hint = region_preference
     placement_behavior = _placement_behavior_from_rows(hint, region_preference)
+    wall_backing = _placement_behavior_value(placement_behavior, "wall_backing")
+    wall_backing = _effective_object_wall_backing(
+        cluster_id=cluster_id,
+        object_id=anchor_id,
+        spec=spec,
+        current=wall_backing,
+    )
+    if wall_backing != _placement_behavior_value(placement_behavior, "wall_backing"):
+        placement_behavior = {**dict(placement_behavior), "wall_backing": wall_backing}
     zone_assignment = str(hint.get("zone_assignment") or "")
     required_region_ids = _string_sequence(hint.get("required_region_ids"))
     forbidden_region_ids = _dedupe_string_sequence(
@@ -7145,6 +7390,21 @@ def _generate_anchor_pose_candidates(
         ]
     )
     preferred_wall_side = str(hint.get("preferred_wall_side") or "").strip()
+    # If the LLM assigned preferred_wall_side to a virtual/partition wall, remap it
+    # to the nearest real wall so scoring still drives furniture toward a wall.
+    _open_sides_set = _normalized_wall_side_set(world.get("open_wall_sides") or ())
+    if preferred_wall_side.lower() in _open_sides_set:
+        _zone_region = _rect_tuple(
+            (world.get("region_index") or {}).get(zone_assignment)
+        )
+        if _zone_region is not None:
+            preferred_wall_side = _nearest_wall_name_for_region(
+                region_bbox=_zone_region,
+                room_bbox=world["room_bbox"],
+                open_wall_sides=world.get("open_wall_sides") or (),
+            )
+        else:
+            preferred_wall_side = ""
     anchor_strength = str(hint.get("anchor_strength") or "medium").strip().lower()
     region_bboxes = [
         bbox
@@ -7198,6 +7458,7 @@ def _generate_anchor_pose_candidates(
                     zone_assignment=zone_assignment,
                     room_bbox=world["room_bbox"],
                     region_bbox=region_bbox,
+                    open_wall_sides=world.get("open_wall_sides") or (),
                 )
                 origin_positions = _wall_flush_origin_candidates(
                     region_bbox=region_bbox,
@@ -7207,6 +7468,7 @@ def _generate_anchor_pose_candidates(
                     w_mm=w_mm,
                     h_mm=h_mm,
                     grid_mm=grid_mm,
+                    open_wall_sides=world.get("open_wall_sides") or (),
                 )
                 centers = _candidate_centers_for_region(
                     region_bbox=region_bbox,
@@ -7233,8 +7495,18 @@ def _generate_anchor_pose_candidates(
                     rect = (x, y, x + w_mm, y + h_mm)
                     if not _rect_inside_room(rect, world["room_bbox"]):
                         continue
+                    candidate = _materialize_object_row(
+                        cluster_program,
+                        anchor_id,
+                        x,
+                        y,
+                        int(rot),
+                    )
+                    hard_rect = _row_hard_footprint_rect(candidate, rect)
+                    if not _rect_inside_room_footprint(hard_rect, world):
+                        continue
                     if _anchor_forbidden_overlap_exceeds_limit(
-                        rect=rect,
+                        rect=hard_rect,
                         forbidden_regions=forbidden_regions,
                     ):
                         continue
@@ -7244,14 +7516,37 @@ def _generate_anchor_pose_candidates(
                     seen.add(key)
                     front_token = _functional_front_token_for_spec(spec, anchor_id)
                     front_world = _front_vector_from_rotation(front_token, int(rot))
+                    if wall_backing == "required" and not _rect_contacts_real_wall(
+                        rect=hard_rect,
+                        room_bbox=world["room_bbox"],
+                        open_wall_sides=world.get("open_wall_sides") or (),
+                    ):
+                        continue
+                    if wall_backing in {
+                        "preferred",
+                        "required",
+                    } and _rect_crosses_virtual_wall_segment(
+                        rect=hard_rect,
+                        virtual_wall_segments=world.get("virtual_wall_segments") or (),
+                    ):
+                        continue
+                    if _rect_backs_to_open_wall(
+                        rect=hard_rect,
+                        room_bbox=world["room_bbox"],
+                        front_world=front_world,
+                        open_wall_sides=world.get("open_wall_sides") or (),
+                        virtual_wall_segments=world.get("virtual_wall_segments") or (),
+                    ):
+                        continue
                     desired_front = _desired_anchor_front_vector(
                         cluster_id=cluster_id,
                         object_id=anchor_id,
-                        rect=rect,
+                        rect=hard_rect,
                         room_bbox=world["room_bbox"],
                         relation_plan=relation_plan,
                         anchor_kind=anchor_kind,
                         placement_behavior=placement_behavior,
+                        open_wall_sides=world.get("open_wall_sides") or (),
                     )
                     if _requires_strict_anchor_front_alignment(
                         spec=spec,
@@ -7266,13 +7561,6 @@ def _generate_anchor_pose_candidates(
                         front_world=front_world,
                         desired_front=desired_front,
                     )
-                    candidate = _materialize_object_row(
-                        cluster_program,
-                        anchor_id,
-                        x,
-                        y,
-                        int(rot),
-                    )
                     candidate.update(
                         {
                             "anchor_kind": anchor_kind,
@@ -7282,7 +7570,7 @@ def _generate_anchor_pose_candidates(
                             "orientation_score": orientation_score,
                             "search_stage": search_stage,
                             "candidate_score": _anchor_candidate_score(
-                                rect=rect,
+                                rect=hard_rect,
                                 room_bbox=world["room_bbox"],
                                 region_bbox=region_bbox,
                                 zone_assignment=zone_assignment,
@@ -7331,15 +7619,12 @@ def _anchor_forbidden_regions_for_cluster(
     world: Mapping[str, Any],
     resolved_region_bboxes: Sequence[tuple[int, int, int, int]],
 ) -> list[dict[str, Any]]:
-    if not resolved_region_bboxes:
-        return []
-    resolved_bbox_set = set(resolved_region_bboxes)
     raw_rows = (
         world.get("cluster_forbidden_regions")
         if isinstance(world.get("cluster_forbidden_regions"), Sequence)
         else []
     )
-    rows: list[dict[str, Any]] = []
+    cluster_rows: list[dict[str, Any]] = []
     seen: set[tuple[str, tuple[int, int, int, int]]] = set()
     for raw_row in raw_rows:
         if not isinstance(raw_row, Mapping):
@@ -7347,7 +7632,7 @@ def _anchor_forbidden_regions_for_cluster(
         if str(raw_row.get("cluster_id") or "") != cluster_id:
             continue
         bbox = _rect_tuple(raw_row.get("bbox"))
-        if bbox is None or bbox not in resolved_bbox_set:
+        if bbox is None:
             continue
         region_id = str(raw_row.get("region_id") or "")
         key = (region_id, bbox)
@@ -7356,7 +7641,13 @@ def _anchor_forbidden_regions_for_cluster(
         seen.add(key)
         row = dict(raw_row)
         row["bbox"] = bbox
-        rows.append(row)
+        cluster_rows.append(row)
+
+    if not resolved_region_bboxes:
+        return cluster_rows
+
+    resolved_bbox_set = set(resolved_region_bboxes)
+    rows = [row for row in cluster_rows if row["bbox"] in resolved_bbox_set]
     if rows:
         return rows
     return [
@@ -7450,6 +7741,7 @@ def _wall_flush_origin_candidates(
     w_mm: int,
     h_mm: int,
     grid_mm: int,
+    open_wall_sides: Sequence[str] = (),
 ) -> list[tuple[int, int]]:
     token = str(zone_assignment).lower()
     wall_backing = _placement_behavior_value(placement_behavior, "wall_backing")
@@ -7469,7 +7761,11 @@ def _wall_flush_origin_candidates(
     ):
         return []
 
-    wall = _nearest_wall_name_for_region(region_bbox=region_bbox, room_bbox=room_bbox)
+    wall = _nearest_wall_name_for_region(
+        region_bbox=region_bbox,
+        room_bbox=room_bbox,
+        open_wall_sides=open_wall_sides,
+    )
     min_x, min_y, max_x, max_y = region_bbox
     room_min_x, room_min_y, room_max_x, room_max_y = room_bbox
     room_cx = int(round((room_min_x + room_max_x) / 2.0))
@@ -7578,6 +7874,7 @@ def _anchor_kind_for_candidate(
     zone_assignment: str,
     room_bbox: tuple[int, int, int, int],
     region_bbox: tuple[int, int, int, int],
+    open_wall_sides: Sequence[str] = (),
 ) -> str:
     token = str(zone_assignment).lower()
     if "center" in token or "floating" in token:
@@ -7586,14 +7883,19 @@ def _anchor_kind_for_candidate(
         return "window_side"
     if "entry" in token or "door" in token:
         return "entry_side"
-    # infer closest wall from region
-    return _nearest_wall_name_for_region(region_bbox=region_bbox, room_bbox=room_bbox)
+    # infer closest REAL wall from region (skip virtual partition sides)
+    return _nearest_wall_name_for_region(
+        region_bbox=region_bbox,
+        room_bbox=room_bbox,
+        open_wall_sides=open_wall_sides,
+    )
 
 
 def _nearest_wall_name_for_region(
     *,
     region_bbox: tuple[int, int, int, int],
     room_bbox: tuple[int, int, int, int],
+    open_wall_sides: Sequence[str] = (),
 ) -> str:
     region_width = max(0, region_bbox[2] - region_bbox[0])
     region_height = max(0, region_bbox[3] - region_bbox[1])
@@ -7603,25 +7905,336 @@ def _nearest_wall_name_for_region(
         "left_wall": abs(region_bbox[0] - room_bbox[0]),
         "right_wall": abs(room_bbox[2] - region_bbox[2]),
     }
+    open_set = _normalized_wall_side_set(open_wall_sides)
+    available = {k: v for k, v in distances.items() if k not in open_set}
+    if not available:
+        # All walls are virtual (unusual) — fall back to closest physical wall
+        available = distances
+
+    horizontal_candidates = [w for w in ("top_wall", "bottom_wall") if w in available]
+    vertical_candidates = [w for w in ("left_wall", "right_wall") if w in available]
     horizontal_wall = (
-        "top_wall"
-        if distances["top_wall"] <= distances["bottom_wall"]
-        else "bottom_wall"
+        min(horizontal_candidates, key=lambda w: available[w])
+        if horizontal_candidates
+        else min(available, key=lambda w: available[w])
     )
     vertical_wall = (
-        "left_wall"
-        if distances["left_wall"] <= distances["right_wall"]
-        else "right_wall"
+        min(vertical_candidates, key=lambda w: available[w])
+        if vertical_candidates
+        else min(available, key=lambda w: available[w])
     )
-    if region_width <= max(700, int(round(region_height * 0.45))) and distances[
-        vertical_wall
-    ] <= max(900, distances[horizontal_wall] + 900):
+    h_dist = available.get(horizontal_wall, 10**9)
+    v_dist = available.get(vertical_wall, 10**9)
+    if region_width <= max(700, int(round(region_height * 0.45))) and v_dist <= max(
+        900, h_dist + 900
+    ):
         return vertical_wall
-    if region_height <= max(700, int(round(region_width * 0.45))) and distances[
-        horizontal_wall
-    ] <= max(900, distances[vertical_wall] + 900):
+    if region_height <= max(700, int(round(region_width * 0.45))) and h_dist <= max(
+        900, v_dist + 900
+    ):
         return horizontal_wall
-    return min(distances.items(), key=lambda item: item[1])[0]
+    return min(available, key=lambda w: available[w])
+
+
+def _wall_inward_front_for_side(side: str) -> tuple[float, float] | None:
+    return {
+        "bottom_wall": (0.0, -1.0),
+        "left_wall": (1.0, 0.0),
+        "right_wall": (-1.0, 0.0),
+        "top_wall": (0.0, 1.0),
+    }.get(side)
+
+
+def _distance_to_room_side(
+    *,
+    rect: tuple[int, int, int, int],
+    room_bbox: tuple[int, int, int, int],
+    side: str,
+) -> int | None:
+    if side == "left_wall":
+        return abs(rect[0] - room_bbox[0])
+    if side == "right_wall":
+        return abs(room_bbox[2] - rect[2])
+    if side == "top_wall":
+        return abs(rect[1] - room_bbox[1])
+    if side == "bottom_wall":
+        return abs(room_bbox[3] - rect[3])
+    return None
+
+
+def _rect_contacts_real_wall(
+    *,
+    rect: tuple[int, int, int, int],
+    room_bbox: tuple[int, int, int, int],
+    open_wall_sides: Sequence[str] = (),
+    tolerance_mm: int = 60,
+) -> bool:
+    open_set = _normalized_wall_side_set(open_wall_sides)
+    for side in ("left_wall", "right_wall", "top_wall", "bottom_wall"):
+        if side in open_set:
+            continue
+        distance = _distance_to_room_side(rect=rect, room_bbox=room_bbox, side=side)
+        if distance is not None and distance <= max(0, int(tolerance_mm)):
+            return True
+    return False
+
+
+def _rect_contacts_virtual_wall(
+    *,
+    rect: tuple[int, int, int, int],
+    room_bbox: tuple[int, int, int, int],
+    open_wall_sides: Sequence[str] = (),
+    virtual_wall_segments: Sequence[Mapping[str, Any]] = (),
+    tolerance_mm: int = OBJECT_LEVEL_VIRTUAL_WALL_BACK_CONTACT_TOLERANCE_MM,
+) -> bool:
+    limit = max(0, int(tolerance_mm))
+    for side in _normalized_wall_side_set(open_wall_sides):
+        distance = _distance_to_room_side(rect=rect, room_bbox=room_bbox, side=side)
+        if distance is not None and distance <= limit:
+            return True
+    return _rect_contacts_virtual_wall_segment(
+        rect=rect,
+        virtual_wall_segments=virtual_wall_segments,
+        tolerance_mm=limit,
+    )
+
+
+def _rect_crosses_virtual_wall_segment(
+    *,
+    rect: tuple[int, int, int, int],
+    virtual_wall_segments: Sequence[Mapping[str, Any]],
+    tolerance_mm: int = OBJECT_LEVEL_VIRTUAL_WALL_BACK_CONTACT_TOLERANCE_MM,
+) -> bool:
+    return _rect_contacts_virtual_wall_segment(
+        rect=rect,
+        virtual_wall_segments=virtual_wall_segments,
+        tolerance_mm=max(0, int(tolerance_mm)),
+    )
+
+
+def _rect_contacts_virtual_wall_segment(
+    *,
+    rect: tuple[int, int, int, int],
+    virtual_wall_segments: Sequence[Mapping[str, Any]],
+    tolerance_mm: int,
+) -> bool:
+    for segment in virtual_wall_segments:
+        points = _normalize_point_list(segment.get("segment_mm"))
+        if len(points) < 2:
+            continue
+        p1 = points[0]
+        p2 = points[1]
+        x1, y1 = float(p1["x"]), float(p1["y"])
+        x2, y2 = float(p2["x"]), float(p2["y"])
+        dx = x2 - x1
+        dy = y2 - y1
+        if abs(dx) >= abs(dy):
+            seg_y = (y1 + y2) / 2.0
+            seg_min_x = min(x1, x2)
+            seg_max_x = max(x1, x2)
+            overlap = min(float(rect[2]), seg_max_x) - max(float(rect[0]), seg_min_x)
+            if overlap <= _virtual_wall_min_overlap(rect[2] - rect[0], abs(dx)):
+                continue
+            if float(rect[1]) - tolerance_mm <= seg_y <= float(rect[3]) + tolerance_mm:
+                return True
+        else:
+            seg_x = (x1 + x2) / 2.0
+            seg_min_y = min(y1, y2)
+            seg_max_y = max(y1, y2)
+            overlap = min(float(rect[3]), seg_max_y) - max(float(rect[1]), seg_min_y)
+            if overlap <= _virtual_wall_min_overlap(rect[3] - rect[1], abs(dy)):
+                continue
+            if float(rect[0]) - tolerance_mm <= seg_x <= float(rect[2]) + tolerance_mm:
+                return True
+    return False
+
+
+def _rect_backs_to_open_wall(
+    *,
+    rect: tuple[int, int, int, int],
+    room_bbox: tuple[int, int, int, int],
+    front_world: tuple[float, float] | None,
+    open_wall_sides: Sequence[str] = (),
+    virtual_wall_segments: Sequence[Mapping[str, Any]] = (),
+    tolerance_mm: int = OBJECT_LEVEL_VIRTUAL_WALL_BACK_CONTACT_TOLERANCE_MM,
+    min_dot: float = OBJECT_LEVEL_FRONT_ALIGNMENT_MIN_DOT,
+) -> bool:
+    if front_world is None:
+        return False
+    for side in _normalized_wall_side_set(open_wall_sides):
+        distance = _distance_to_room_side(rect=rect, room_bbox=room_bbox, side=side)
+        inward_front = _wall_inward_front_for_side(side)
+        if distance is None or inward_front is None:
+            continue
+        if distance > max(0, int(tolerance_mm)):
+            continue
+        if _dot_normalized(front_world, inward_front) >= float(min_dot):
+            return True
+    return _rect_backs_to_virtual_wall_segment(
+        rect=rect,
+        front_world=front_world,
+        virtual_wall_segments=virtual_wall_segments,
+        tolerance_mm=tolerance_mm,
+        min_dot=min_dot,
+    )
+
+
+def _rect_backs_to_virtual_wall_segment(
+    *,
+    rect: tuple[int, int, int, int],
+    front_world: tuple[float, float],
+    virtual_wall_segments: Sequence[Mapping[str, Any]],
+    tolerance_mm: int,
+    min_dot: float,
+) -> bool:
+    return (
+        _virtual_wall_segment_back_issue(
+            rect=rect,
+            front_world=front_world,
+            virtual_wall_segments=virtual_wall_segments,
+            tolerance_mm=tolerance_mm,
+            min_dot=min_dot,
+        )
+        is not None
+    )
+
+
+def _virtual_wall_segment_back_issue(
+    *,
+    rect: tuple[int, int, int, int],
+    front_world: tuple[float, float],
+    virtual_wall_segments: Sequence[Mapping[str, Any]],
+    tolerance_mm: int = OBJECT_LEVEL_VIRTUAL_WALL_BACK_CONTACT_TOLERANCE_MM,
+    min_dot: float = OBJECT_LEVEL_FRONT_ALIGNMENT_MIN_DOT,
+) -> dict[str, Any] | None:
+    for segment in virtual_wall_segments:
+        points = _normalize_point_list(segment.get("segment_mm"))
+        if len(points) < 2:
+            continue
+        p1 = points[0]
+        p2 = points[1]
+        x1, y1 = float(p1["x"]), float(p1["y"])
+        x2, y2 = float(p2["x"]), float(p2["y"])
+        dx = x2 - x1
+        dy = y2 - y1
+        if abs(dx) >= abs(dy):
+            seg_y = (y1 + y2) / 2.0
+            seg_min_x = min(x1, x2)
+            seg_max_x = max(x1, x2)
+            overlap = min(float(rect[2]), seg_max_x) - max(float(rect[0]), seg_min_x)
+            if overlap <= _virtual_wall_min_overlap(rect[2] - rect[0], abs(dx)):
+                continue
+            top_distance = abs(float(rect[1]) - seg_y)
+            bottom_distance = abs(float(rect[3]) - seg_y)
+            checks = (
+                (top_distance, (0.0, 1.0), "top_edge"),
+                (bottom_distance, (0.0, -1.0), "bottom_edge"),
+            )
+        else:
+            seg_x = (x1 + x2) / 2.0
+            seg_min_y = min(y1, y2)
+            seg_max_y = max(y1, y2)
+            overlap = min(float(rect[3]), seg_max_y) - max(float(rect[1]), seg_min_y)
+            if overlap <= _virtual_wall_min_overlap(rect[3] - rect[1], abs(dy)):
+                continue
+            left_distance = abs(float(rect[0]) - seg_x)
+            right_distance = abs(float(rect[2]) - seg_x)
+            checks = (
+                (left_distance, (1.0, 0.0), "left_edge"),
+                (right_distance, (-1.0, 0.0), "right_edge"),
+            )
+        for distance, desired_front, edge in checks:
+            if distance > max(0, int(tolerance_mm)):
+                continue
+            dot = _dot_normalized(front_world, desired_front)
+            if dot < float(min_dot):
+                continue
+            return {
+                "virtual_wall_id": str(segment.get("id") or ""),
+                "virtual_wall_edge": edge,
+                "distance_mm": int(round(distance)),
+                "dot": round(dot, 3),
+            }
+    return None
+
+
+def _virtual_wall_min_overlap(rect_span: int, segment_span: float) -> float:
+    return min(160.0, max(60.0, min(float(rect_span), float(segment_span)) * 0.18))
+
+
+def _row_backs_to_open_wall(
+    *,
+    row: Mapping[str, Any],
+    rect: tuple[int, int, int, int],
+    world: Mapping[str, Any],
+) -> bool:
+    return _rect_backs_to_open_wall(
+        rect=rect,
+        room_bbox=world["room_bbox"],
+        front_world=_front_tuple(row.get("front_world")),
+        open_wall_sides=world.get("open_wall_sides") or (),
+        virtual_wall_segments=world.get("virtual_wall_segments") or (),
+    )
+
+
+def _virtual_wall_back_issue_for_row(
+    row: Mapping[str, Any],
+    *,
+    room_bbox: tuple[int, int, int, int],
+    open_wall_sides: Sequence[str],
+    virtual_wall_segments: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any] | None:
+    rect = _rect_tuple(row.get("rect"))
+    if rect is None:
+        return None
+    rect = _row_hard_footprint_rect(row, rect)
+    front = _front_tuple(row.get("front_world"))
+    if front is not None:
+        for side in sorted(_normalized_wall_side_set(open_wall_sides)):
+            distance = _distance_to_room_side(rect=rect, room_bbox=room_bbox, side=side)
+            inward_front = _wall_inward_front_for_side(side)
+            if distance is None or inward_front is None:
+                continue
+            dot = _dot_normalized(front, inward_front)
+            if (
+                distance <= OBJECT_LEVEL_VIRTUAL_WALL_BACK_CONTACT_TOLERANCE_MM
+                and dot >= OBJECT_LEVEL_FRONT_ALIGNMENT_MIN_DOT
+            ):
+                return {
+                    "cluster_id": str(row.get("cluster_id") or ""),
+                    "object_id": str(row.get("object_id") or ""),
+                    "reason": "back_to_virtual_wall",
+                    "wall_side": side,
+                    "distance_mm": int(distance),
+                    "dot": round(dot, 3),
+                    "violation_severity": "blocking",
+                }
+        segment_issue = _virtual_wall_segment_back_issue(
+            rect=rect,
+            front_world=front,
+            virtual_wall_segments=virtual_wall_segments,
+        )
+        if segment_issue is not None:
+            return {
+                "cluster_id": str(row.get("cluster_id") or ""),
+                "object_id": str(row.get("object_id") or ""),
+                "reason": "back_to_virtual_wall",
+                "wall_side": "virtual_segment",
+                "violation_severity": "blocking",
+                **segment_issue,
+            }
+    if _row_requires_real_wall_only(row) and _rect_crosses_virtual_wall_segment(
+        rect=rect,
+        virtual_wall_segments=virtual_wall_segments,
+    ):
+        return {
+            "cluster_id": str(row.get("cluster_id") or ""),
+            "object_id": str(row.get("object_id") or ""),
+            "reason": "wall_backed_object_on_virtual_wall",
+            "wall_side": "virtual_wall",
+            "violation_severity": "blocking",
+        }
+    return None
 
 
 def _anchor_candidate_score(
@@ -7658,15 +8271,36 @@ def _anchor_candidate_score(
         placement_behavior,
         "pose_flexibility",
     )
+    _FLUSH_TOL = 60  # mm: contact tolerance for "flush against wall"
+    _is_wall_anchor = anchor_kind in {
+        "bottom_wall",
+        "left_wall",
+        "right_wall",
+        "top_wall",
+        "window_side",
+    }
     if wall_backing in {"preferred", "required"}:
-        if anchor_kind in {
-            "bottom_wall",
-            "left_wall",
-            "right_wall",
-            "top_wall",
-            "window_side",
-        }:
+        if _is_wall_anchor:
             score += 700.0 if wall_backing == "required" else 350.0
+            # Extra bonus when the rect is ACTUALLY flush against the named wall —
+            # this prevents non-flush centered candidates from beating flush ones.
+            wall_flush_bonus = 1200.0 if wall_backing == "required" else 600.0
+            if anchor_kind == "left_wall" and abs(rect[0] - room_bbox[0]) <= _FLUSH_TOL:
+                score += wall_flush_bonus
+            elif (
+                anchor_kind == "right_wall"
+                and abs(rect[2] - room_bbox[2]) <= _FLUSH_TOL
+            ):
+                score += wall_flush_bonus
+            elif (
+                anchor_kind == "top_wall" and abs(rect[1] - room_bbox[1]) <= _FLUSH_TOL
+            ):
+                score += wall_flush_bonus
+            elif (
+                anchor_kind == "bottom_wall"
+                and abs(rect[3] - room_bbox[3]) <= _FLUSH_TOL
+            ):
+                score += wall_flush_bonus
         else:
             score -= 700.0 if wall_backing == "required" else 250.0
     if front_space == "required":
@@ -7769,6 +8403,7 @@ def _desired_anchor_front_vector(
     relation_plan: Mapping[str, Any] | None,
     anchor_kind: str,
     placement_behavior: Mapping[str, Any] | None = None,
+    open_wall_sides: Sequence[str] = (),
 ) -> tuple[float, float] | None:
     intents = _object_level_orientation_intents(
         cluster_id=cluster_id,
@@ -7776,7 +8411,9 @@ def _desired_anchor_front_vector(
         relation_plan=relation_plan,
         include_cluster=True,
     )
-    contact_front = _wall_contact_inward_front(rect=rect, room_bbox=room_bbox)
+    contact_front = _wall_contact_inward_front(
+        rect=rect, room_bbox=room_bbox, open_wall_sides=open_wall_sides
+    )
     if contact_front is not None:
         return contact_front
     if anchor_kind in {
@@ -7794,7 +8431,9 @@ def _desired_anchor_front_vector(
             or wall_backing in {"preferred", "required"}
             or front_space in {"preferred", "required"}
         ):
-            return _nearest_wall_inward_front(rect=rect, room_bbox=room_bbox)
+            return _nearest_wall_inward_front(
+                rect=rect, room_bbox=room_bbox, open_wall_sides=open_wall_sides
+            )
     return None
 
 
@@ -7855,14 +8494,18 @@ def _nearest_wall_inward_front(
     *,
     rect: tuple[int, int, int, int],
     room_bbox: tuple[int, int, int, int],
+    open_wall_sides: Sequence[str] = (),
 ) -> tuple[float, float]:
-    distances = [
-        (abs(rect[0] - room_bbox[0]), (1.0, 0.0)),
-        (abs(room_bbox[2] - rect[2]), (-1.0, 0.0)),
-        (abs(rect[1] - room_bbox[1]), (0.0, 1.0)),
-        (abs(room_bbox[3] - rect[3]), (0.0, -1.0)),
+    open_set = _normalized_wall_side_set(open_wall_sides)
+    candidates = [
+        (abs(rect[0] - room_bbox[0]), (1.0, 0.0), "left_wall"),
+        (abs(room_bbox[2] - rect[2]), (-1.0, 0.0), "right_wall"),
+        (abs(rect[1] - room_bbox[1]), (0.0, 1.0), "top_wall"),
+        (abs(room_bbox[3] - rect[3]), (0.0, -1.0), "bottom_wall"),
     ]
-    return min(distances, key=lambda item: item[0])[1]
+    real_walls = [(d, f) for d, f, w in candidates if w not in open_set]
+    available = real_walls if real_walls else [(d, f) for d, f, _ in candidates]
+    return min(available, key=lambda item: item[0])[1]
 
 
 def _wall_contact_inward_front(
@@ -7870,14 +8513,20 @@ def _wall_contact_inward_front(
     rect: tuple[int, int, int, int],
     room_bbox: tuple[int, int, int, int],
     tolerance_mm: int = OBJECT_LEVEL_WALL_CONTACT_TOLERANCE_MM,
+    open_wall_sides: Sequence[str] = (),
 ) -> tuple[float, float] | None:
+    open_set = _normalized_wall_side_set(open_wall_sides)
     contacts = [
-        (abs(rect[0] - room_bbox[0]), (1.0, 0.0)),
-        (abs(room_bbox[2] - rect[2]), (-1.0, 0.0)),
-        (abs(rect[1] - room_bbox[1]), (0.0, 1.0)),
-        (abs(room_bbox[3] - rect[3]), (0.0, -1.0)),
+        (abs(rect[0] - room_bbox[0]), (1.0, 0.0), "left_wall"),
+        (abs(room_bbox[2] - rect[2]), (-1.0, 0.0), "right_wall"),
+        (abs(rect[1] - room_bbox[1]), (0.0, 1.0), "top_wall"),
+        (abs(room_bbox[3] - rect[3]), (0.0, -1.0), "bottom_wall"),
     ]
-    flush_contacts = [item for item in contacts if item[0] <= max(0, int(tolerance_mm))]
+    flush_contacts = [
+        (d, f)
+        for d, f, w in contacts
+        if d <= max(0, int(tolerance_mm)) and w not in open_set
+    ]
     if not flush_contacts:
         return None
     return min(flush_contacts, key=lambda item: item[0])[1]
@@ -7940,6 +8589,11 @@ def _search_anchor_solutions(
         if isinstance(world.get("cluster_forbidden_regions"), Sequence)
         else []
     )
+    forbidden_regions = (
+        world.get("cluster_forbidden_regions")
+        if isinstance(world.get("cluster_forbidden_regions"), Sequence)
+        else []
+    )
 
     def rec(
         index: int,
@@ -7995,7 +8649,12 @@ def _search_anchor_solutions(
                 del dropped_inventory_by_cluster[cluster_id][-len(drop_records) :]
         for candidate in anchor_candidates_by_cluster.get(cluster_id, []):
             rect = candidate["rect"]
-            occupied_rects = [row["rect"] for row in chosen]
+            occupied_rects = [
+                occupied
+                for row in chosen
+                for occupied in (_row_collision_rect(row),)
+                if occupied is not None
+            ]
             if not _object_rect_is_usable(
                 rect,
                 occupied_rects,
@@ -8097,8 +8756,14 @@ def _anchor_pair_solution_score(
         or secondary not in anchor_solution
     ):
         return 0.0
-    a = anchor_solution[primary]["rect"]
-    b = anchor_solution[secondary]["rect"]
+    a = (
+        _row_collision_rect(anchor_solution[primary])
+        or anchor_solution[primary]["rect"]
+    )
+    b = (
+        _row_collision_rect(anchor_solution[secondary])
+        or anchor_solution[secondary]["rect"]
+    )
     ac = ((a[0] + a[2]) / 2.0, (a[1] + a[3]) / 2.0)
     bc = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
     distance = math.hypot(ac[0] - bc[0], ac[1] - bc[1])
@@ -8225,9 +8890,13 @@ def _anchor_pair_orientation_score(
         if configured_target and configured_target != target_cluster_id:
             continue
         front = _front_tuple(anchor.get("front_world"))
+        anchor_rect = _row_collision_rect(anchor)
+        target_rect = _row_collision_rect(target_anchor)
+        if anchor_rect is None or target_rect is None:
+            continue
         desired = _vector_between_rect_centers(
-            tuple(anchor["rect"]),
-            tuple(target_anchor["rect"]),
+            anchor_rect,
+            target_rect,
         )
         if front is None or desired is None:
             continue
@@ -8253,8 +8922,8 @@ def _anchor_pair_axis_alignment_score(
 ) -> float:
     left_front = _front_tuple(left_anchor.get("front_world"))
     right_front = _front_tuple(right_anchor.get("front_world"))
-    left_rect = _rect_tuple(left_anchor.get("rect"))
-    right_rect = _rect_tuple(right_anchor.get("rect"))
+    left_rect = _row_collision_rect(left_anchor)
+    right_rect = _row_collision_rect(right_anchor)
     if (
         left_front is None
         or right_front is None
@@ -8273,6 +8942,128 @@ def _anchor_pair_axis_alignment_score(
             (max(0.0, min_dot - left_dot)) + max(0.0, min_dot - right_dot)
         )
     return 5200.0 * ((left_dot + right_dot) / 2.0)
+
+
+def _support_object_can_use_independent_wall_fallback(
+    *,
+    cluster_id: str,
+    object_id: str,
+    spec: Mapping[str, Any],
+    droppable: set[str],
+    protected: set[str],
+) -> bool:
+    if object_id in droppable and object_id not in protected:
+        return False
+    if not (
+        object_id in protected
+        or bool(spec.get("protected"))
+        or _spec_min_keep(spec) > 0
+    ):
+        return False
+    wall_backing = _effective_object_wall_backing(
+        cluster_id=cluster_id,
+        object_id=object_id,
+        spec=spec,
+        current="",
+    )
+    return wall_backing in {"preferred", "required"}
+
+
+def _independent_support_anchor_candidates(
+    *,
+    cluster_program: Mapping[str, Any],
+    object_id: str,
+    room_model: Mapping[str, Any],
+    relation_plan: Mapping[str, Any] | None,
+    world: Mapping[str, Any],
+    grid_mm: int,
+) -> list[dict[str, Any]]:
+    object_program = (
+        cluster_program.get("object_program")
+        if isinstance(cluster_program.get("object_program"), Mapping)
+        else {}
+    )
+    specs = (
+        object_program.get("object_specs_by_id")
+        if isinstance(object_program.get("object_specs_by_id"), Mapping)
+        else {}
+    )
+    if object_id not in specs:
+        return []
+    cluster_id = str(cluster_program.get("cluster_id") or "")
+    fallback_object_program = {
+        **dict(object_program),
+        "members": [object_id],
+        "anchors": [object_id],
+        "dominant_anchor_id": object_id,
+        "dominant_anchor_candidates": [object_id],
+        "placement_order": [object_id],
+        "support_edges": [],
+    }
+    fallback_cluster_program = {
+        **dict(cluster_program),
+        "members": [object_id],
+        "anchors": [object_id],
+        "object_program": fallback_object_program,
+    }
+    fallback_relation_plan: Mapping[str, Any] | None = relation_plan
+    region_index = (
+        world.get("region_index")
+        if isinstance(world.get("region_index"), Mapping)
+        else {}
+    )
+    fallback_region_ids = [
+        str(region_id)
+        for region_id, bbox in region_index.items()
+        if _rect_tuple(bbox) is not None
+        and _region_id_is_anchor_fallback_region(str(region_id))
+    ]
+    if cluster_id and fallback_region_ids:
+        base_plan = dict(relation_plan) if isinstance(relation_plan, Mapping) else {}
+        hints = (
+            dict(base_plan.get("anchor_layout_hints_by_cluster"))
+            if isinstance(base_plan.get("anchor_layout_hints_by_cluster"), Mapping)
+            else {}
+        )
+        existing_hint = (
+            dict(hints.get(cluster_id))
+            if isinstance(hints.get(cluster_id), Mapping)
+            else {}
+        )
+        placement_behavior = (
+            dict(existing_hint.get("placement_behavior"))
+            if isinstance(existing_hint.get("placement_behavior"), Mapping)
+            else {}
+        )
+        spec = specs.get(object_id) if isinstance(specs.get(object_id), Mapping) else {}
+        wall_backing = _effective_object_wall_backing(
+            cluster_id=cluster_id,
+            object_id=object_id,
+            spec=spec,
+            current=str(placement_behavior.get("wall_backing") or ""),
+        )
+        hints[cluster_id] = {
+            **existing_hint,
+            "zone_assignment": "",
+            "required_region_ids": [],
+            "preferred_region_ids": fallback_region_ids,
+            "placement_behavior": {
+                **placement_behavior,
+                "wall_backing": wall_backing or "required",
+                "front_space": placement_behavior.get("front_space") or "preferred",
+            },
+        }
+        fallback_relation_plan = {
+            **base_plan,
+            "anchor_layout_hints_by_cluster": hints,
+        }
+    return _generate_anchor_pose_candidates(
+        cluster_program=fallback_cluster_program,
+        room_model=room_model,
+        relation_plan=fallback_relation_plan,
+        world=world,
+        grid_mm=grid_mm,
+    )
 
 
 def _place_support_objects_for_solution(
@@ -8297,26 +9088,33 @@ def _place_support_objects_for_solution(
         if isinstance(solution.get("anchor_solution"), Mapping)
         else {}
     )
-    occupied = [row["rect"] for row in anchor_solution.values()]
+    occupied: list[tuple[int, int, int, int]] = []
     # materialize anchors first
     for cluster_id, anchor_row in anchor_solution.items():
         cluster_program = world["clusters_by_id"][cluster_id]
         anchor_id = anchor_row["object_id"]
-        placed_objects.append(
-            _materialize_object_row(
-                cluster_program,
-                anchor_id,
-                anchor_row["x"],
-                anchor_row["y"],
-                anchor_row["rot"],
-            )
+        materialized_anchor = _materialize_object_row(
+            cluster_program,
+            anchor_id,
+            anchor_row["x"],
+            anchor_row["y"],
+            anchor_row["rot"],
         )
+        placed_objects.append(materialized_anchor)
+        anchor_collision_rect = _row_collision_rect(materialized_anchor)
+        if anchor_collision_rect is not None:
+            occupied.append(anchor_collision_rect)
     placed_by_id = {
         (row["cluster_id"], row["object_id"]): row for row in placed_objects
     }
     protected_regions = (
         world.get("protected_regions")
         if isinstance(world.get("protected_regions"), Sequence)
+        else []
+    )
+    forbidden_regions = (
+        world.get("cluster_forbidden_regions")
+        if isinstance(world.get("cluster_forbidden_regions"), Sequence)
         else []
     )
     results: list[dict[str, Any]] = []
@@ -8374,6 +9172,7 @@ def _place_support_objects_for_solution(
         cluster_program = world["clusters_by_id"][cluster_id]
         object_program = cluster_program["object_program"]
         anchor_id = _cluster_program_dominant_anchor(cluster_program)
+        spec = _object_spec(cluster_program, object_id) or {}
         droppable = _droppable_object_ids(object_program)
         protected = set(object_program.get("protected_ids") or [])
 
@@ -8397,14 +9196,12 @@ def _place_support_objects_for_solution(
             edge=edge,
             grid_mm=grid_mm,
             room_bbox=world["room_bbox"],
+            open_wall_sides=world.get("open_wall_sides") or (),
+            virtual_wall_segments=world.get("virtual_wall_segments") or (),
         )
         viable_slots: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
         for slot in slots:
             rect = slot["rect"]
-            if not _rect_inside_room_footprint(rect, world):
-                continue
-            if any(_rects_overlap(rect, occ) for occ in occupied):
-                continue
             bedside_metrics = _bedside_head_slot_metrics(
                 side_option=str(slot.get("side_option") or ""),
                 rect=rect,
@@ -8414,6 +9211,7 @@ def _place_support_objects_for_solution(
                     int(base_row.get("rot") or 0),
                 ),
                 room_bbox=world["room_bbox"],
+                open_wall_sides=world.get("open_wall_sides") or (),
                 gap_max_mm=int(
                     edge.get("gap_max_mm")
                     or edge.get("gap_max")
@@ -8435,6 +9233,24 @@ def _place_support_objects_for_solution(
                 "bedside_head_projection_mm"
             )
             materialized["bedside_side_gap_mm"] = slot.get("bedside_side_gap_mm")
+            hard_rect = _row_hard_footprint_rect(materialized, rect)
+            if not _rect_inside_room_footprint(hard_rect, world):
+                continue
+            if any(_rects_overlap(hard_rect, occ) for occ in occupied):
+                continue
+            if _row_requires_real_wall_only(
+                materialized
+            ) and _rect_crosses_virtual_wall_segment(
+                rect=hard_rect,
+                virtual_wall_segments=world.get("virtual_wall_segments") or (),
+            ):
+                continue
+            if _row_backs_to_open_wall(
+                row=materialized,
+                rect=hard_rect,
+                world=world,
+            ):
+                continue
             if _support_candidate_has_blocking_region_issue(
                 candidate=materialized,
                 protected_regions=protected_regions,
@@ -8449,6 +9265,78 @@ def _place_support_objects_for_solution(
                 relation_plan=relation_plan,
             )
             viable_slots.append((relax_penalty, slot, materialized))
+        if not viable_slots and _support_object_can_use_independent_wall_fallback(
+            cluster_id=cluster_id,
+            object_id=object_id,
+            spec=spec,
+            droppable=droppable,
+            protected=protected,
+        ):
+            fallback_slots: list[tuple[int, float, dict[str, Any], dict[str, Any]]] = []
+            for fallback in _independent_support_anchor_candidates(
+                cluster_program=cluster_program,
+                object_id=object_id,
+                room_model=room_model,
+                relation_plan=relation_plan,
+                world=world,
+                grid_mm=grid_mm,
+            ):
+                rect = _rect_tuple(fallback.get("rect"))
+                if rect is None:
+                    continue
+                if not _object_rect_is_usable(
+                    rect,
+                    occupied,
+                    world,
+                    row=fallback,
+                    front_access_rows=placed_objects,
+                ):
+                    continue
+                materialized = dict(fallback)
+                materialized["relative_to"] = None
+                materialized["support_side_option"] = "independent_wall_fallback"
+                materialized["support_relation_relaxed"] = True
+                forbidden_issue_count = len(
+                    _object_level_cluster_forbidden_region_issues(
+                        placed_objects=[materialized],
+                        forbidden_regions=forbidden_regions,
+                    )
+                )
+                relax_penalty = (
+                    _support_slot_relaxation_penalty(
+                        candidate=materialized,
+                        placed_objects=placed_objects,
+                        protected_regions=protected_regions,
+                        world=world,
+                        relation_plan=relation_plan,
+                    )
+                    + 2400.0
+                )
+                fallback_slots.append(
+                    (
+                        forbidden_issue_count,
+                        relax_penalty,
+                        {
+                            "x": int(materialized["x"]),
+                            "y": int(materialized["y"]),
+                            "rot": int(materialized["rot"]),
+                            "rect": rect,
+                            "side_option": "independent_wall_fallback",
+                            "orientation_score": float(
+                                materialized.get("orientation_score") or 0.0
+                            ),
+                            "semantic_alignment_score": -600.0,
+                        },
+                        materialized,
+                    )
+                )
+            if fallback_slots:
+                best_issue_count = min(item[0] for item in fallback_slots)
+                viable_slots.extend(
+                    (relax_penalty, slot, materialized)
+                    for issue_count, relax_penalty, slot, materialized in fallback_slots
+                    if issue_count == best_issue_count
+                )
         viable_slots.sort(
             key=lambda item: (
                 item[0],
@@ -8469,7 +9357,7 @@ def _place_support_objects_for_solution(
         viable_slots = viable_slots[:slot_limit]
 
         for relax_penalty, slot, materialized in viable_slots:
-            rect = slot["rect"]
+            rect = _row_collision_rect(materialized) or slot["rect"]
             placed_objects.append(materialized)
             placed_by_id[(cluster_id, object_id)] = materialized
             occupied.append(rect)
@@ -8619,7 +9507,7 @@ def _repair_object_level_solution_geometry(
         key = _object_repair_key(repaired_row)
         if key is not None:
             repaired_by_key[key] = repaired_row
-        occupied_rects.append(candidate_rect)
+        occupied_rects.append(_row_collision_rect(repaired_row) or candidate_rect)
         if candidate_rect != rect:
             old_center = _rect_center(rect)
             new_center = _rect_center(candidate_rect)
@@ -8778,9 +9666,20 @@ def _object_rect_is_usable(
     # Protected-region / forbidden-region / front-access violations are soft — they
     # affect scoring/issue-reporting but must not gate placements.  This ensures rooms
     # with many doors or large obstacle zones still yield valid layouts.
-    if not _rect_inside_room_footprint(rect, world):
+    hard_rect = _row_hard_footprint_rect(row, rect) if row is not None else rect
+    if not _rect_inside_room_footprint(hard_rect, world):
         return False
-    if any(_rects_overlap(rect, occupied) for occupied in occupied_rects):
+    if row is not None and _row_requires_real_wall_only(row):
+        if _rect_crosses_virtual_wall_segment(
+            rect=hard_rect,
+            virtual_wall_segments=world.get("virtual_wall_segments") or (),
+        ):
+            return False
+    if row is not None and _row_backs_to_open_wall(
+        row=row, rect=hard_rect, world=world
+    ):
+        return False
+    if any(_rects_overlap(hard_rect, occupied) for occupied in occupied_rects):
         return False
     return True
 
@@ -9001,6 +9900,14 @@ def _object_row_with_rect(
         "x": int(round((rect[0] + rect[2]) / 2.0)),
         "y": int(round((rect[1] + rect[3]) / 2.0)),
     }
+    visual_rect = _row_visual_rect_for_solver_rect(next_row, rect)
+    next_row["visual_bbox"] = _bbox_from_rect(visual_rect)
+    hard_rect = _row_hard_footprint_rect(next_row, rect)
+    next_row["hard_footprint_bbox"] = _bbox_from_rect(hard_rect)
+    if hard_rect != rect:
+        next_row["hard_footprint_rect"] = hard_rect
+    else:
+        next_row.pop("hard_footprint_rect", None)
     return next_row
 
 
@@ -9195,6 +10102,8 @@ def _support_slot_candidates(
     edge: Mapping[str, Any],
     grid_mm: int,
     room_bbox: tuple[int, int, int, int] | None = None,
+    open_wall_sides: Sequence[str] = (),
+    virtual_wall_segments: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, Any]]:
     spec = _object_spec(cluster_program, object_id)
     if spec is None:
@@ -9244,6 +10153,7 @@ def _support_slot_candidates(
             base_front=base_front,
             base_row=base_row,
             room_bbox=room_bbox,
+            open_wall_sides=open_wall_sides,
         )
         for gap in _support_gap_samples(gap_min=gap_min, gap_max=gap_max):
             for rot in allowed_rotations:
@@ -9321,6 +10231,7 @@ def _support_slot_candidates(
                         base_row=base_row,
                         base_front=base_front,
                         room_bbox=room_bbox,
+                        open_wall_sides=open_wall_sides,
                         gap_max_mm=gap_max,
                     )
                     if (
@@ -9337,6 +10248,14 @@ def _support_slot_candidates(
                         _functional_front_token_for_spec(spec, object_id),
                         final_rot,
                     )
+                    if room_bbox is not None and _rect_backs_to_open_wall(
+                        rect=rect,
+                        room_bbox=room_bbox,
+                        front_world=front_world,
+                        open_wall_sides=open_wall_sides,
+                        virtual_wall_segments=virtual_wall_segments,
+                    ):
+                        continue
                     out.append(
                         {
                             "x": x,
@@ -9418,6 +10337,7 @@ def _support_slot_basis(
     base_front: tuple[int, int],
     base_row: Mapping[str, Any],
     room_bbox: tuple[int, int, int, int] | None,
+    open_wall_sides: Sequence[str] = (),
 ) -> tuple[tuple[int, int], tuple[int, int]]:
     default_side = (-base_front[1], base_front[0])
     if str(side_option).strip().lower() not in {
@@ -9429,6 +10349,7 @@ def _support_slot_basis(
     head_vector = _wall_backed_bed_head_vector(
         base_row=base_row,
         room_bbox=room_bbox,
+        open_wall_sides=open_wall_sides,
     )
     if head_vector is None:
         return base_front, default_side
@@ -9448,6 +10369,7 @@ def _wall_backed_bed_head_vector(
     *,
     base_row: Mapping[str, Any],
     room_bbox: tuple[int, int, int, int] | None,
+    open_wall_sides: Sequence[str] = (),
 ) -> tuple[int, int] | None:
     base_key = str(base_row.get("category") or base_row.get("object_id") or "").lower()
     if "bed" not in base_key or room_bbox is None:
@@ -9456,13 +10378,17 @@ def _wall_backed_bed_head_vector(
     if rect is None:
         return None
 
+    open_set = _normalized_wall_side_set(open_wall_sides)
     contacts = [
-        (abs(rect[0] - room_bbox[0]), (1, 0)),
-        (abs(room_bbox[2] - rect[2]), (-1, 0)),
-        (abs(rect[1] - room_bbox[1]), (0, 1)),
-        (abs(room_bbox[3] - rect[3]), (0, -1)),
+        (abs(rect[0] - room_bbox[0]), (1, 0), "left_wall"),
+        (abs(room_bbox[2] - rect[2]), (-1, 0), "right_wall"),
+        (abs(rect[1] - room_bbox[1]), (0, 1), "top_wall"),
+        (abs(room_bbox[3] - rect[3]), (0, -1), "bottom_wall"),
     ]
-    distance, inward = min(contacts, key=lambda item: item[0])
+    contacts = [item for item in contacts if item[2] not in open_set]
+    if not contacts:
+        return None
+    distance, inward, _side = min(contacts, key=lambda item: item[0])
     if distance > OBJECT_LEVEL_BEDSIDE_HEAD_WALL_MAX_GAP_MM:
         return None
     return (-inward[0], -inward[1])
@@ -9475,7 +10401,8 @@ def _bedside_head_slot_metrics(
     base_row: Mapping[str, Any],
     base_front: tuple[int, int],
     room_bbox: tuple[int, int, int, int] | None,
-    gap_max_mm: int,
+    open_wall_sides: Sequence[str] = (),
+    gap_max_mm: int = OBJECT_LEVEL_BEDSIDE_HEAD_MAX_SIDE_GAP_MM,
 ) -> dict[str, float | bool] | None:
     if not _is_bedside_head_slot_option(side_option):
         return None
@@ -9490,6 +10417,7 @@ def _bedside_head_slot_metrics(
     head_vector = _wall_backed_bed_head_vector(
         base_row=base_row,
         room_bbox=room_bbox,
+        open_wall_sides=open_wall_sides,
     ) or (-base_front[0], -base_front[1])
     candidate_center = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
     base_center = (
@@ -9743,7 +10671,7 @@ def _materialize_object_row(
     object_type = str(
         spec.get("object_type") or spec.get("base_object_id") or category or object_id
     )
-    return {
+    row: dict[str, Any] = {
         "cluster_id": str(cluster_program.get("cluster_id") or ""),
         "object_id": object_id,
         "object_type": object_type,
@@ -9797,6 +10725,19 @@ def _materialize_object_row(
             cluster_program, object_id
         ),
     }
+    render_as = str(spec.get("render_as") or "").strip()
+    if render_as:
+        row["render_as"] = render_as
+    visual_source = str(spec.get("visual_source") or "").strip()
+    if visual_source:
+        row["visual_source"] = visual_source
+    if spec.get("generic_visual") is True:
+        row["generic_visual"] = True
+    hard_rect = _row_hard_footprint_rect(row, rect)
+    row["hard_footprint_bbox"] = _bbox_from_rect(hard_rect)
+    if hard_rect != rect:
+        row["hard_footprint_rect"] = hard_rect
+    return row
 
 
 def _object_requires_front_access(
@@ -9896,13 +10837,20 @@ def _verify_object_level_solution(
         rect = row.get("rect")
         if not isinstance(rect, tuple) or len(rect) != 4:
             continue
-        if not _rect_inside_room_footprint(rect, world):
+        hard_rect = _row_hard_footprint_rect(row, rect)
+        if not _rect_inside_room_footprint(hard_rect, world):
             geometry_valid = False
             hard_valid = False
             offending_clusters.append(str(row.get("cluster_id") or ""))
     for index, left in enumerate(placed_objects):
         for right in placed_objects[index + 1 :]:
-            if _rects_overlap(left["rect"], right["rect"]):
+            left_rect = _row_collision_rect(left)
+            right_rect = _row_collision_rect(right)
+            if (
+                left_rect is not None
+                and right_rect is not None
+                and _rects_overlap(left_rect, right_rect)
+            ):
                 geometry_valid = False
                 hard_valid = False
                 offending_clusters.extend(
@@ -9916,6 +10864,16 @@ def _verify_object_level_solution(
         world=world,
         relation_plan=relation_plan,
     )
+    virtual_wall_back_issues = _object_level_virtual_wall_back_issues(
+        placed_objects=placed_objects,
+        world=world,
+    )
+    if virtual_wall_back_issues:
+        geometry_valid = False
+        hard_valid = False
+        offending_clusters.extend(
+            str(issue.get("cluster_id") or "") for issue in virtual_wall_back_issues
+        )
     blocking_orientation_issues = _object_level_blocking_orientation_issues(
         orientation_issues=orientation_issues,
         placed_objects=placed_objects,
@@ -9941,6 +10899,10 @@ def _verify_object_level_solution(
         world=world,
         relation_plan=relation_plan,
     )
+    functional_geometry_issues = [
+        *virtual_wall_back_issues,
+        *functional_geometry_issues,
+    ]
     blocking_functional_geometry_issues = [
         issue
         for issue in functional_geometry_issues
@@ -9993,10 +10955,8 @@ def _verify_object_level_solution(
         for issue in protected_region_issues
         if str(issue.get("priority") or "").strip().lower() == "critical"
     )
-    # Only protected/forbidden region overlaps count as hard blocking issues.
-    # Orientation, face-pair, and functional-geometry issues are now soft penalties.
-    # Only physical geometry violations (out-of-bounds, overlaps) count as hard blocking issues.
-    # Access zones, forbidden zones, orientation, face-pair, and functional-geometry are all soft.
+    # Only physical geometry violations and virtual-wall back contact are hard.
+    # Access zones, forbidden zones, orientation, face-pair, and other functional geometry are soft.
     blocking_issue_count = 0
     view_corridor_ok = not any(
         str(issue.get("reason") or "") == "view_corridor_blocked"
@@ -10114,6 +11074,7 @@ def _object_level_protected_region_issues(
         rect = row.get("rect")
         if not isinstance(rect, tuple) or len(rect) != 4:
             continue
+        hard_rect = _row_hard_footprint_rect(row, rect)
         for protected in protected_regions:
             bbox = protected.get("bbox")
             if not isinstance(bbox, tuple) or len(bbox) != 4:
@@ -10125,11 +11086,11 @@ def _object_level_protected_region_issues(
                 and str(row.get("anchor_kind") or "").strip().lower() == "center"
             ):
                 continue
-            ratio = _rect_overlap_ratio(rect, bbox)
+            ratio = _rect_overlap_ratio(hard_rect, bbox)
             max_overlap = float(protected.get("max_overlap_ratio") or 0.0)
             if ratio <= max_overlap + 1e-9:
                 continue
-            overlap_area = _rect_overlap_area(rect, bbox)
+            overlap_area = _rect_overlap_area(hard_rect, bbox)
             excess_overlap_ratio = max(0.0, ratio - max_overlap)
             priority = str(protected.get("priority") or "medium").strip().lower()
             enforcement = str(protected.get("enforcement") or "soft").strip().lower()
@@ -10169,6 +11130,7 @@ def _object_level_cluster_forbidden_region_issues(
         rect = row.get("rect")
         if not isinstance(rect, tuple) or len(rect) != 4:
             continue
+        hard_rect = _row_hard_footprint_rect(row, rect)
         cluster_id = str(row.get("cluster_id") or "")
         for forbidden in forbidden_regions:
             if str(forbidden.get("cluster_id") or "") != cluster_id:
@@ -10176,11 +11138,11 @@ def _object_level_cluster_forbidden_region_issues(
             bbox = forbidden.get("bbox")
             if not isinstance(bbox, tuple) or len(bbox) != 4:
                 continue
-            ratio = _rect_overlap_ratio(rect, bbox)
+            ratio = _rect_overlap_ratio(hard_rect, bbox)
             max_overlap = float(forbidden.get("max_overlap_ratio") or 0.0)
             if ratio <= max_overlap + 1e-9:
                 continue
-            overlap_area = _rect_overlap_area(rect, bbox)
+            overlap_area = _rect_overlap_area(hard_rect, bbox)
             excess_overlap_ratio = max(0.0, ratio - max_overlap)
             priority = str(forbidden.get("priority") or "high").strip().lower()
             enforcement = str(forbidden.get("enforcement") or "hard").strip().lower()
@@ -10366,6 +11328,29 @@ def _object_level_quality_gate_reasons(
     return sorted(set(reasons))
 
 
+def _object_level_virtual_wall_back_issues(
+    *,
+    placed_objects: Sequence[Mapping[str, Any]],
+    world: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    open_wall_sides = world.get("open_wall_sides") or ()
+    virtual_wall_segments = world.get("virtual_wall_segments") or ()
+    if not _normalized_wall_side_set(open_wall_sides) and not virtual_wall_segments:
+        return []
+    room_bbox = world["room_bbox"]
+    issues: list[dict[str, Any]] = []
+    for row in placed_objects:
+        issue = _virtual_wall_back_issue_for_row(
+            row,
+            room_bbox=room_bbox,
+            open_wall_sides=open_wall_sides,
+            virtual_wall_segments=virtual_wall_segments,
+        )
+        if issue is not None:
+            issues.append(issue)
+    return issues
+
+
 def _object_level_functional_geometry_issues(
     *,
     placed_objects: Sequence[Mapping[str, Any]],
@@ -10383,8 +11368,8 @@ def _object_level_functional_geometry_issues(
         for blocker in rows:
             if blocker is base:
                 continue
-            blocker_rect = blocker.get("rect")
-            if not isinstance(blocker_rect, tuple) or len(blocker_rect) != 4:
+            blocker_rect = _row_collision_rect(blocker)
+            if blocker_rect is None:
                 continue
             ratio = _rect_overlap_ratio(blocker_rect, access_zone)
             if ratio <= 0.02:
@@ -10419,8 +11404,8 @@ def _object_level_functional_geometry_issues(
                 continue
             if _object_allowed_in_view_corridor(row):
                 continue
-            rect = row.get("rect")
-            if not isinstance(rect, tuple) or len(rect) != 4:
+            rect = _row_collision_rect(row)
+            if rect is None:
                 continue
             ratio = _rect_overlap_ratio(rect, corridor_rect)
             if ratio <= 0.04:
@@ -10449,6 +11434,7 @@ def _front_access_zone_for_row(
     rect = row.get("rect")
     if not isinstance(rect, tuple) or len(rect) != 4:
         return None
+    rect = _row_hard_footprint_rect(row, rect)
     front = _dominant_cardinal_front(row.get("front_world"))
     if front is None:
         return None
@@ -10575,6 +11561,8 @@ def _primary_view_corridor_rect(
         and len(right_rect) == 4
     ):
         return None
+    left_rect = _row_hard_footprint_rect(left, left_rect)
+    right_rect = _row_hard_footprint_rect(right, right_rect)
     lx = (left_rect[0] + left_rect[2]) / 2.0
     ly = (left_rect[1] + left_rect[3]) / 2.0
     rx = (right_rect[0] + right_rect[2]) / 2.0
@@ -10620,6 +11608,7 @@ def _object_level_orientation_issues(
         rect = row.get("rect")
         if not isinstance(rect, tuple) or len(rect) != 4:
             continue
+        rect = _row_hard_footprint_rect(row, rect)
         required_checks: list[tuple[str, tuple[float, float]]] = []
         edge = support_edges.get((cluster_id, object_id))
         orientation = str(edge.get("orientation") or "").strip().lower() if edge else ""
@@ -10650,6 +11639,7 @@ def _object_level_orientation_issues(
         wall_contact_front = _wall_contact_inward_front(
             rect=rect,
             room_bbox=room_bbox,
+            open_wall_sides=world.get("open_wall_sides") or (),
         )
         if wall_contact_front is not None:
             required_checks.append(("wall_contact_inward", wall_contact_front))
@@ -10665,6 +11655,7 @@ def _object_level_orientation_issues(
             if target_row is not None:
                 target_rect = target_row.get("rect")
                 if isinstance(target_rect, tuple) and len(target_rect) == 4:
+                    target_rect = _row_hard_footprint_rect(target_row, target_rect)
                     desired_cluster_front = _vector_between_rect_centers(
                         rect, target_rect
                     )
@@ -10991,6 +11982,69 @@ def _front_tuple(value: Any) -> tuple[float, float] | None:
     return None
 
 
+def _row_requires_visual_hard_footprint(row: Mapping[str, Any]) -> bool:
+    if _row_uses_rustic_install_footprint(row):
+        return False
+    return _row_requires_real_wall_only(row)
+
+
+def _row_uses_rustic_install_footprint(row: Mapping[str, Any]) -> bool:
+    source_id = str(row.get("source_id") or row.get("inventory_id") or "")
+    category = str(row.get("category") or row.get("object_type") or "")
+    return (
+        source_id == _RUSTIC_KITCHEN_BASE_CABINET_ID
+        and category == "kitchen_base_cabinet"
+        and isinstance(row.get("solver_footprint_mm"), Mapping)
+    )
+
+
+def _row_visual_rect_for_solver_rect(
+    row: Mapping[str, Any],
+    rect: tuple[int, int, int, int],
+) -> tuple[int, int, int, int]:
+    vw = row.get("visual_w")
+    vh = row.get("visual_h")
+    front = _dominant_cardinal_front(row.get("front_world"))
+    if (
+        isinstance(vw, (int, float))
+        and isinstance(vh, (int, float))
+        and vw > 0
+        and vh > 0
+        and front is not None
+    ):
+        try:
+            return _visual_rect_for_solver_rect(
+                rect=rect,
+                visual_w_mm=int(round(float(vw))),
+                visual_h_mm=int(round(float(vh))),
+                front_world=front,
+            )
+        except (TypeError, ValueError):
+            pass
+
+    visual_rect = _rect_from_bbox_mapping(row.get("visual_bbox"))
+    row_rect = _rect_tuple(row.get("rect"))
+    if visual_rect is not None and (row_rect is None or row_rect == rect):
+        return visual_rect
+    return rect
+
+
+def _row_hard_footprint_rect(
+    row: Mapping[str, Any],
+    rect: tuple[int, int, int, int],
+) -> tuple[int, int, int, int]:
+    if _row_requires_visual_hard_footprint(row):
+        return _row_visual_rect_for_solver_rect(row, rect)
+    return rect
+
+
+def _row_collision_rect(row: Mapping[str, Any]) -> tuple[int, int, int, int] | None:
+    rect = _rect_tuple(row.get("rect"))
+    if rect is None:
+        return None
+    return _row_hard_footprint_rect(row, rect)
+
+
 def _vector_between_rect_centers(
     source: tuple[int, int, int, int],
     target: tuple[int, int, int, int],
@@ -11216,12 +12270,65 @@ def _build_object_level_solution_payload(
     }
 
 
-def _object_output_row(row: Mapping[str, Any]) -> dict[str, Any]:
+def _object_output_row(
+    row: Mapping[str, Any],
+    *,
+    room_bbox: tuple[int, int, int, int] | None = None,
+    open_wall_sides: Sequence[str] = (),
+    virtual_wall_segments: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
     out = deepcopy(dict(row))
-    visual_rect = _rect_from_bbox_mapping(out.get("visual_bbox"))
     solver_rect = _rect_tuple(out.get("rect"))
-    if visual_rect is None or solver_rect is None or visual_rect == solver_rect:
+    if solver_rect is None:
         return out
+
+    # Recompute visual rect from the CURRENT solver rect position so that geometry
+    # repair (which updates rect but not visual_bbox) doesn't leave a stale bbox.
+    visual_rect: tuple[int, int, int, int] | None = None
+    vw = out.get("visual_w")
+    vh = out.get("visual_h")
+    fw = _front_tuple(out.get("front_world"))
+    if (
+        isinstance(vw, (int, float))
+        and isinstance(vh, (int, float))
+        and vw > 0
+        and vh > 0
+        and fw is not None
+    ):
+        try:
+            visual_rect = _visual_rect_for_solver_rect(
+                rect=solver_rect,
+                visual_w_mm=int(round(float(vw))),
+                visual_h_mm=int(round(float(vh))),
+                front_world=(int(round(fw[0])), int(round(fw[1]))),
+            )
+        except (TypeError, ValueError):
+            pass
+    if visual_rect is None:
+        visual_rect = _rect_from_bbox_mapping(out.get("visual_bbox"))
+    if visual_rect is None:
+        visual_rect = solver_rect
+
+    if room_bbox is not None and visual_rect != solver_rect:
+        # Clamp visual rect to room bounds so the rendered item never overflows
+        # the room boundary.  The solver rect is already validated inside room_bbox;
+        # the visual rect can be larger (wider asset) but must stay within the room.
+        vx1 = max(visual_rect[0], room_bbox[0])
+        vy1 = max(visual_rect[1], room_bbox[1])
+        vx2 = min(visual_rect[2], room_bbox[2])
+        vy2 = min(visual_rect[3], room_bbox[3])
+        # Only apply the clamp if the clamped rect is still a valid (non-degenerate) rect
+        if vx2 > vx1 and vy2 > vy1:
+            visual_rect = (vx1, vy1, vx2, vy2)
+    if room_bbox is not None and fw is not None and visual_rect != solver_rect:
+        visual_rect = _trim_visual_back_bleed_from_virtual_wall(
+            visual_rect=visual_rect,
+            solver_rect=solver_rect,
+            room_bbox=room_bbox,
+            front_world=fw,
+            open_wall_sides=open_wall_sides,
+            virtual_wall_segments=virtual_wall_segments,
+        )
 
     out["solver_rect"] = list(solver_rect)
     out["solver_bbox"] = _bbox_from_rect(solver_rect)
@@ -11236,6 +12343,104 @@ def _object_output_row(row: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _trim_visual_back_bleed_from_virtual_wall(
+    *,
+    visual_rect: tuple[int, int, int, int],
+    solver_rect: tuple[int, int, int, int],
+    room_bbox: tuple[int, int, int, int],
+    front_world: tuple[float, float],
+    open_wall_sides: Sequence[str],
+    virtual_wall_segments: Sequence[Mapping[str, Any]],
+) -> tuple[int, int, int, int]:
+    if not _rect_backs_to_open_wall(
+        rect=visual_rect,
+        room_bbox=room_bbox,
+        front_world=front_world,
+        open_wall_sides=open_wall_sides,
+        virtual_wall_segments=virtual_wall_segments,
+    ):
+        return visual_rect
+    vx1, vy1, vx2, vy2 = visual_rect
+    fx, fy = front_world
+    if abs(fx) >= abs(fy):
+        if fx >= 0:
+            vx1 = max(vx1, solver_rect[0])
+        else:
+            vx2 = min(vx2, solver_rect[2])
+    elif fy >= 0:
+        vy1 = max(vy1, solver_rect[1])
+    else:
+        vy2 = min(vy2, solver_rect[3])
+    if vx2 <= vx1 or vy2 <= vy1:
+        return visual_rect
+    return (vx1, vy1, vx2, vy2)
+
+
+def _trim_visual_rects_against_solver_rects(
+    placed_objects: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Trim each item's visual rect so it doesn't bleed into a neighbor's solver footprint.
+
+    The solver places items using conservative footprints; the visual rect can be
+    slightly larger (3D asset visual size).  When two items are adjacent the visual
+    bleed of one can visually overlap the other even though solver rects don't overlap.
+    We shrink each visual extension side-by-side only where it collides with another
+    item's solver rect, so rendering stays collision-free.
+    """
+    solver_lookup: list[tuple[str, tuple[int, int, int, int]]] = [
+        (str(row.get("object_id") or ""), sr)
+        for row in placed_objects
+        for sr in (_rect_tuple(row.get("solver_rect")),)
+        if sr is not None
+    ]
+
+    result: list[dict[str, Any]] = []
+    for row in placed_objects:
+        obj_id = str(row.get("object_id") or "")
+        sr = _rect_tuple(row.get("solver_rect"))
+        vr = _rect_tuple(row.get("rect"))
+        if sr is None or vr is None or sr == vr:
+            result.append(row)
+            continue
+
+        vx1, vy1, vx2, vy2 = vr
+        for other_id, osr in solver_lookup:
+            if other_id == obj_id:
+                continue
+            # Trim left bleed (vx1 < sr[0]) if it overlaps osr
+            if vx1 < sr[0]:
+                if vx1 < osr[2] and sr[0] > osr[0] and vy1 < osr[3] and vy2 > osr[1]:
+                    vx1 = max(vx1, osr[2])
+            # Trim right bleed (vx2 > sr[2]) if it overlaps osr
+            if vx2 > sr[2]:
+                if sr[2] < osr[2] and vx2 > osr[0] and vy1 < osr[3] and vy2 > osr[1]:
+                    vx2 = min(vx2, osr[0])
+            # Trim top bleed (vy1 < sr[1]) if it overlaps osr
+            if vy1 < sr[1]:
+                if vy1 < osr[3] and sr[1] > osr[1] and vx1 < osr[2] and vx2 > osr[0]:
+                    vy1 = max(vy1, osr[3])
+            # Trim bottom bleed (vy2 > sr[3]) if it overlaps osr
+            if vy2 > sr[3]:
+                if sr[3] < osr[3] and vy2 > osr[1] and vx1 < osr[2] and vx2 > osr[0]:
+                    vy2 = min(vy2, osr[1])
+
+        trimmed = (vx1, vy1, vx2, vy2)
+        if trimmed == vr or vx2 <= vx1 or vy2 <= vy1:
+            result.append(row)
+            continue
+        row = dict(row)
+        row["rect"] = list(trimmed)
+        row["bbox"] = _bbox_from_rect(trimmed)
+        row["w"] = vx2 - vx1
+        row["h"] = vy2 - vy1
+        row["center"] = {
+            "x": round((vx1 + vx2) / 2.0),
+            "y": round((vy1 + vy2) / 2.0),
+        }
+        result.append(row)
+    return result
+
+
 def _build_absolute_layout_from_object_solution(
     *,
     solution: Mapping[str, Any],
@@ -11246,11 +12451,19 @@ def _build_absolute_layout_from_object_solution(
     verify = (
         solution.get("verify") if isinstance(solution.get("verify"), Mapping) else {}
     )
-    placed_objects = [
-        _object_output_row(row)
-        for row in (solution.get("placed_objects") or [])
-        if isinstance(row, Mapping)
-    ]
+    _room_bbox = _rect_tuple(world.get("room_bbox"))
+    placed_objects = _trim_visual_rects_against_solver_rects(
+        [
+            _object_output_row(
+                row,
+                room_bbox=_room_bbox,
+                open_wall_sides=world.get("open_wall_sides") or (),
+                virtual_wall_segments=world.get("virtual_wall_segments") or (),
+            )
+            for row in (solution.get("placed_objects") or [])
+            if isinstance(row, Mapping)
+        ]
+    )
     clusters: list[dict[str, Any]] = []
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in placed_objects:

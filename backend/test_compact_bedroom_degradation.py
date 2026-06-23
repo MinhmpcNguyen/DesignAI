@@ -190,7 +190,7 @@ def _dropped_object_types(report: Mapping[str, object]) -> set[str]:
 
 
 class CompactBedroomDegradationTest(unittest.TestCase):
-    def test_compact_bedroom_drops_requested_desk_and_chair(self) -> None:
+    def test_compact_bedroom_preserves_requested_desk_and_chair(self) -> None:
         result = _typed_result(
             TierCountDirector().generate(
                 description="Phong ngu 11m2 co giuong, tu ao, ban lam viec va ghe.",
@@ -203,14 +203,16 @@ class CompactBedroomDegradationTest(unittest.TestCase):
         )
 
         self.assertIn(result["status"], {"OK", "DEGRADED_OK"})
-        self.assertEqual(result.get("degradation_status"), "DEGRADED_OK")
 
         decisions = _decision_rows(result)
         quantities = _quantity_by_type(decisions)
 
-        self.assertEqual(quantities.get("desk", 0), 0)
-        self.assertEqual(quantities.get("chair", 0), 0)
+        self.assertGreaterEqual(quantities.get("desk", 0), 1)
+        self.assertGreaterEqual(quantities.get("chair", 0), 1)
         self.assertGreaterEqual(quantities.get("nightstand", 0), 1)
+        by_type = {str(row.get("object_type")): row for row in decisions}
+        self.assertTrue(by_type["desk"].get("compact_bedroom_requested_work"))
+        self.assertTrue(by_type["chair"].get("compact_bedroom_requested_work"))
 
         report = result.get("compact_bedroom_degradation_report")
         self.assertIsInstance(report, dict)
@@ -218,7 +220,7 @@ class CompactBedroomDegradationTest(unittest.TestCase):
             self.fail("compact_bedroom_degradation_report must be a dict.")
         report_map = cast(Mapping[str, object], report)
         dropped_types = _dropped_object_types(report_map)
-        self.assertTrue({"desk", "chair"}.issubset(dropped_types))
+        self.assertFalse({"desk", "chair"} & dropped_types)
         order_raw = report_map.get("degradation_order")
         self.assertIsInstance(order_raw, list)
         if not isinstance(order_raw, list):

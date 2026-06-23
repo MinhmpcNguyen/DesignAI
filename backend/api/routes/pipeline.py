@@ -86,6 +86,10 @@ _CATALOG_TYPE_FALLBACKS: dict[str, tuple[str, ...]] = {
     "dining_table": ("coffee_table", "table"),
     "dining_chair": ("chair",),
 }
+_PRIMITIVE_RENDER_MODES = frozenset({"primitive_box", "generic_box"})
+_GENERIC_VISUAL_HEIGHT_MM: dict[str, float] = {
+    "coffee_table": 400.0,
+}
 _NORMALIZE_RUN_MAX_PARALLEL_ROOMS = 4
 _NORMALIZE_RUN_DEBUG_SPLIT_ENV = "TKNT_NORMALIZE_RUN_DEBUG_SPLIT"
 _NORMALIZE_RUN_OBJECT_COUNT_SELECTION_WEIGHT = 220
@@ -161,6 +165,7 @@ def _enrich_rotation_ccw(
             else None,
         }
         _copy_catalog_identity_metadata(orientation, absolute_object)
+        _copy_render_metadata(orientation, absolute_object)
         by_id[object_id] = orientation
 
         bbox = _mapping(absolute_object.get("bbox"))
@@ -200,6 +205,7 @@ def _enrich_rotation_ccw(
         next_obj["axis_world"] = deepcopy((orientation or {}).get("axis_world"))
         if orientation is not None:
             _copy_catalog_identity_metadata(next_obj, orientation)
+            _copy_render_metadata(next_obj, orientation)
         enriched.append(next_obj)
 
     out = dict(stylist_payload)
@@ -238,6 +244,19 @@ def _copy_catalog_identity_metadata(
         value = _string_or_none(source.get(key))
         if value is not None:
             target[key] = value
+
+
+def _copy_render_metadata(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key in ("render_as", "visual_source"):
+        value = _string_or_none(source.get(key))
+        if value is not None:
+            target[key] = value
+    if source.get("generic_visual") is True:
+        target["generic_visual"] = True
+    for key in ("visual_dims_mm", "solver_footprint_mm", "rep_dims_mm"):
+        value = source.get(key)
+        if isinstance(value, Mapping):
+            target[key] = deepcopy(dict(value))
 
 
 def _status_payload(paths: Any) -> dict[str, Any]:
@@ -817,26 +836,52 @@ def _normalize_run_room_objects(
         bbox = _bbox_from_object(obj)
         if bbox is None:
             continue
-        catalog_payload = _match_catalog_payload(
-            obj,
-            catalog_index,
-            style_preferences=style_preferences,
+        type_key = _base_object_type(obj.get("object_type") or obj.get("type"))
+        primitive_render = _uses_primitive_render(obj)
+        catalog_payload = (
+            None
+            if primitive_render
+            else _match_catalog_payload(
+                obj,
+                catalog_index,
+                style_preferences=style_preferences,
+            )
         )
-        catalog_item_id = _catalog_item_id(catalog_payload, obj)
-        if catalog_payload is None and catalog_item_id is None:
+        catalog_item_id = (
+            None
+            if primitive_render
+            else _catalog_item_id(
+                catalog_payload,
+                obj,
+            )
+        )
+        if catalog_payload is None and catalog_item_id is None and not primitive_render:
             continue
         # Use the solver's plan-bbox footprint for X/Z so the 3D render always
         # matches the floor plan, even when tier count used requested_dims_mm to
         # select a non-catalog size. Height comes from the catalog item.
-        size_mm = _size_mm_from_bbox(bbox, catalog_payload=catalog_payload)
+        size_mm = _size_mm_from_bbox(
+            bbox,
+            catalog_payload=catalog_payload,
+            height_override_mm=_generic_visual_height_mm(obj, type_key=type_key)
+            if primitive_render
+            else None,
+        )
         size_mm = _no_stove_sink_kitchen_cabinet_size(
             catalog_payload=catalog_payload,
             obj=obj,
             bbox=bbox,
             current_size=size_mm,
         )
-        model_url = _catalog_model_url(catalog_payload, obj)
-        if model_url is None:
+        model_url = (
+            None
+            if primitive_render
+            else _catalog_model_url(
+                catalog_payload,
+                obj,
+            )
+        )
+        if model_url is None and not primitive_render:
             message = (
                 "Skipping normalize-run object without modelUrl: "
                 + "catalog_item_id=%s object_type=%s"
@@ -879,10 +924,13 @@ def _normalize_run_room_objects(
         if rotation_ccw is None:
             rotation_ccw = _number(obj.get("rot")) or 0.0
         output_obj: dict[str, Any] = {
-            "name": _catalog_name(catalog_payload, obj),
+            "name": _generic_visual_name(type_key)
+            if primitive_render
+            else _catalog_name(catalog_payload, obj),
             "size": size_mm,
             "type": _catalog_shape_type(catalog_payload),
-            "color": _catalog_color(catalog_payload, obj),
+            "color": _catalog_color(catalog_payload, obj)
+            or (_generic_visual_color(type_key) if primitive_render else None),
             "modelUrl": model_url,
             "position": {
                 "x": (bbox["min_x"] + bbox["max_x"]) / 2.0,
@@ -979,8 +1027,7 @@ def _normalize_run_restored_objects(
     )
     if room_polygon and len(room_polygon) >= 3:
         finalized = [
-            obj for obj in finalized
-            if _object_within_room_polygon(obj, room_polygon)
+            obj for obj in finalized if _object_within_room_polygon(obj, room_polygon)
         ]
     return finalized
 
@@ -1183,6 +1230,7 @@ def _size_mm_from_bbox(
     bbox: Mapping[str, float],
     *,
     catalog_payload: dict[str, Any] | None,
+    height_override_mm: float | None = None,
 ) -> list[float]:
     """Build output size from the solver's plan-space bbox, using catalog height.
 
@@ -1194,8 +1242,47 @@ def _size_mm_from_bbox(
     """
     plan_x = max(1.0, float(bbox["max_x"]) - float(bbox["min_x"]))
     plan_z = max(1.0, float(bbox["max_y"]) - float(bbox["min_y"]))
-    height = _catalog_height_mm(catalog_payload)
+    height = (
+        height_override_mm
+        if height_override_mm is not None and height_override_mm > 0
+        else _catalog_height_mm(catalog_payload)
+    )
     return [plan_x, height, plan_z]
+
+
+def _uses_primitive_render(obj: Mapping[str, Any]) -> bool:
+    render_as = _catalog_key(obj.get("render_as") or obj.get("renderAs"))
+    if render_as in _PRIMITIVE_RENDER_MODES:
+        return True
+    return obj.get("generic_visual") is True or obj.get("genericVisual") is True
+
+
+def _generic_visual_height_mm(
+    obj: Mapping[str, Any],
+    *,
+    type_key: str,
+) -> float:
+    for source_key in ("visual_dims_mm", "solver_footprint_mm", "rep_dims_mm"):
+        source = _mapping(obj.get(source_key))
+        value = _number(source.get("H") or source.get("height_mm"))
+        if value is not None and value > 0:
+            return float(value)
+    value = _number(obj.get("height_mm") or obj.get("height"))
+    if value is not None and value > 0:
+        return float(value)
+    return _GENERIC_VISUAL_HEIGHT_MM.get(type_key, 300.0)
+
+
+def _generic_visual_name(type_key: str) -> str:
+    if type_key == "coffee_table":
+        return "Bàn phòng khách"
+    return type_key.replace("_", " ").strip() or "Object"
+
+
+def _generic_visual_color(type_key: str) -> str:
+    if type_key == "coffee_table":
+        return "#8B6F47"
+    return "#8A7A66"
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -1218,8 +1305,10 @@ def _no_stove_sink_kitchen_cabinet_size(
         return current_size
     if _catalog_item_id(catalog_payload, dict(obj)) != _RUSTIC_KITCHEN_BASE_CABINET_ID:
         return current_size
-    # Always enforce the correct height for this specific cabinet model regardless
-    # of whether current_size was already computed from the plan bbox.
+    if current_size is not None and len(current_size) >= 3:
+        return current_size
+    # Fall back to the install footprint only when the catalog dimensions were
+    # unavailable; never shrink the visual model to the solver footprint.
     length = max(0.1, float(bbox["max_x"] - bbox["min_x"]))
     width = max(0.1, float(bbox["max_y"] - bbox["min_y"]))
     return [length, _RUSTIC_KITCHEN_BASE_CABINET_HEIGHT, width]
@@ -1535,6 +1624,7 @@ def _base_object_type(value: Any) -> str:
     E.g. 'dining_chair_2' → 'dining_chair', 'dining_chair_6' → 'dining_chair'.
     """
     import re
+
     key = _catalog_key(value)
     if not key:
         return key

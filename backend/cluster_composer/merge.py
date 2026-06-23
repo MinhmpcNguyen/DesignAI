@@ -54,6 +54,8 @@ _STORAGE_REQUEST_CONTRACT_TYPES = frozenset({"console_table"})
 _SYNTHETIC_REQUEST_REP_DIMS_M: dict[str, dict[str, float]] = {
     "console_table": {"L": 1.10, "W": 0.40, "H": 0.85, "A": 0.44},
 }
+_GENERIC_REQUEST_VISUAL_TYPES = frozenset({"coffee_table"})
+_HARD_REQUEST_INTENTS = frozenset({"must_keep", "must_try"})
 
 
 def merge_cluster_outputs(
@@ -334,6 +336,15 @@ def _build_object_program_for_cluster(
             source_id = str(rep_dims.get("source_id") or "")
             if source_id.startswith("__"):
                 source_id = ""
+            generic_visual = _should_use_generic_request_visual(
+                category=category,
+                base_object_id=base_object_id,
+                requested_dims=requested_dims,
+                decision=decision,
+                request_contract=request_contract,
+            )
+            if generic_visual:
+                source_id = ""
             solver_footprint_mm = _solver_footprint_mm(
                 category=category,
                 source_id=source_id,
@@ -367,6 +378,15 @@ def _build_object_program_for_cluster(
                     else {}
                 ),
                 "source_id": source_id,
+                **(
+                    {
+                        "render_as": "primitive_box",
+                        "generic_visual": True,
+                        "visual_source": "request_contract_generic",
+                    }
+                    if generic_visual
+                    else {}
+                ),
                 "protected": bool(decision.get("protected")) and required,
                 "droppable": droppable,
                 "budget_trial": bool(decision.get("budget_trial")),
@@ -684,6 +704,27 @@ def _solver_footprint_mm(
         "W": _RUSTIC_KITCHEN_BASE_CABINET_SOLVER_DEPTH_MM,
         "H": height_mm,
     }
+
+
+def _should_use_generic_request_visual(
+    *,
+    category: str,
+    base_object_id: str,
+    requested_dims: dict[str, Any],
+    decision: Mapping[str, Any],
+    request_contract: Mapping[str, Any],
+) -> bool:
+    if base_object_id not in _GENERIC_REQUEST_VISUAL_TYPES:
+        return False
+    if category not in _GENERIC_REQUEST_VISUAL_TYPES:
+        return False
+    if not requested_dims:
+        return False
+    decision_intent = str(decision.get("request_contract_intent") or "").strip()
+    if decision_intent in _HARD_REQUEST_INTENTS:
+        return True
+    item = contract_item_for_object_type(request_contract, base_object_id)
+    return contract_intent(item) in _HARD_REQUEST_INTENTS or contract_min_keep(item) > 0
 
 
 def _requested_dims_for_decision(

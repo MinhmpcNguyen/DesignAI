@@ -413,13 +413,13 @@ export interface AutoFillObjectResult {
   size: [number, number, number];
   type: "model";
   color: string;
-  modelUrl: string;
+  modelUrl?: string | null;
   position: { x: number; y: number; z: number } | [number, number, number];
   rotation:
     | { x: number; y: number; z: number; w: number }
     | [number, number, number, number];
   objectRole: string | null;
-  catalogItemId: string;
+  catalogItemId?: string | null;
   placementType?: "floor" | "wall" | "ceiling";
   snappedToWall?: string;
   collisionLayer?: AutoFillCollisionLayer;

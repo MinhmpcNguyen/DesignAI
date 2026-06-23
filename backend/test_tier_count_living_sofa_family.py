@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import unittest
 from typing import cast
+from unittest.mock import patch
 
 from agent.solver.solver import _materialize_object_row
 from agent.tier_count_director import TierCountDirector
@@ -168,6 +169,33 @@ class TierCountLivingSofaFamilyTest(unittest.TestCase):
         )
         self.assertEqual(by_type["sectional_sofa"]["quantity"], 0)
 
+    def test_empty_catalog_size_profiles_fall_back_to_local_profiles(self) -> None:
+        def empty_size_profiles(
+            *, categories: list[str], tenant_id: str | None = None
+        ) -> dict[str, object]:
+            _ = categories
+            _ = tenant_id
+            return {"size_profiles_by_category": {}, "missing_categories": []}
+
+        with patch(
+            "agent.tier_count_director._get_tool_registry",
+            return_value={"get_size_profiles": empty_size_profiles},
+        ):
+            result = TierCountDirector().generate(
+                description="Phong khach co sofa va ban.",
+                special_notes="",
+                room_model_json=_room_model(),
+                user_intent_json={},
+                clusters_json=_clusters_json(),
+                size_profiles_json={},
+            )
+
+        decisions = cast(list[dict[str, object]], result["decisions"])
+        by_type = {str(row.get("object_type")): row for row in decisions}
+
+        self.assertEqual(by_type["coffee_table"]["quantity"], 1)
+        self.assertIn("rep_dims_m", by_type["coffee_table"])
+
     def test_solver_materialized_rows_emit_object_type_for_ui(self) -> None:
         cluster_program = {
             "cluster_id": "main_seating",
@@ -189,6 +217,34 @@ class TierCountLivingSofaFamilyTest(unittest.TestCase):
 
         self.assertEqual(row["object_type"], "sofa")
         self.assertEqual(row["category"], "sofa")
+
+    def test_solver_materialized_rows_pass_through_generic_visual_metadata(
+        self,
+    ) -> None:
+        cluster_program = {
+            "cluster_id": "main_seating",
+            "object_program": {
+                "object_specs_by_id": {
+                    "coffee_table": {
+                        "object_id": "coffee_table",
+                        "base_object_id": "coffee_table",
+                        "category": "coffee_table",
+                        "rep_dims_mm": {"L": 900, "W": 550, "H": 380},
+                        "allowed_rotations": [0, 90, 180, 270],
+                        "front": "top",
+                        "render_as": "primitive_box",
+                        "generic_visual": True,
+                        "visual_source": "request_contract_generic",
+                    }
+                }
+            },
+        }
+
+        row = _materialize_object_row(cluster_program, "coffee_table", 100, 200, 0)
+
+        self.assertEqual(row["render_as"], "primitive_box")
+        self.assertIs(row["generic_visual"], True)
+        self.assertEqual(row["visual_source"], "request_contract_generic")
 
 
 if __name__ == "__main__":

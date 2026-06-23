@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import re
 import unicodedata
+import warnings
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -115,6 +116,78 @@ _CHOKEPOINT_RATIO_TOLERANCE = 0.12
 # fall back to the binary-search cut.  Wider than chokepoint tolerance because
 # the architectural corner is more important than a precise area ratio.
 _CONCAVE_SPLIT_RATIO_TOLERANCE = 0.18
+_PARTITION_SIDE_TOLERANCE_MM = 50.0
+# Items must stay this far from the virtual partition boundary.
+# Applied directly to the child-room polygon so ALL downstream code
+# (room_bbox, _rect_inside_room, wall scoring) inherits the constraint
+# without any extra threading.
+_VIRTUAL_WALL_CLEARANCE_MM = 350.0
+
+
+def _virtual_wall_side_for_polygon(
+    polygon: Polygon,
+    partition_segment: tuple[Any, Any] | None,
+) -> str | None:
+    """Return which solver wall side (top_wall / bottom_wall / left_wall / right_wall)
+    corresponds to the partition boundary for a split child room polygon.
+    Solver convention: top_wall = min_y edge, bottom_wall = max_y edge,
+    left_wall = min_x edge, right_wall = max_x edge.
+    """
+    if partition_segment is None:
+        return None
+    p0, p1 = partition_segment
+    x0, y0, x1, y1 = float(p0.x), float(p0.y), float(p1.x), float(p1.y)
+    dx = abs(x1 - x0)
+    dy = abs(y1 - y0)
+    min_x, min_y, max_x, max_y = polygon.bounds
+    tol = _PARTITION_SIDE_TOLERANCE_MM
+
+    if dx >= dy:
+        seg_y = (y0 + y1) / 2.0
+        if abs(seg_y - min_y) <= abs(seg_y - max_y) + tol:
+            return "top_wall"
+        return "bottom_wall"
+    else:
+        seg_x = (x0 + x1) / 2.0
+        if abs(seg_x - min_x) <= abs(seg_x - max_x) + tol:
+            return "left_wall"
+        return "right_wall"
+
+
+def _inset_polygon_on_virtual_wall_side(
+    polygon: Polygon,
+    partition_segment: tuple[Any, Any] | None,
+    clearance: float = _VIRTUAL_WALL_CLEARANCE_MM,
+) -> Polygon:
+    """Shrink *polygon* by *clearance* mm on the side touching the partition.
+
+    This makes the child-room polygon stop *clearance* mm before the virtual
+    boundary so that furniture bounding boxes cannot touch or cross it.
+    Only the boundary-adjacent edge is inset; real walls are unaffected.
+    """
+    if partition_segment is None or clearance <= 0:
+        return polygon
+    side = _virtual_wall_side_for_polygon(polygon, partition_segment)
+    if side is None:
+        return polygon
+    min_x, min_y, max_x, max_y = polygon.bounds
+    BIG = max(max_x - min_x, max_y - min_y, 1.0) * 10.0
+    if side == "left_wall":
+        clip = box(min_x + clearance, min_y - BIG, max_x + BIG, max_y + BIG)
+    elif side == "right_wall":
+        clip = box(min_x - BIG, min_y - BIG, max_x - clearance, max_y + BIG)
+    elif side == "top_wall":
+        clip = box(min_x - BIG, min_y + clearance, max_x + BIG, max_y + BIG)
+    else:  # bottom_wall
+        clip = box(min_x - BIG, min_y - BIG, max_x + BIG, max_y - clearance)
+    result = polygon.intersection(clip)
+    if result.is_empty:
+        return polygon
+    if result.geom_type == "MultiPolygon":
+        result = max(result.geoms, key=lambda g: g.area)
+    if result.geom_type != "Polygon":
+        return polygon
+    return result
 
 
 def _polygon_rectangularity(polygon: Polygon) -> float:
@@ -127,7 +200,9 @@ def _polygon_rectangularity(polygon: Polygon) -> float:
     if polygon.is_empty or polygon.area <= 0:
         return 0.0
     try:
-        obb = polygon.minimum_rotated_rectangle
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            obb = polygon.minimum_rotated_rectangle
         obb_area = float(obb.area)
         if obb_area <= 0:
             return 0.0
@@ -263,7 +338,9 @@ class CoordinateNormalizationService:
         source_payload = self._scale_json(raw_payload, factor=source_scale_to_mm)
         apartment_bbox = self._apartment_bbox(source_payload)
         if combine_living_kitchen:
-            split_payload, room_split = self._combine_largest_room_as_unified(source_payload)
+            split_payload, room_split = self._combine_largest_room_as_unified(
+                source_payload
+            )
         else:
             split_payload, room_split = self._split_largest_room_payload(
                 source_payload,
@@ -400,7 +477,10 @@ class CoordinateNormalizationService:
         split_meta: JsonObject = {
             "enabled": enabled,
             "applied": False,
-            "ratio": {"living_room": living_ratio, "kitchen": round(1.0 - living_ratio, 2)},
+            "ratio": {
+                "living_room": living_ratio,
+                "kitchen": round(1.0 - living_ratio, 2),
+            },
         }
         if not enabled:
             return split_payload, split_meta
@@ -528,25 +608,33 @@ class CoordinateNormalizationService:
             )
         base_name = self._string_or_none(raw_room.get("name")) or base_id
 
+        partition_segment = self._shared_boundary_segment(
+            living_polygon,
+            kitchen_polygon,
+        )
+        living_polygon_inset = _inset_polygon_on_virtual_wall_side(
+            living_polygon, partition_segment
+        )
+        kitchen_polygon_inset = _inset_polygon_on_virtual_wall_side(
+            kitchen_polygon, partition_segment
+        )
         living_room = self._split_child_room(
             raw_room,
             room_id=f"{base_id}__living",
             name=f"{base_name} - Phòng khách",
             room_type="living_room",
-            polygon=living_polygon,
+            polygon=living_polygon_inset,
             split_role="living_room",
+            partition_segment=partition_segment,
         )
         kitchen_room = self._split_child_room(
             raw_room,
             room_id=f"{base_id}__kitchen",
             name=f"{base_name} - Bếp",
             room_type="kitchen",
-            polygon=kitchen_polygon,
+            polygon=kitchen_polygon_inset,
             split_role="kitchen",
-        )
-        partition_segment = self._shared_boundary_segment(
-            living_polygon,
-            kitchen_polygon,
+            partition_segment=partition_segment,
         )
         partition_wall = None
         if partition_segment is not None:
@@ -558,6 +646,7 @@ class CoordinateNormalizationService:
                 "endPoint": partition_segment[1].as_dict(),
                 "generatedBy": "coordinate_normalizer_largest_room_split",
                 "parentRoomId": base_id,
+                "virtual": True,
             }
 
         living_polygon_points = self._points_from_polygon(living_polygon)
@@ -689,7 +778,11 @@ class CoordinateNormalizationService:
                     if first.area < second.area:
                         first, second = second, first
                     total = first.area + second.area
-                    if total > 0 and abs(first.area / total - ratio) <= _CHOKEPOINT_RATIO_TOLERANCE:
+                    if (
+                        total > 0
+                        and abs(first.area / total - ratio)
+                        <= _CHOKEPOINT_RATIO_TOLERANCE
+                    ):
                         return first, second
 
             result = self._split_polygon_along_axis(polygon, axis=axis, ratio=ratio)
@@ -798,6 +891,7 @@ class CoordinateNormalizationService:
         room_type: str,
         polygon: Polygon,
         split_role: str,
+        partition_segment: tuple[Any, Any] | None = None,
     ) -> JsonObject:
         child = deepcopy(dict(raw_room))
         child["key"] = room_id
@@ -807,6 +901,19 @@ class CoordinateNormalizationService:
         child["splitRole"] = split_role
         child["splitGenerated"] = True
         child["polygons"] = self._points_from_polygon(polygon)
+        virtual_side = _virtual_wall_side_for_polygon(polygon, partition_segment)
+        if virtual_side is not None:
+            child["openWallSides"] = [virtual_side]
+        if partition_segment is not None:
+            child["virtualWallSegments"] = [
+                {
+                    "id": f"split-virtual-wall-{room_id}",
+                    "startPoint": partition_segment[0].as_dict(),
+                    "endPoint": partition_segment[1].as_dict(),
+                    "virtual": True,
+                    "generatedBy": "coordinate_normalizer_largest_room_split",
+                }
+            ]
         return child
 
     def _points_from_polygon(self, polygon: Polygon) -> list[list[float]]:
@@ -952,6 +1059,14 @@ class CoordinateNormalizationService:
                 user_input["material_id"] = material_id
             if material_label is not None:
                 user_input["material_label"] = material_label
+            open_wall_sides = local_payload.get("openWallSides")
+            if isinstance(open_wall_sides, list) and open_wall_sides:
+                user_input["open_wall_sides"] = [
+                    str(s) for s in open_wall_sides if isinstance(s, str)
+                ]
+            virtual_wall_segments = local_payload.get("virtualWallSegments")
+            if isinstance(virtual_wall_segments, list) and virtual_wall_segments:
+                user_input["virtual_wall_segments"] = deepcopy(virtual_wall_segments)
 
             input_payload: JsonObject = {"user_input": user_input}
             if resolved_tenant_id is not None:
@@ -1011,11 +1126,11 @@ class CoordinateNormalizationService:
             extra_living_targets = (
                 "Vì vùng phòng khách đủ diện tích, cần cố gắng có thêm "
                 "một ghế thư giãn (armchair), bàn phụ (side_table), "
-                "đèn cây (floor_lamp) và thảm (rug) để cụm khách không bị trống."
+                "đèn cây (floor_lamp) để cụm khách không bị trống."
                 if floor_area_m2 >= 14.0
                 else (
                     "Nếu còn đủ diện tích, thêm một ghế thư giãn (armchair), "
-                    "bàn phụ (side_table), đèn cây (floor_lamp) hoặc thảm (rug)."
+                    "bàn phụ (side_table) hoặc đèn cây (floor_lamp)."
                 )
             )
             return " ".join(

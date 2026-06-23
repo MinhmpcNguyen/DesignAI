@@ -43,7 +43,7 @@ _VIETNAMESE_OBJECT_ALIASES: dict[str, tuple[str, ...]] = {
         "ghe van phong",
         "ghe trang diem",
     ),
-    "coffee_table": ("ban tra", "ban cafe", "ban ca phe"),
+    "coffee_table": ("ban tra", "ban cafe", "ban ca phe", "ban"),
     "console_table": (
         "tu trang tri",
         "tu trung bay",
@@ -114,6 +114,27 @@ _OBJECT_ALIASES["tv_console"] = tuple(
 )
 
 _GENERIC_TABLE_ALIAS = "ban"
+_GENERIC_COFFEE_TABLE_BLOCKERS = (
+    "ban an",
+    "ban lam viec",
+    "ban hoc",
+    "ban trang diem",
+    "ban go lam viec",
+    "ban dau giuong",
+    "ban canh giuong",
+    "ban bep",
+    "ban phu",
+    "ban ben",
+    "ban don",
+)
+_GENERIC_LIVING_TABLE_PREFIXES = (
+    "ban nam",
+    "ban giua",
+    "ban dat",
+    "ban o giua",
+    "ban duoi",
+    "ban trang tri",
+)
 _GENERIC_DESK_TABLE_BLOCKERS = (
     "ban an",
     "ban tra",
@@ -127,20 +148,23 @@ _GENERIC_DESK_TABLE_BLOCKERS = (
     "ban ben",
     "ban don",
     # positional phrases that describe placement of a living-room table, not a work desk
-    "ban nam",       # "bàn nằm" = table lying/positioned (coffee table between sofa/TV)
-    "ban giua",      # "bàn giữa" = table in the middle
-    "ban dat",       # "bàn đặt" = table placed (as in "bàn đặt giữa sofa")
-    "ban o giua",    # "bàn ở giữa" = table in the middle
-    "ban duoi",      # "bàn dưới" = table below (under)
-    "ban trang tri", # "bàn trang trí" = decorative table (not a desk)
+    *_GENERIC_LIVING_TABLE_PREFIXES,
 )
 # Living-room context words: if "ban" is immediately followed by (within 50 chars) any of
 # these, it is describing a table in a seating arrangement, not a work desk.
 _GENERIC_TABLE_LIVING_ROOM_CONTEXT = (
+    "phong khach",
+    "phong sinh hoat",
+    "living room",
+    "living",
     "sofa",
+    "ghe sofa",
+    "ke tv",
+    "ke tivi",
+    "tu tv",
+    "tu tivi",
     "tivi",
     "tv",
-    "ghe sofa",
     "tham",
 )
 _GENERIC_CHAIR_ALIAS = "ghe"
@@ -257,6 +281,9 @@ _CONTRACT_INTENT_ALIASES = {
     "forbidden": "max0",
     "avoid": "max0",
 }
+_DEFAULT_REQUESTED_DIMS_MM_BY_OBJECT: dict[str, dict[str, int]] = {
+    "coffee_table": {"L_mm": 900, "W_mm": 550},
+}
 
 
 def build_request_contract(
@@ -365,6 +392,19 @@ def sanitize_request_contract(
             brief_text=brief_text,
             available_object_types=available_object_types,
         )
+    if fallback_to_heuristic:
+        _merge_missing_hard_heuristic_objects(
+            by_type,
+            brief_text=brief_text,
+            available_object_types=available,
+        )
+        objects = sorted(
+            by_type.values(),
+            key=lambda row: (
+                _intent_rank(str(row.get("intent") or "")),
+                str(row.get("object_type") or ""),
+            ),
+        )
 
     source = str(contract.get("source") or "llm_request_contract").strip()
     return {
@@ -379,6 +419,32 @@ def sanitize_request_contract(
             ]
         ),
     }
+
+
+def _merge_missing_hard_heuristic_objects(
+    by_type: dict[str, dict[str, Any]],
+    *,
+    brief_text: str,
+    available_object_types: set[str],
+) -> None:
+    heuristic = build_request_contract(
+        brief_text=brief_text,
+        available_object_types=sorted(available_object_types),
+    )
+    for item in _contract_objects(heuristic):
+        if item.get("available_in_program") is False:
+            continue
+        intent = contract_intent(item)
+        if intent != "max0" and contract_min_keep(item) <= 0:
+            continue
+        object_type = canonical_object_type(str(item.get("object_type") or ""))
+        if not object_type:
+            continue
+        existing = by_type.get(object_type)
+        if existing is None or _intent_rank(intent) < _intent_rank(
+            str(existing.get("intent") or "")
+        ):
+            by_type[object_type] = deepcopy(dict(item))
 
 
 def attach_request_contract_to_semantic_program(
@@ -401,6 +467,7 @@ def attach_request_contract_to_semantic_program(
             brief_text=brief_text,
             available_object_types=available_object_types,
         )
+    out = _ensure_requested_living_coffee_table(out, contract=contract)
     out = _protect_default_bedroom_nightstand(out, contract=contract)
     out["request_contract"] = contract
     notes = [str(item) for item in out.get("notes") or [] if str(item).strip()]
@@ -410,6 +477,167 @@ def attach_request_contract_to_semantic_program(
     )
     out["notes"] = _dedupe_strings(notes)
     return out
+
+
+def _ensure_requested_living_coffee_table(
+    semantic_program: dict[str, Any],
+    *,
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    item = contract_item_for_object_type(contract, "coffee_table")
+    if contract_min_keep(item) <= 0 or contract_intent(item) == "max0":
+        return semantic_program
+    if "coffee_table" in _semantic_program_object_types(semantic_program):
+        _mark_contract_item_available(contract, "coffee_table")
+        return semantic_program
+
+    clusters = semantic_program.get("active_clusters")
+    if not isinstance(clusters, list):
+        return semantic_program
+    target = next(
+        (
+            cluster
+            for cluster in clusters
+            if isinstance(cluster, dict) and _cluster_accepts_living_table(cluster)
+        ),
+        None,
+    )
+    if target is None:
+        return semantic_program
+
+    _append_required_object_to_cluster(
+        target,
+        object_type="coffee_table",
+        role="support",
+    )
+    _upsert_required_object_tier_hint(
+        target,
+        object_type="coffee_table",
+        preferred_size_tier="M",
+    )
+    _mark_contract_item_available(contract, "coffee_table")
+    notes = [str(row) for row in semantic_program.get("notes") or [] if str(row)]
+    notes.append(
+        "Hard-requested coffee_table was injected into the living seating cluster."
+    )
+    semantic_program["notes"] = _dedupe_strings(notes)
+    return semantic_program
+
+
+def _cluster_accepts_living_table(cluster: Mapping[str, Any]) -> bool:
+    cluster_id = str(cluster.get("cluster_id") or "").strip().lower()
+    object_types = {
+        canonical_object_type(item) for item in _semantic_cluster_object_types(cluster)
+    }
+    if object_types & {"sofa", "armchair"}:
+        return True
+    return any(token in cluster_id for token in ("seating", "living", "lounge"))
+
+
+def _semantic_cluster_object_types(cluster: Mapping[str, Any]) -> list[str]:
+    out: list[str] = []
+    bundles = cluster.get("required_bundles")
+    if not isinstance(bundles, Sequence) or isinstance(bundles, str):
+        return out
+    for bundle in bundles:
+        if not isinstance(bundle, Mapping):
+            continue
+        objects = bundle.get("objects")
+        if not isinstance(objects, Sequence) or isinstance(objects, str):
+            continue
+        for row in objects:
+            if not isinstance(row, Mapping):
+                continue
+            object_type = canonical_object_type(str(row.get("object_type") or ""))
+            if object_type:
+                out.append(object_type)
+    return out
+
+
+def _append_required_object_to_cluster(
+    cluster: dict[str, Any],
+    *,
+    object_type: str,
+    role: str,
+) -> None:
+    bundles = cluster.get("required_bundles")
+    if not isinstance(bundles, list):
+        bundles = []
+        cluster["required_bundles"] = bundles
+    if not bundles or not isinstance(bundles[0], dict):
+        bundles.insert(
+            0, {"bundle_id": f"{cluster.get('cluster_id')}_bundle", "objects": []}
+        )
+    bundle = bundles[0]
+    objects = bundle.get("objects")
+    if not isinstance(objects, list):
+        objects = []
+        bundle["objects"] = objects
+    if any(
+        isinstance(row, Mapping)
+        and canonical_object_type(str(row.get("object_type") or "")) == object_type
+        for row in objects
+    ):
+        return
+    objects.append(
+        {
+            "object_type": object_type,
+            "role": role,
+            "required": True,
+            "max_keep": 1,
+        }
+    )
+
+
+def _upsert_required_object_tier_hint(
+    cluster: dict[str, Any],
+    *,
+    object_type: str,
+    preferred_size_tier: str,
+) -> None:
+    hints = cluster.get("tier_count_hints")
+    if not isinstance(hints, dict):
+        hints = {}
+        cluster["tier_count_hints"] = hints
+    hints["bundle_class"] = "indispensable"
+    hints["preserve_level"] = "highest"
+    object_hints = hints.get("object_hints")
+    if not isinstance(object_hints, list):
+        object_hints = []
+        hints["object_hints"] = object_hints
+    for row in object_hints:
+        if not isinstance(row, dict):
+            continue
+        if canonical_object_type(str(row.get("object_type") or "")) != object_type:
+            continue
+        row["min_keep"] = max(1, _int_value(row.get("min_keep"), default=0))
+        row["max_keep"] = max(1, _positive_int(row.get("max_keep"), default=1))
+        row["preferred_size_tier"] = preferred_size_tier
+        row["preserve_level"] = "highest"
+        return
+    object_hints.append(
+        {
+            "object_type": object_type,
+            "min_keep": 1,
+            "max_keep": 1,
+            "preferred_size_tier": preferred_size_tier,
+            "preserve_level": "highest",
+        }
+    )
+
+
+def _mark_contract_item_available(
+    contract: dict[str, Any],
+    object_type: str,
+) -> None:
+    objects = contract.get("objects")
+    if not isinstance(objects, list):
+        return
+    for row in objects:
+        if not isinstance(row, dict):
+            continue
+        if canonical_object_type(str(row.get("object_type") or "")) == object_type:
+            row["available_in_program"] = True
 
 
 def _protect_default_bedroom_nightstand(
@@ -762,6 +990,7 @@ def _best_mention_contract(
         elif dim_hint and dim_hint.get("screen_diagonal_inch"):
             # Store screen diagonal separately so tier logic can ignore it.
             item["requested_dims_mm"] = dim_hint
+        _apply_default_requested_dims(item)
         # Sort key: (intent_rank, no_dims) — dimension-bearing mentions are
         # preferred over same-intent mentions that lack dimension info because
         # they are more specific (e.g., "ke tv dai 2m" beats bare "tv").
@@ -998,7 +1227,7 @@ def _sanitize_contract_object(
         target_count = min(target_count, max_keep)
         min_keep = min(min_keep, max_keep)
 
-    return {
+    out = {
         "object_type": object_type,
         "intent": intent,
         "min_keep": min_keep,
@@ -1010,6 +1239,22 @@ def _sanitize_contract_object(
         "available_in_program": object_type in available_object_types,
         "confidence": _confidence_value(item.get("confidence")),
     }
+    _apply_default_requested_dims(out)
+    return out
+
+
+def _apply_default_requested_dims(item: dict[str, Any]) -> None:
+    object_type = canonical_object_type(str(item.get("object_type") or ""))
+    intent = str(item.get("intent") or "").strip()
+    if intent not in _HARD_CONTRACT_INTENTS:
+        return
+    dims = item.get("requested_dims_mm")
+    if isinstance(dims, dict) and (dims.get("L_mm") or dims.get("W_mm")):
+        return
+    default_dims = _DEFAULT_REQUESTED_DIMS_MM_BY_OBJECT.get(object_type)
+    if default_dims is None:
+        return
+    item["requested_dims_mm"] = dict(default_dims)
 
 
 def _sanitize_evidence(
@@ -1161,6 +1406,8 @@ def _blocks_generic_alias_match(
     alias: str,
     start: int,
 ) -> bool:
+    if object_type == "coffee_table" and alias == _GENERIC_TABLE_ALIAS:
+        return not _allows_generic_living_table_match(text, start=start)
     if object_type != "desk" or alias != _GENERIC_TABLE_ALIAS:
         if object_type != "chair" or alias != _GENERIC_CHAIR_ALIAS:
             return False
@@ -1177,6 +1424,20 @@ def _blocks_generic_alias_match(
     if any(ctx in window for ctx in _GENERIC_TABLE_LIVING_ROOM_CONTEXT):
         return True
     return False
+
+
+def _allows_generic_living_table_match(text: str, *, start: int) -> bool:
+    tail = text[start:]
+    if "side_table" in tail[:32]:
+        return False
+    if "coffee_table" in tail[:32]:
+        return True
+    if any(tail.startswith(blocker) for blocker in _GENERIC_COFFEE_TABLE_BLOCKERS):
+        return False
+    if any(tail.startswith(prefix) for prefix in _GENERIC_LIVING_TABLE_PREFIXES):
+        return True
+    window = text[max(0, start - 80) : min(len(text), start + 80)]
+    return any(ctx in window for ctx in _GENERIC_TABLE_LIVING_ROOM_CONTEXT)
 
 
 def _ascii_fold(text: str) -> str:

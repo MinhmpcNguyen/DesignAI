@@ -50,14 +50,14 @@ export function mapAutoFillItems(
     rotation: toRot(item.rotation),
     color: item.color,
     size: item.size,
-    modelUrl: item.modelUrl,
+    modelUrl: item.modelUrl ?? undefined,
     placementType:
       item.placementType ??
       (item.objectRole === "door" || item.objectRole === "window"
         ? "wall"
         : "floor"),
     snappedToWall: item.snappedToWall,
-    catalogItemId: item.catalogItemId,
+    catalogItemId: item.catalogItemId ?? undefined,
     objectRole: item.objectRole ?? undefined,
     collisionLayer: item.collisionLayer,
     placeOn: item.placeOn ?? undefined,

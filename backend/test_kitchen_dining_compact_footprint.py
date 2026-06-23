@@ -513,6 +513,87 @@ class KitchenDiningCompactFootprintTest(unittest.TestCase):
             ["kitchen_workflow_core"],
         )
 
+    def test_no_stove_sink_filter_recovers_semantic_dining_cluster(self) -> None:
+        filtered = _filter_kitchen_cluster_output(
+            {
+                "clusters": [
+                    {
+                        "cluster_id": "kitchen_workflow_core",
+                        "members": ["kitchen_base_cabinet", "fridge"],
+                        "anchors": ["kitchen_base_cabinet"],
+                    }
+                ],
+                "semantic_layout_program": {
+                    "room_type": "kitchen",
+                    "active_clusters": [
+                        {
+                            "cluster_id": "kitchen_workflow_core",
+                            "priority": "core",
+                            "dominant_anchor_candidates": [
+                                "kitchen_base_cabinet",
+                                "fridge",
+                            ],
+                            "required_bundles": [
+                                {
+                                    "objects": [
+                                        {"object_type": "kitchen_base_cabinet"},
+                                        {"object_type": "fridge"},
+                                    ]
+                                }
+                            ],
+                        },
+                        {
+                            "cluster_id": "kitchen_dining_core",
+                            "priority": "core",
+                            "layout_role": "support",
+                            "dominant_anchor_candidates": ["dining_table"],
+                            "required_bundles": [
+                                {
+                                    "objects": [
+                                        {
+                                            "object_type": "dining_table",
+                                            "role": "dominant_anchor",
+                                            "required": True,
+                                        },
+                                        {
+                                            "object_type": "dining_chair",
+                                            "role": "support",
+                                            "required": False,
+                                        },
+                                    ]
+                                }
+                            ],
+                            "tier_count_hints": {
+                                "object_hints": [
+                                    {
+                                        "object_type": "dining_table",
+                                        "min_keep": 1,
+                                    },
+                                    {
+                                        "object_type": "dining_chair",
+                                        "max_keep": 4,
+                                    },
+                                ]
+                            },
+                        },
+                    ],
+                },
+            }
+        )
+
+        clusters = cast(list[dict[str, object]], filtered["clusters"])
+        by_id = {str(row.get("cluster_id")): row for row in clusters}
+        self.assertIn("kitchen_dining_core", by_id)
+
+        dining = by_id["kitchen_dining_core"]
+        self.assertEqual(dining["members"], ["dining_table", "dining_chair"])
+        self.assertEqual(dining["anchors"], ["dining_table"])
+        rules = cast(dict[str, object], dining["cluster_rules"])
+        anchor_policy = cast(dict[str, object], rules["anchor_first_policy"])
+        self.assertEqual(anchor_policy["protected_ids"], ["dining_table"])
+        self.assertEqual(anchor_policy["droppable_ids"], ["dining_chair"])
+        self.assertTrue(rules["semantic_placements"])
+
     def test_no_stove_sink_tier_filter_keeps_only_requested_kitchen_core(
         self,
     ) -> None:

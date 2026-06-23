@@ -34,7 +34,10 @@ from agent.tier_count_director import TierCountDirector
 from cluster_composer.merge import merge_cluster_outputs
 from cluster_composer.outline import compute_cluster_outline
 from layout.grid_policy import GLOBAL_LAYOUT_GRID_MM
-from layout.room_profiles.registry import all_profile_non_functional_layout_specs
+from layout.room_profiles.registry import (
+    all_profile_non_functional_layout_specs,
+    semantic_placements_for_members,
+)
 from pipeline.ablation_modes import (
     AblationMode,
     ablation_metadata,
@@ -468,6 +471,230 @@ def _filter_kitchen_type_list(value: object) -> list[str]:
     return [item for item in value if _is_allowed_no_stove_sink_kitchen_type(item)]
 
 
+def _unique_strings(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _kitchen_active_cluster_object_types(cluster: dict[str, Any]) -> list[str]:
+    bundles = cluster.get("required_bundles")
+    if not isinstance(bundles, list):
+        return []
+    object_types: list[str] = []
+    seen: set[str] = set()
+    for bundle in bundles:
+        if not isinstance(bundle, dict):
+            continue
+        objects = bundle.get("objects")
+        if not isinstance(objects, list):
+            continue
+        for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+            object_type = obj.get("object_type")
+            if not _is_allowed_no_stove_sink_kitchen_type(object_type):
+                continue
+            normalized = str(object_type)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            object_types.append(normalized)
+    return object_types
+
+
+def _kitchen_active_cluster_anchor_candidates(
+    cluster: dict[str, Any],
+    members: list[str],
+) -> list[str]:
+    member_set = set(members)
+    raw_candidates = cluster.get("dominant_anchor_candidates")
+    if not isinstance(raw_candidates, list):
+        raw_candidates = []
+    candidates = [
+        candidate
+        for candidate in raw_candidates
+        if isinstance(candidate, str) and candidate in member_set
+    ]
+    if candidates:
+        return candidates
+
+    anchors: list[str] = []
+    for bundle in cluster.get("required_bundles") or []:
+        if not isinstance(bundle, dict):
+            continue
+        objects = bundle.get("objects")
+        if not isinstance(objects, list):
+            continue
+        for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+            object_type = obj.get("object_type")
+            if not isinstance(object_type, str) or object_type not in member_set:
+                continue
+            if obj.get("role") in {"dominant_anchor", "workflow_anchor"}:
+                anchors.append(object_type)
+    return _unique_strings(anchors)
+
+
+def _kitchen_active_cluster_optional_object_types(
+    cluster: dict[str, Any],
+) -> list[str]:
+    optional: list[str] = []
+    for bundle in cluster.get("required_bundles") or []:
+        if not isinstance(bundle, dict):
+            continue
+        objects = bundle.get("objects")
+        if not isinstance(objects, list):
+            continue
+        for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+            object_type = obj.get("object_type")
+            if not _is_allowed_no_stove_sink_kitchen_type(object_type):
+                continue
+            if not bool(obj.get("required", False)):
+                optional.append(str(object_type))
+    return _unique_strings(optional)
+
+
+def _kitchen_recovered_cluster_tag(cluster_id: str, members: list[str]) -> str:
+    lowered = f"{cluster_id} {' '.join(members)}".lower()
+    if "dining" in lowered:
+        return "dining"
+    return "kitchen"
+
+
+def _kitchen_recovered_hard_constraints(
+    members: list[str],
+) -> list[dict[str, Any]]:
+    constraints: list[dict[str, Any]] = []
+    for index, left in enumerate(members):
+        for right in members[index + 1 :]:
+            constraints.append({"type": "no_overlap", "a": left, "b": right})
+        constraints.append(
+            {"type": "requires_access", "id": left, "mode": "front_clearance"}
+        )
+    return constraints
+
+
+def _kitchen_recovered_soft_constraints(
+    members: list[str],
+    anchors: list[str],
+) -> list[dict[str, Any]]:
+    if not anchors:
+        return []
+    anchor = anchors[0]
+    return [
+        {"type": "prefer_near", "a": member, "b": anchor, "weight": 6}
+        for member in members
+        if member != anchor
+    ]
+
+
+def _recover_missing_kitchen_clusters_from_semantic_program(
+    result: dict[str, Any],
+) -> None:
+    clusters = result.get("clusters")
+    semantic_program = result.get("semantic_layout_program")
+    if not isinstance(clusters, list) or not isinstance(semantic_program, dict):
+        return
+    active_clusters = semantic_program.get("active_clusters")
+    if not isinstance(active_clusters, list):
+        return
+
+    existing_ids = {
+        str(cluster.get("cluster_id"))
+        for cluster in clusters
+        if isinstance(cluster, dict) and cluster.get("cluster_id")
+    }
+    recovered_clusters: list[dict[str, Any]] = []
+    for active_cluster in active_clusters:
+        if not isinstance(active_cluster, dict):
+            continue
+        cluster_id = str(active_cluster.get("cluster_id") or "").strip()
+        if not cluster_id or cluster_id in existing_ids:
+            continue
+        members = _kitchen_active_cluster_object_types(active_cluster)
+        if not members:
+            continue
+        anchor_candidates = _kitchen_active_cluster_anchor_candidates(
+            active_cluster,
+            members,
+        )
+        anchors = anchor_candidates[:1] or members[:1]
+        optional = set(_kitchen_active_cluster_optional_object_types(active_cluster))
+        protected_ids = _unique_strings([*anchor_candidates, *anchors])
+        droppable_ids = [
+            member
+            for member in members
+            if member in optional and member not in protected_ids
+        ]
+        recovered_clusters.append(
+            {
+                "cluster_id": cluster_id,
+                "tag": _kitchen_recovered_cluster_tag(cluster_id, members),
+                "members": members,
+                "anchors": anchors,
+                "hard_constraints": _kitchen_recovered_hard_constraints(members),
+                "soft_constraints": _kitchen_recovered_soft_constraints(
+                    members,
+                    anchors,
+                ),
+                "cluster_rules": {
+                    "grid_mm": GLOBAL_LAYOUT_GRID_MM,
+                    "allowed_rotations": {
+                        member: [0, 90, 180, 270] for member in members
+                    },
+                    "facing": {
+                        member: {"front": "top", "notes": "functional front"}
+                        for member in members
+                    },
+                    "access_requirements": [
+                        {"id": member, "type": "front_clearance", "required": True}
+                        for member in members
+                    ],
+                    "semantic_placements": semantic_placements_for_members(
+                        room_type=semantic_program.get("room_type") or "kitchen",
+                        cluster_id=cluster_id,
+                        members=members,
+                        anchors=anchors,
+                    ),
+                    "dominant_anchor_candidates": anchor_candidates,
+                    "allow_empty_cluster": active_cluster.get("priority") != "core",
+                    "zone_claims": active_cluster.get("zone_claims") or {},
+                    "layout_role": active_cluster.get("layout_role") or "support",
+                    "degradation_ladder": (
+                        active_cluster.get("degradation_ladder") or []
+                    ),
+                    "tier_count_hints": active_cluster.get("tier_count_hints") or {},
+                    "anchor_first_policy": {
+                        "dominant_anchor_id": anchors[0] if anchors else "",
+                        "dominant_anchor_candidates": anchor_candidates,
+                        "placement_order": members,
+                        "protected_ids": protected_ids,
+                        "droppable_ids": droppable_ids,
+                    },
+                },
+                "notes": [
+                    (
+                        "Recovered from semantic_layout_program after "
+                        "no-stove-sink filtering."
+                    )
+                ],
+            }
+        )
+        existing_ids.add(cluster_id)
+
+    if recovered_clusters:
+        clusters.extend(recovered_clusters)
+
+
 def _filter_kitchen_object_rows(
     value: object,
     *,
@@ -702,6 +929,7 @@ def _filter_kitchen_cluster_output(cluster_output: dict[str, Any]) -> dict[str, 
         result["semantic_layout_program"] = _filter_kitchen_semantic_program(
             semantic_program
         )
+        _recover_missing_kitchen_clusters_from_semantic_program(result)
     request_contract = result.get("request_contract")
     if isinstance(request_contract, dict):
         result["request_contract"] = _filter_kitchen_request_contract(request_contract)
@@ -1169,6 +1397,7 @@ _ROOM_ESSENTIAL_TYPES: dict[str, frozenset[str]] = {
             "sectional",
             "loveseat",
             "couch",
+            "coffee_table",
             "tv_console",
             "kitchen_base_cabinet",
             "fridge",
@@ -1194,6 +1423,7 @@ _ROOM_ESSENTIAL_TYPES: dict[str, frozenset[str]] = {
             "sectional",
             "loveseat",
             "couch",
+            "coffee_table",
             "tv_console",
             "tv_stand",
             "media_console",
@@ -1209,6 +1439,9 @@ _ROOM_ESSENTIAL_TYPES: dict[str, frozenset[str]] = {
             "fridge",
             "refrigerator",
             "tu_lanh",
+            "dining_table",
+            "ban_an",
+            "table",
         }
     ),
     "dining_room": frozenset(

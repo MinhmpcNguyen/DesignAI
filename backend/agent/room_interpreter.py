@@ -280,6 +280,11 @@ def _build_room_interpreter_payload(
         "notes": _dedupe_strings(notes),
         "settings": _settings_payload(),
     }
+    _open_wall_sides = _resolve_list_field(
+        input_payload,
+        ("user_input", "open_wall_sides"),
+    )
+    _virtual_wall_segments = _resolve_virtual_wall_segments(input_payload)
     room = {
         "unit": "mm",
         "room_id": _resolve_room_id(input_payload),
@@ -293,6 +298,12 @@ def _build_room_interpreter_payload(
         "principal_axis": principal_axis,
         "bbox_mm": room_bbox,
         "ceiling_height_mm": _resolve_height_mm(input_payload),
+        **({"open_wall_sides": _open_wall_sides} if _open_wall_sides else {}),
+        **(
+            {"virtual_wall_segments": _virtual_wall_segments}
+            if _virtual_wall_segments
+            else {}
+        ),
     }
     openings = {"doors": doors, "windows": windows}
     meta = {
@@ -1715,6 +1726,131 @@ def _resolve_window_direction(input_payload: Mapping[str, object]) -> str:
             return direction
     direction = input_payload.get("window_direction")
     return direction if isinstance(direction, str) else ""
+
+
+def _resolve_list_field(
+    input_payload: Mapping[str, object],
+    path: tuple[str, ...],
+) -> list[str]:
+    """Walk nested keys and return a list of strings, or []."""
+    current: object = input_payload
+    for key in path:
+        if not isinstance(current, Mapping):
+            return []
+        current = current.get(key)
+    if not isinstance(current, list):
+        return []
+    return [str(v) for v in current if isinstance(v, str)]
+
+
+def _resolve_virtual_wall_segments(
+    input_payload: Mapping[str, object],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[tuple[int, int], tuple[int, int]]] = set()
+
+    def add_from(value: object, *, require_virtual: bool) -> None:
+        if not isinstance(value, list):
+            return
+        for index, item in enumerate(value, start=1):
+            row = _normalize_virtual_wall_segment(
+                item,
+                fallback_id=f"virtual_wall_{len(rows) + index}",
+                require_virtual=require_virtual,
+            )
+            if row is None:
+                continue
+            segment = row["segment_mm"]
+            if not isinstance(segment, list) or len(segment) != 2:
+                continue
+            p1 = segment[0]
+            p2 = segment[1]
+            if not isinstance(p1, Mapping) or not isinstance(p2, Mapping):
+                continue
+            a = (int(p1["x"]), int(p1["y"]))
+            b = (int(p2["x"]), int(p2["y"]))
+            signature = (a, b) if a <= b else (b, a)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            rows.append(row)
+
+    user_input = input_payload.get("user_input")
+    if isinstance(user_input, Mapping):
+        add_from(user_input.get("virtual_wall_segments"), require_virtual=False)
+        add_from(user_input.get("virtualWallSegments"), require_virtual=False)
+        add_from(user_input.get("walls"), require_virtual=True)
+
+    add_from(input_payload.get("virtual_wall_segments"), require_virtual=False)
+    add_from(input_payload.get("virtualWallSegments"), require_virtual=False)
+    add_from(input_payload.get("walls"), require_virtual=True)
+
+    for container_key in ("floorplan_geometry", "constraints"):
+        container = input_payload.get(container_key)
+        if not isinstance(container, Mapping):
+            continue
+        add_from(container.get("virtual_wall_segments"), require_virtual=False)
+        add_from(container.get("virtualWallSegments"), require_virtual=False)
+        add_from(container.get("walls"), require_virtual=True)
+
+    return rows
+
+
+def _normalize_virtual_wall_segment(
+    value: object,
+    *,
+    fallback_id: str,
+    require_virtual: bool,
+) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    if require_virtual and not _truthy_flag(
+        value.get("virtual") or value.get("is_virtual") or value.get("isVirtual")
+    ):
+        return None
+    segment = _normalize_segment(
+        value.get("segment_mm") or value.get("segment") or value.get("polyline_mm"),
+        start=(
+            value.get("startPoint")
+            or value.get("start")
+            or value.get("start_mm")
+            or value.get("p1_mm")
+        ),
+        end=(
+            value.get("endPoint")
+            or value.get("end")
+            or value.get("end_mm")
+            or value.get("p2_mm")
+        ),
+    )
+    if segment is None:
+        points = value.get("points")
+        if isinstance(points, list) and len(points) >= 2:
+            segment = _normalize_segment(points[:2])
+    if segment is None:
+        return None
+    if _point_distance(segment[0], segment[1]) <= 1.0:
+        return None
+    segment_id = _coerce_identifier(
+        value.get("id") or value.get("wall_id") or value.get("source_id"),
+        fallback=fallback_id,
+    )
+    return {
+        "id": segment_id,
+        "segment_mm": segment,
+        "original_segment_mm": list(segment),
+        "virtual": True,
+    }
+
+
+def _truthy_flag(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return False
 
 
 def _normalize_polygon_points(value: object) -> list[PointDict]:

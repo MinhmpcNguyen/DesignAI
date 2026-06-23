@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -49,6 +49,8 @@ class RoomModel(BaseModel):
         default_factory=lambda: BBox(min_x=0, min_y=0, max_x=0, max_y=0)
     )
     ceiling_height_mm: int = 2800
+    open_wall_sides: list[str] = Field(default_factory=list)
+    virtual_wall_segments: list[VirtualWallSegment] = Field(default_factory=list)
 
 
 class DoorOpening(BaseModel):
@@ -135,6 +137,15 @@ class BlockedWall(BaseModel):
 
     wall_id: str
     length_mm: int
+
+
+class VirtualWallSegment(BaseModel):
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow")
+
+    id: str = ""
+    segment_mm: list[Point] = Field(default_factory=list)
+    original_segment_mm: list[Point] = Field(default_factory=list)
+    virtual: bool = True
 
 
 class GenericRegion(BaseModel):
