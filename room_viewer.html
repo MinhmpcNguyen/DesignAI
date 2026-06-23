@@ -82,6 +82,14 @@ a.coord-toggle{font-size:9px;color:#C8A882;cursor:pointer;text-decoration:none;d
     </div>
   </div>
   <div class="stats" id="stats"></div>
+  <div style="border-top:1px solid #e8ddd4;padding-top:10px;display:flex;flex-direction:column;gap:6px">
+    <span class="fg-label">Test cases</span>
+    <button onclick="exportTestCases()" style="width:100%;padding:6px 0;border:1px solid #C8A882;background:#fdf8f3;color:#7a5c3a;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600">💾 Export JSON</button>
+    <label style="width:100%;padding:6px 0;border:1px solid #d0c8be;background:#f5f0ea;color:#888;border-radius:7px;font-size:11px;cursor:pointer;font-weight:600;text-align:center;display:block">
+      📂 Import JSON
+      <input type="file" accept=".json" onchange="importTestCases(event)" style="display:none">
+    </label>
+  </div>
 </div>
 <div class="main" id="main"><div class="empty">Đang tải...</div></div>
 </div>
@@ -478,6 +486,51 @@ async function runPipeline(uid) {
     resEl.className='tc-result show err'; resEl.textContent=`❌ ${e.message}`;
   }
   runBtn.disabled=false;
+}
+
+function exportTestCases() {
+  const cases = {};
+  for (const [tcKey, tc] of Object.entries(TEST_CASES)) {
+    const desc = localStorage.getItem('tc_desc_'+tcKey) ?? tc.description;
+    const expRaw = localStorage.getItem('tc_expected_'+tcKey);
+    const expected = expRaw ? JSON.parse(expRaw) : tc.expected;
+    cases[tcKey] = {
+      roomKey: tc.roomKey,
+      roomName: tc.roomName,
+      description: desc,
+      expected,
+    };
+  }
+  const blob = new Blob([JSON.stringify({version:1, exported_at: new Date().toISOString(), cases}, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `test_cases_${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+}
+
+function importTestCases(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      const cases = data.cases || data; // support both versioned and raw format
+      let count = 0;
+      for (const [tcKey, tc] of Object.entries(cases)) {
+        if (!TEST_CASES[tcKey]) continue; // skip unknown keys
+        if (tc.description !== undefined) localStorage.setItem('tc_desc_'+tcKey, tc.description);
+        if (tc.expected !== undefined) localStorage.setItem('tc_expected_'+tcKey, JSON.stringify(tc.expected, null, 2));
+        count++;
+      }
+      render();
+      alert(`✅ Đã import ${count} test case`);
+    } catch(err) {
+      alert('❌ File không hợp lệ: ' + err.message);
+    }
+    event.target.value = ''; // reset input để có thể import lại cùng file
+  };
+  reader.readAsText(file);
 }
 
 function render() {
