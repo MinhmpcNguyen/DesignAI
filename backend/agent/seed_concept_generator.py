@@ -1301,10 +1301,16 @@ def _add_guardrail_wall_zone_refinements(
     # Collect the usable extents along each wall side.
     # For horizontal walls (top/bottom) we collect x-ranges.
     # For vertical walls (left/right) we collect y-ranges.
-    top_xs: list[tuple[float, float]] = []
-    bot_xs: list[tuple[float, float]] = []
-    left_ys: list[tuple[float, float]] = []
-    right_ys: list[tuple[float, float]] = []
+    # (x1, x2, mid_y) for horizontal segments; (y1, y2, mid_x) for vertical.
+    # Storing the actual wall coordinate lets us build the guardrail strip at
+    # the wall's real position rather than always at the bbox edge — critical
+    # for L-shaped rooms where the semantic "bottom wall" may be in the middle
+    # of the bounding box (e.g. the bottom of the wide band at y=2050 when the
+    # narrow arm extends to y=4050).
+    top_xs: list[tuple[float, float, float]] = []
+    bot_xs: list[tuple[float, float, float]] = []
+    left_ys: list[tuple[float, float, float]] = []
+    right_ys: list[tuple[float, float, float]] = []
 
     for seg in focal_surfaces:
         if not isinstance(seg, Mapping):
@@ -1328,20 +1334,26 @@ def _add_guardrail_wall_zone_refinements(
         if y2 - y1 < wall_tol:
             mid_y = (y1 + y2) / 2
             if mid_y < r_min_y + wall_tol:
-                top_xs.append((x1, x2))
-            elif mid_y > r_max_y - wall_tol:
-                bot_xs.append((x1, x2))
+                top_xs.append((x1, x2, mid_y))
+            elif mid_y > r_min_y + wall_tol:
+                # Any horizontal focal surface that isn't the top wall is a
+                # bottom-wall candidate.  For L-shaped rooms the semantic
+                # "bottom wall" may be an interior horizontal boundary (e.g.
+                # y=2050) rather than the bbox bottom (e.g. y=4050).  We keep
+                # all candidates and later pick the one nearest the bbox
+                # bottom (highest mid_y).
+                bot_xs.append((x1, x2, mid_y))
 
         # Vertical segment (left or right wall)
         elif x2 - x1 < wall_tol:
             mid_x = (x1 + x2) / 2
             if mid_x < r_min_x + wall_tol:
-                left_ys.append((y1, y2))
+                left_ys.append((y1, y2, mid_x))
             elif mid_x > r_max_x - wall_tol:
-                right_ys.append((y1, y2))
+                right_ys.append((y1, y2, mid_x))
 
     def _union_extent(
-        segs: list[tuple[float, float]],
+        segs: list[tuple[float, float, float]],
     ) -> tuple[int, int] | None:
         if not segs:
             return None
@@ -1349,38 +1361,49 @@ def _add_guardrail_wall_zone_refinements(
         hi = int(round(max(s[1] for s in segs)))
         return (lo, hi) if hi - lo >= 500 else None
 
-    # Top wall: strip at y=r_min_y, width = usable x-extent
+    # Top wall: strip anchored at the actual top-wall y, using its x-extent.
     top_ext = _union_extent(top_xs)
     if top_ext is not None:
+        top_wall_y = int(round(min(s[2] for s in top_xs)))
         bbox = _guardrail_bbox_tuple(
-            top_ext[0], r_min_y, top_ext[1], r_min_y + wall_depth
+            top_ext[0], top_wall_y, top_ext[1], top_wall_y + wall_depth
         )
         if bbox is not None:
             region_index.setdefault("top_wall_zone", bbox)
 
-    # Bottom wall: strip at y=r_max_y, width = usable x-extent
-    bot_ext = _union_extent(bot_xs)
-    if bot_ext is not None:
-        bbox = _guardrail_bbox_tuple(
-            bot_ext[0], r_max_y - wall_depth, bot_ext[1], r_max_y
-        )
-        if bbox is not None:
-            region_index.setdefault("bottom_wall_zone", bbox)
+    # Bottom wall: among all non-top horizontal focal surfaces pick the one
+    # nearest the bbox bottom (highest mid_y) — this is the semantic "bottom
+    # wall" of the main living area even in L-shaped rooms.
+    if bot_xs:
+        # Pick the candidate with the highest mid_y (closest to bbox bottom).
+        bot_wall_y = int(round(max(s[2] for s in bot_xs)))
+        # Collect x-extents only from candidates at that y-level (within tol).
+        bot_at_wall = [(s[0], s[1], s[2]) for s in bot_xs
+                       if abs(s[2] - bot_wall_y) <= wall_tol]
+        bot_ext = _union_extent(bot_at_wall or bot_xs)
+        if bot_ext is not None:
+            bbox = _guardrail_bbox_tuple(
+                bot_ext[0], bot_wall_y - wall_depth, bot_ext[1], bot_wall_y
+            )
+            if bbox is not None:
+                region_index.setdefault("bottom_wall_zone", bbox)
 
-    # Left wall: strip at x=r_min_x, height = usable y-extent
+    # Left wall: strip anchored at the actual left-wall x, using its y-extent.
     left_ext = _union_extent(left_ys)
     if left_ext is not None:
+        left_wall_x = int(round(min(s[2] for s in left_ys)))
         bbox = _guardrail_bbox_tuple(
-            r_min_x, left_ext[0], r_min_x + wall_depth, left_ext[1]
+            left_wall_x, left_ext[0], left_wall_x + wall_depth, left_ext[1]
         )
         if bbox is not None:
             region_index.setdefault("left_wall_zone", bbox)
 
-    # Right wall: strip at x=r_max_x, height = usable y-extent
+    # Right wall: strip anchored at the actual right-wall x, using its y-extent.
     right_ext = _union_extent(right_ys)
     if right_ext is not None:
+        right_wall_x = int(round(max(s[2] for s in right_ys)))
         bbox = _guardrail_bbox_tuple(
-            r_max_x - wall_depth, right_ext[0], r_max_x, right_ext[1]
+            right_wall_x - wall_depth, right_ext[0], right_wall_x, right_ext[1]
         )
         if bbox is not None:
             region_index.setdefault("right_wall_zone", bbox)
@@ -1747,11 +1770,87 @@ def _macro_scenario_for_family(family: ConceptFamily) -> MacroScenario:
     return scenarios[family]
 
 
-def _macro_scenarios_for_family(family: ConceptFamily) -> list[MacroScenario]:
+def _preferred_focal_axis_scenario(room_model: Mapping[str, object]) -> str:
+    """Return the scenario_id that should be tried first for focal_axis family.
+
+    For axis-aligned rooms (nearly all Vietnamese apartments): choose based on
+    bbox dimensions + door position rather than PCA-based principal_axis which
+    has low confidence for nearly-square rooms.
+
+    Rules (applied in order):
+    1. If room is clearly non-square (>15% diff): sofa goes on the SHORT-LENGTH
+       walls. top/bottom walls have length=width; left/right walls have
+       length=height. So height>width → top_bottom, width>height → left_right.
+    2. If nearly square: prefer the wall-pair where the PRIMARY (sofa) wall has
+       NO door. Iterate preferred order until a door-free sofa wall is found.
+    """
+    room = _mapping_or_empty(room_model.get("room"))
+    bbox = _mapping_or_empty(room.get("bbox_mm"))
+    width = float(bbox.get("max_x", 0)) - float(bbox.get("min_x", 0))
+    height = float(bbox.get("max_y", 0)) - float(bbox.get("min_y", 0))
+    span = max(width, height, 1.0)
+
+    _SQUARE_THRESHOLD = 0.15  # rooms within 15% aspect ratio = "nearly square"
+
+    if abs(width - height) / span > _SQUARE_THRESHOLD:
+        # Clearly non-square: pick axis so sofa and TV cross the SHORTER
+        # dimension (comfortable viewing distance).  focal_axis_top_bottom has
+        # sofa face across the height; focal_axis_left_right across the width.
+        # Wide room (width > height) → cross height (short) → top_bottom.
+        # Tall room (height > width) → cross width (short) → left_right.
+        return "focal_axis_top_bottom" if width >= height else "focal_axis_left_right"
+
+    # Nearly square: break tie using door positions.
+    # Find which walls carry a door so we can put the sofa on a door-free wall.
+    openings = _mapping_or_empty(room_model.get("openings"))
+    door_walls: set[str] = set()
+    for door in _sequence_or_empty(openings.get("doors")):
+        seg = _sequence_or_empty(_mapping_or_empty(door).get("segment_mm"))
+        if len(seg) < 2:
+            continue
+        p0 = _mapping_or_empty(seg[0])
+        p1 = _mapping_or_empty(seg[1])
+        dx = abs(float(p1.get("x", 0)) - float(p0.get("x", 0)))
+        dy = abs(float(p1.get("y", 0)) - float(p0.get("y", 0)))
+        mid_x = (float(p0.get("x", 0)) + float(p1.get("x", 0))) / 2
+        mid_y = (float(p0.get("y", 0)) + float(p1.get("y", 0))) / 2
+        min_x = float(bbox.get("min_x", 0))
+        min_y = float(bbox.get("min_y", 0))
+        if dy < dx:  # horizontal door segment → top or bottom wall
+            door_walls.add("top_wall" if (mid_y - min_y) < height / 2 else "bottom_wall")
+        else:  # vertical door segment → left or right wall
+            door_walls.add("left_wall" if (mid_x - min_x) < width / 2 else "right_wall")
+
+    # Preferred order for sofa wall: choose a wall that has no door.
+    # sofa_wall maps scenario_id → which wall sofa is placed against.
+    sofa_wall: dict[str, str] = {
+        "focal_axis_top_bottom": "top_wall",
+        "focal_axis_left_right": "left_wall",
+        "focal_axis_bottom_top": "bottom_wall",
+        "focal_axis_right_left": "right_wall",
+    }
+    preferred_order = [
+        "focal_axis_top_bottom",
+        "focal_axis_left_right",
+        "focal_axis_bottom_top",
+        "focal_axis_right_left",
+    ]
+    for scenario_id in preferred_order:
+        if sofa_wall[scenario_id] not in door_walls:
+            return scenario_id
+
+    return "focal_axis_top_bottom"  # all walls have doors — fall back to default
+
+
+def _macro_scenarios_for_family(
+    family: ConceptFamily,
+    *,
+    room_model: Mapping[str, object] | None = None,
+) -> list[MacroScenario]:
     primary = _macro_scenario_for_family(family)
     if family == "focal_axis":
         # Cover all 4 axis orientations: sofa at top, bottom, left, right
-        return [
+        all_scenarios = [
             primary,  # top→bottom: sofa on top wall, TV on bottom
             MacroScenario(
                 scenario_id="focal_axis_left_right",
@@ -1802,6 +1901,12 @@ def _macro_scenarios_for_family(family: ConceptFamily) -> list[MacroScenario]:
                 support_anchor_strength="medium",
             ),
         ]
+        if room_model is not None:
+            preferred = _preferred_focal_axis_scenario(room_model)
+            all_scenarios.sort(
+                key=lambda s: (0 if s.scenario_id == preferred else 1, s.scenario_id)
+            )
+        return all_scenarios
     if family == "open_center":
         # Cover both axis orientations with open center preserved
         return [
@@ -1912,7 +2017,7 @@ def _instantiate_concept_families(
     family_scenario_pairs: list[tuple[ConceptFamily, MacroScenario]] = [
         (family, scenario)
         for family in family_order[:concept_count]
-        for scenario in _macro_scenarios_for_family(family)
+        for scenario in _macro_scenarios_for_family(family, room_model=room_model)
     ]
     for index, (family, scenario) in enumerate(family_scenario_pairs, start=1):
         family_guidance = guidance_by_family.get(family, {})

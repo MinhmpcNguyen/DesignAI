@@ -857,15 +857,19 @@ def _normalize_run_room_objects(
         )
         if catalog_payload is None and catalog_item_id is None and not primitive_render:
             continue
+        default_rotation = _default_rotation_for_object(catalog_payload, obj)
         # Use the solver's plan-bbox footprint for X/Z so the 3D render always
         # matches the floor plan, even when tier count used requested_dims_mm to
         # select a non-catalog size. Height comes from the catalog item.
+        # default_rotation is passed so that a ±90° Y-axis model rotation causes
+        # plan_x and plan_z to be swapped, matching the rotated footprint.
         size_mm = _size_mm_from_bbox(
             bbox,
             catalog_payload=catalog_payload,
             height_override_mm=_generic_visual_height_mm(obj, type_key=type_key)
             if primitive_render
             else None,
+            default_rotation=default_rotation,
         )
         size_mm = _no_stove_sink_kitchen_cabinet_size(
             catalog_payload=catalog_payload,
@@ -892,8 +896,6 @@ def _normalize_run_room_objects(
                 obj.get("object_type") or obj.get("type"),
             )
             continue
-
-        default_rotation = _default_rotation_for_object(catalog_payload, obj)
 
         # Compute the Y (vertical) base elevation.
         # For items placed on top of furniture, start at the support's surface.
@@ -1231,6 +1233,7 @@ def _size_mm_from_bbox(
     *,
     catalog_payload: dict[str, Any] | None,
     height_override_mm: float | None = None,
+    default_rotation: list[float] | None = None,
 ) -> list[float]:
     """Build output size from the solver's plan-space bbox, using catalog height.
 
@@ -1239,9 +1242,15 @@ def _size_mm_from_bbox(
     the floor-plan footprint, even when requested_dims_mm overrode the catalog
     size during tier count.  Height (Y) stays at the catalog value so the model
     looks proportionally correct vertically.
+
+    When default_rotation is a ±90° Y-axis turn, the model's local X and Z axes
+    are swapped in world space, so plan_x and plan_z must be swapped here so
+    that after the rotation the rendered footprint matches the floor-plan bbox.
     """
     plan_x = max(1.0, float(bbox["max_x"]) - float(bbox["min_x"]))
     plan_z = max(1.0, float(bbox["max_y"]) - float(bbox["min_y"]))
+    if _is_quarter_turn_y(default_rotation):
+        plan_x, plan_z = plan_z, plan_x
     height = (
         height_override_mm
         if height_override_mm is not None and height_override_mm > 0
@@ -1355,6 +1364,19 @@ def _is_quarter_turn_x(rotation: list[float] | None) -> bool:
     return (
         abs(abs(qx) - half_sqrt2) < _QUARTER_TURN_THRESHOLD
         and abs(qy) < _QUARTER_TURN_THRESHOLD
+        and abs(qz) < _QUARTER_TURN_THRESHOLD
+        and abs(abs(qw) - half_sqrt2) < _QUARTER_TURN_THRESHOLD
+    )
+
+
+def _is_quarter_turn_y(rotation: list[float] | None) -> bool:
+    if rotation is None or len(rotation) != _QUATERNION_LENGTH:
+        return False
+    qx, qy, qz, qw = rotation
+    half_sqrt2 = 0.7071067811865476
+    return (
+        abs(qx) < _QUARTER_TURN_THRESHOLD
+        and abs(abs(qy) - half_sqrt2) < _QUARTER_TURN_THRESHOLD
         and abs(qz) < _QUARTER_TURN_THRESHOLD
         and abs(abs(qw) - half_sqrt2) < _QUARTER_TURN_THRESHOLD
     )
@@ -1837,8 +1859,8 @@ def normalize_run_pipeline_result(
 )
 def normalize_run_pipeline_metrics(
     job_id: str,
+    manager: NormalizeRunJobManagerDep,
     expected: dict[str, Any] = Body(default={}),
-    manager: NormalizeRunJobManagerDep = Depends(get_normalize_run_job_manager),
 ) -> dict[str, Any]:
     from pipeline.metrics_eval import compute_metrics  # local import to avoid circular
 
