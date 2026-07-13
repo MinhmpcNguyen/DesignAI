@@ -1,0 +1,2376 @@
+{
+  "version": 1,
+  "exported_at": "2026-07-13T09:43:30.319Z",
+  "cases": {
+    "ngu|1.3,1.2|1.3,4.4|-2.2,4.4|-2.2,1.9|-2.7,1.9|-2.7,1.2": {
+      "roomKey": "-0.5:3",
+      "roomName": "Phòng ngủ",
+      "description": "Phòng ngủ đầy đủ đồ có giường đơn 1.9m x 1.2m; tủ quần áo 1.6m x 0.6m; 1 đầu giường 0.45m x 0.4m; 1 bàn học 1.2m x 0.6m và ghế 0.5m x 0.5m. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh. ",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "desk",
+          "chair"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            1900,
+            1200
+          ],
+          "wardrobe": [
+            1600,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "desk": [
+            1200,
+            600
+          ],
+          "chair": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          }
+        ]
+      }
+    },
+    "ngu|2.1,-2|1.3,-2|-1.9,-2|-1.9,-5.5|-1.3,-5.5|2.1,-5.5": {
+      "roomKey": "0:-3.5",
+      "roomName": "Phòng master",
+      "description": "Phòng ngủ chính đầy đủ đồ có giường đôi 2.0m x 1.5m; tủ quần áo 1.6m x 0.6m; 2 đầu giường 0.45m x 0.4m; 1 bàn học 1.0m x 0.5m và ghế; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường. ",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "desk",
+          "chair",
+          "floor_lamp"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2000,
+            1500
+          ],
+          "wardrobe": [
+            1600,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "desk": [
+            1000,
+            500
+          ],
+          "chair": [
+            500,
+            500
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          }
+        ]
+      }
+    },
+    "sinh_hoat|-8,-0.8|-6.5,-0.8|-2.002,-0.8|-2,1.5|-0.2,1.5|3.5,1.5|3.5,5|-7.998,5": {
+      "roomKey": "-3:2.5",
+      "roomName": "Phòng khách, Ăn + Bếp + KHông gian chung",
+      "description": "Phòng khách + bếp + ăn đầy đủ đồ có sofa 3.0m x 1.8m màu ghi; kệ TV 1.9m x 0.45m; bàn trà 1.3m x 0.7m; 2 ghế armchair 0.85m x 0.85m; 1 bàn đầu sofa 0.45m x 0.45m; 1 đèn sàn; 1 kệ sách 0.8m x 0.35m; 1 bàn ăn 2.0m x 0.9m cùng 6 ghế ăn; tủ bếp 4.5m x 0.6m. Sofa đặt sát tường dài hướng về TV; bàn trà đặt giữa sofa và kệ TV; ghế armchair đặt bên cạnh sofa; bàn ăn đặt gần khu bếp; tủ bếp đặt sát tường bếp.",
+      "expected": {
+        "required_objects": [
+          "sofa",
+          "tv_console",
+          "coffee_table",
+          "armchair",
+          "sofa_tab",
+          "floor_lamp",
+          "bookshelf",
+          "dining_table",
+          "dining_chair",
+          "kitchen_base_cabinet"
+        ],
+        "count_ranges": {
+          "sofa": {
+            "min": 1,
+            "max": 1
+          },
+          "tv_console": {
+            "min": 1,
+            "max": 1
+          },
+          "coffee_table": {
+            "min": 1,
+            "max": 1
+          },
+          "armchair": {
+            "min": 1,
+            "max": 2
+          },
+          "sofa_tab": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          },
+          "bookshelf": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_table": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_chair": {
+            "min": 1,
+            "max": 6
+          },
+          "kitchen_base_cabinet": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "sofa": [
+            3000,
+            1800
+          ],
+          "tv_console": [
+            1900,
+            450
+          ],
+          "coffee_table": [
+            1300,
+            700
+          ],
+          "armchair": [
+            850,
+            850
+          ],
+          "sofa_tab": [
+            450,
+            450
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ],
+          "bookshelf": [
+            800,
+            350
+          ],
+          "dining_table": [
+            2000,
+            900
+          ],
+          "dining_chair": [
+            500,
+            500
+          ],
+          "kitchen_base_cabinet": [
+            4500,
+            600
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "min_distance_mm": 500,
+            "label": "sofa_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "tv_console"
+            ],
+            "min_distance_mm": 300,
+            "label": "tv_console_away_from_door"
+          },
+          {
+            "type": "prefer_near_opening",
+            "target_types": [
+              "dining_table"
+            ],
+            "max_distance_mm": 2500,
+            "label": "dining_table_near_window"
+          }
+        ]
+      }
+    },
+    "ngu|-6.5,-3.5|1.5,-3.5|1.5,-2|-0.2,-2|-0.2,-0.8|-2.002,-0.8|-6.5,-0.8": {
+      "roomKey": "-3:-2",
+      "roomName": "Phòng ngủ 2",
+      "description": "Phòng ngủ đầy đủ đồ có giường đôi queen 1.9m x 1.8m; tủ quần áo 1.8m x 0.65m; 2 đầu giường 0.45m x 0.4m; 1 tủ ngăn kéo 0.9m x 0.45m; 1 bàn học 1.2m x 0.6m và ghế 0.5m x 0.5m; 1 kệ sách 0.8m x 0.35m; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ. ",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "chest_of_drawers",
+          "desk",
+          "chair",
+          "bookshelf",
+          "floor_lamp"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          },
+          "chest_of_drawers": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          },
+          "bookshelf": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            1900,
+            1800
+          ],
+          "wardrobe": [
+            1800,
+            650
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "chest_of_drawers": [
+            900,
+            450
+          ],
+          "desk": [
+            1200,
+            600
+          ],
+          "chair": [
+            500,
+            500
+          ],
+          "bookshelf": [
+            800,
+            350
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "chest_of_drawers",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_chest_of_drawers"
+          }
+        ]
+      }
+    },
+    "ngu|-0.2,-2|1.5,-2|5,-1.996|5,1.504|3.5,1.5|-0.2,1.5|-0.2,-0.8": {
+      "roomKey": "2.5:0",
+      "roomName": "Phòng ngủ 1",
+      "description": "Phòng ngủ đầy đủ đồ có giường đôi queen 2.1m x 1.8m; tủ quần áo 2.4m x 0.65m; 2 đầu giường 0.45m x 0.4m; 1 tủ ngăn kéo 0.9m x 0.45m; 1 bàn học 1.5m x 0.6m và ghế 0.5m x 0.5m; 1 kệ sách 1.8m x 0.35m; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ.",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "chest_of_drawers",
+          "desk",
+          "chair",
+          "bookshelf",
+          "floor_lamp"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          },
+          "chest_of_drawers": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          },
+          "bookshelf": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2100,
+            1800
+          ],
+          "wardrobe": [
+            2400,
+            650
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "chest_of_drawers": [
+            900,
+            450
+          ],
+          "desk": [
+            1500,
+            600
+          ],
+          "chair": [
+            500,
+            500
+          ],
+          "bookshelf": [
+            1800,
+            350
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "chest_of_drawers",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_chest_of_drawers"
+          }
+        ]
+      }
+    },
+    "sinh_hoat|-8.2,2.6|-8.1,-4|-5,-4|-4.1,-4|-1.3,-4|-1.302,-0.5|0.6,-0.5|0.6,0.5|-4,0.5|-4,5|-6.5,5|-6.5,2.6": {
+      "roomKey": "-5:-0.5",
+      "roomName": "Phòng khách, Ăn + Bếp + Không gian chùn",
+      "description": "Phòng khách + bếp + ăn đầy đủ đồ có sofa 2.6m x 1.6m; kệ TV 1.9m x 0.45m; bàn trà 1.1m x 0.6m; 1 ghế armchair 0.85m x 0.85m; 1 bàn đầu sofa 0.45m x 0.45m; 1 đèn sàn; 1 kệ sách 0.8m x 0.35m; 1 bàn ăn 1.8m x 0.9m cùng 6 ghế ăn; tủ bếp 5.0m x 0.6m . Sofa đặt sát tường dài hướng về TV; bàn trà đặt giữa sofa và kệ TV; ghế armchair đặt bên cạnh sofa; bàn ăn đặt gần khu bếp; tủ bếp đặt sát tường. ",
+      "expected": {
+        "required_objects": [
+          "sofa",
+          "tv_console",
+          "coffee_table",
+          "armchair",
+          "sofa_tab",
+          "floor_lamp",
+          "bookshelf",
+          "dining_table",
+          "dining_chair",
+          "kitchen_base_cabinet"
+        ],
+        "count_ranges": {
+          "sofa": {
+            "min": 1,
+            "max": 1
+          },
+          "tv_console": {
+            "min": 1,
+            "max": 1
+          },
+          "coffee_table": {
+            "min": 1,
+            "max": 1
+          },
+          "armchair": {
+            "min": 1,
+            "max": 1
+          },
+          "sofa_tab": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          },
+          "bookshelf": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_table": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_chair": {
+            "min": 1,
+            "max": 6
+          },
+          "kitchen_base_cabinet": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "sofa": [
+            2600,
+            1600
+          ],
+          "tv_console": [
+            1900,
+            450
+          ],
+          "coffee_table": [
+            1100,
+            600
+          ],
+          "armchair": [
+            850,
+            850
+          ],
+          "sofa_tab": [
+            450,
+            450
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ],
+          "bookshelf": [
+            800,
+            350
+          ],
+          "dining_table": [
+            1800,
+            900
+          ],
+          "dining_chair": [
+            500,
+            500
+          ],
+          "kitchen_base_cabinet": [
+            5000,
+            600
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "min_distance_mm": 500,
+            "label": "sofa_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "tv_console"
+            ],
+            "min_distance_mm": 300,
+            "label": "tv_console_away_from_door"
+          },
+          {
+            "type": "prefer_near_opening",
+            "target_types": [
+              "dining_table"
+            ],
+            "max_distance_mm": 2500,
+            "label": "dining_table_near_window"
+          }
+        ]
+      }
+    },
+    "ngu|-1.302,-0.5|-1.3,-4|-1.3,-5|1.5,-5|1.5,-0.5|0.6,-0.5": {
+      "roomKey": "0:-2.5",
+      "roomName": "Phòng ngủ 2",
+      "description": "Phòng ngủ đầy đủ đồ có giường đôi 2.0m x 1.5m; tủ quần áo 1.5m x 0.6m; 2 đầu giường 0.45m x 0.4m; 1 bàn học 1.0m x 0.5m và ghế; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường. ",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "desk",
+          "chair",
+          "floor_lamp"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2000,
+            1500
+          ],
+          "wardrobe": [
+            1500,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "desk": [
+            1000,
+            500
+          ],
+          "chair": [
+            500,
+            500
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          }
+        ]
+      }
+    },
+    "ngu|0.6,-0.5|1.5,-0.5|1.5,-5|5,-5|5,-0.8|2.4,-0.798|2.4,0.5|0.6,0.5": {
+      "roomKey": "3:-2.5",
+      "roomName": "Phòng ngủ 1",
+      "description": "Phòng ngủ đầy đủ đồ có giường đôi queen 2.0m x 1.8m; tủ quần áo 1.8m x 0.6m; 1 đầu giường 0.45m x 0.4m; 1 tủ ngăn kéo 0.9m x 0.45m; 1 bàn học 1.2m x 0.6m và ghế 0.5m x 0.5m; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ. ",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "chest_of_drawers",
+          "desk",
+          "chair",
+          "floor_lamp"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 1
+          },
+          "chest_of_drawers": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2000,
+            1800
+          ],
+          "wardrobe": [
+            1800,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "chest_of_drawers": [
+            900,
+            450
+          ],
+          "desk": [
+            1200,
+            600
+          ],
+          "chair": [
+            500,
+            500
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "chest_of_drawers",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_chest_of_drawers"
+          }
+        ]
+      }
+    },
+    "sinh_hoat|-8,-0.8|-6.5,-0.8|-2.002,-0.8|-0.2,-0.8|-0.2,1.5|3.5,1.5|3.5,5|-6.5,5|-6.5,2.3|-8,2.3": {
+      "roomKey": "-2.5:2.5",
+      "roomName": "Phòng khách, Ăn + Bếp + Không gian chung",
+      "description": "Phòng khách + bếp + ăn đầy đủ đồ có sofa 3.0m x 1.8m màu ghi; kệ TV 1.9m x 0.45m; bàn trà 1.3m x 0.7m; 2 ghế armchair 0.85m x 0.85m; 1 bàn đầu sofa 0.45m x 0.45m; 1 đèn sàn; 1 kệ sách 0.8m x 0.35m; 1 bàn ăn 2.0m x 0.9m cùng 6 ghế ăn; tủ bếp 4.5m x 0.6m. Sofa đặt hướng về TV; bàn trà đặt giữa sofa và kệ TV; ghế armchair đặt bên cạnh sofa; bàn ăn đặt gần khu bếp; tủ bếp đặt sát tường bếp.",
+      "expected": {
+        "required_objects": [
+          "sofa",
+          "tv_console",
+          "coffee_table",
+          "armchair",
+          "sofa_tab",
+          "floor_lamp",
+          "bookshelf",
+          "dining_table",
+          "dining_chair",
+          "kitchen_base_cabinet"
+        ],
+        "count_ranges": {
+          "sofa": {
+            "min": 1,
+            "max": 1
+          },
+          "tv_console": {
+            "min": 1,
+            "max": 1
+          },
+          "coffee_table": {
+            "min": 1,
+            "max": 1
+          },
+          "armchair": {
+            "min": 1,
+            "max": 2
+          },
+          "sofa_tab": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          },
+          "bookshelf": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_table": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_chair": {
+            "min": 1,
+            "max": 6
+          },
+          "kitchen_base_cabinet": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "sofa": [
+            3000,
+            1800
+          ],
+          "tv_console": [
+            1900,
+            450
+          ],
+          "coffee_table": [
+            1300,
+            700
+          ],
+          "armchair": [
+            850,
+            850
+          ],
+          "sofa_tab": [
+            450,
+            450
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ],
+          "bookshelf": [
+            800,
+            350
+          ],
+          "dining_table": [
+            2000,
+            900
+          ],
+          "dining_chair": [
+            500,
+            500
+          ],
+          "kitchen_base_cabinet": [
+            4500,
+            600
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "min_distance_mm": 500,
+            "label": "sofa_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "tv_console"
+            ],
+            "min_distance_mm": 300,
+            "label": "tv_console_away_from_door"
+          },
+          {
+            "type": "prefer_near_opening",
+            "target_types": [
+              "dining_table"
+            ],
+            "max_distance_mm": 2500,
+            "label": "dining_table_near_window"
+          }
+        ]
+      }
+    },
+    "ngu|-5,-5|-2,-5|-2,-1.6|-2,-0.5|-3.3,-0.5|-3.302,-1.6|-5,-1.6": {
+      "roomKey": "-3.5:-3",
+      "roomName": "Phòng ngủ 1",
+      "description": "Phòng ngủ đầy đủ đồ có giường đơn 1.9m x 1.2m; tủ quần áo 1.5m x 0.6m; 1 đầu giường 0.45m x 0.4m; 1 bàn học 1.2m x 0.6m và ghế 0.5m x 0.5m; Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh, đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ.",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "desk",
+          "chair"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            1900,
+            1200
+          ],
+          "wardrobe": [
+            1500,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "desk": [
+            1200,
+            600
+          ],
+          "chair": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          }
+        ]
+      }
+    },
+    "ngu|-2,-5|1.5,-5|1.5,-3.998|1.5,-1.6|-2,-1.6": {
+      "roomKey": "0:-3.5",
+      "roomName": "Room",
+      "description": "Phòng ngủ đầy đủ đồ có giường đơn 1.9m x 1.2m tủ quần áo 1.2m x 0.6m; 1 đầu giường 0.45m x 0.4m; 1 bàn học 1.2m x 0.6m và ghế 0.5m x 0.5m. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ.",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "desk",
+          "chair"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            1900,
+            1200
+          ],
+          "wardrobe": [
+            1200,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "desk": [
+            1200,
+            600
+          ],
+          "chair": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          }
+        ]
+      }
+    },
+    "sinh_hoat|-3.3,-0.5|-2,-0.5|-2,-1.6|1.5,-1.6|1.5,-3.998|7.7,-4|7.7,0.9|-2,0.9|-2,2.9|-3.3,2.9|-3.3,0.9": {
+      "roomKey": "3:-1",
+      "roomName": "Phòng khách + Bếp + Không gian chung",
+      "description": "Phòng khách + bếp + ăn đầy đủ đồ có sofa 2.6m x 1.6m; kệ TV 1.9m x 0.45m; bàn trà 1.1m x 0.6m; 1 ghế armchair 0.85m x 0.85m; 1 bàn đầu sofa 0.45m x 0.45m; 1 đèn sàn; 1 kệ sách 0.8m x 0.35m; 1 bàn ăn 1.8m x 0.9m cùng 6 ghế ăn; 2 tủ bếp 3.0m x 0.6m. Sofa đặt sát tường dài hướng về TV; bàn trà đặt giữa sofa và kệ TV; ghế armchair đặt bên cạnh sofa; bàn ăn đặt gần khu bếp; tủ bếp đặt sát tường. ",
+      "expected": {
+        "required_objects": [
+          "sofa",
+          "tv_console",
+          "coffee_table",
+          "armchair",
+          "sofa_tab",
+          "floor_lamp",
+          "bookshelf",
+          "dining_table",
+          "dining_chair",
+          "kitchen_base_cabinet"
+        ],
+        "count_ranges": {
+          "sofa": {
+            "min": 1,
+            "max": 1
+          },
+          "tv_console": {
+            "min": 1,
+            "max": 1
+          },
+          "coffee_table": {
+            "min": 1,
+            "max": 1
+          },
+          "armchair": {
+            "min": 1,
+            "max": 1
+          },
+          "sofa_tab": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          },
+          "bookshelf": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_table": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_chair": {
+            "min": 1,
+            "max": 6
+          },
+          "kitchen_base_cabinet": {
+            "min": 1,
+            "max": 2
+          }
+        },
+        "object_sizes": {
+          "sofa": [
+            2600,
+            1600
+          ],
+          "tv_console": [
+            1900,
+            450
+          ],
+          "coffee_table": [
+            1100,
+            600
+          ],
+          "armchair": [
+            850,
+            850
+          ],
+          "sofa_tab": [
+            450,
+            450
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ],
+          "bookshelf": [
+            800,
+            350
+          ],
+          "dining_table": [
+            1800,
+            900
+          ],
+          "dining_chair": [
+            500,
+            500
+          ],
+          "kitchen_base_cabinet": [
+            3000,
+            600
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "min_distance_mm": 500,
+            "label": "sofa_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "tv_console"
+            ],
+            "min_distance_mm": 300,
+            "label": "tv_console_away_from_door"
+          },
+          {
+            "type": "prefer_near_opening",
+            "target_types": [
+              "dining_table"
+            ],
+            "max_distance_mm": 2500,
+            "label": "dining_table_near_window"
+          }
+        ]
+      }
+    },
+    "ngu|-5.1,-1.9|-3.1,-1.9|-3.1,-0.7|-1.002,-0.7|-1,1.5|-1,2|-3.1,2|-5.1,2": {
+      "roomKey": "-3:0.5",
+      "roomName": "Phòng ngủ chính",
+      "description": "Phòng ngủ chính đầy đủ đồ có giường đôi 2.0m x 1.5m; tủ quần áo 1.2m x 0.6m; 2 đầu giường 0.45m x 0.4m; 1 bàn học 1.2m x 0.5m và ghế; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ.",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "desk",
+          "chair",
+          "floor_lamp"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2000,
+            1500
+          ],
+          "wardrobe": [
+            1200,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "desk": [
+            1200,
+            500
+          ],
+          "chair": [
+            500,
+            500
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          }
+        ]
+      }
+    },
+    "ngu|-3.1,-3.9|0.3,-3.9|0.3,-0.7|-1.002,-0.7|-3.1,-0.7|-3.1,-1.9": {
+      "roomKey": "-1.5:-2.5",
+      "roomName": "Phòng ngủ 2",
+      "description": "Phòng ngủ đầy đủ đồ có giường đơn 1.9m x 0.95m; tủ quần áo 1.2m x 0.6m; 1 đầu giường 0.45m x 0.4m; 1 bàn học 1.2m x 0.5m và ghế. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ.  ",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "desk",
+          "chair"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            1900,
+            950
+          ],
+          "wardrobe": [
+            1200,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "desk": [
+            1200,
+            500
+          ],
+          "chair": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          }
+        ]
+      }
+    },
+    "sinh_hoat|-1.002,-0.7|0.3,-0.7|0.3,-3.9|5,-3.9|5,3.9|1.6,3.9|1.6,1.5|0.3,1.5|-1,1.5": {
+      "roomKey": "2.5:0",
+      "roomName": "Phòng sinh hoạt",
+      "description": "Phòng khách đầy đủ đồ có sofa 3.0m x 1.6m; kệ TV 1.9m x 0.45m; bàn trà 1.2m x 0.6m; 1 ghế armchair 0.85m x 0.85m; 2 bàn đầu sofa 0.45m x 0.45m; 1 đèn sàn; 1 kệ sách 0.8m x 0.35m. Sofa đặt sát tường dài hướng về TV; bàn trà đặt giữa sofa và kệ TV; ghế armchair đặt bên cạnh sofa. ",
+      "expected": {
+        "required_objects": [
+          "sofa",
+          "tv_console",
+          "coffee_table",
+          "armchair",
+          "sofa_tab",
+          "floor_lamp",
+          "bookshelf"
+        ],
+        "count_ranges": {
+          "sofa": {
+            "min": 1,
+            "max": 1
+          },
+          "tv_console": {
+            "min": 1,
+            "max": 1
+          },
+          "coffee_table": {
+            "min": 1,
+            "max": 1
+          },
+          "armchair": {
+            "min": 1,
+            "max": 1
+          },
+          "sofa_tab": {
+            "min": 1,
+            "max": 2
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          },
+          "bookshelf": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "sofa": [
+            3000,
+            1600
+          ],
+          "tv_console": [
+            1900,
+            450
+          ],
+          "coffee_table": [
+            1200,
+            600
+          ],
+          "armchair": [
+            850,
+            850
+          ],
+          "sofa_tab": [
+            450,
+            450
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ],
+          "bookshelf": [
+            800,
+            350
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "min_distance_mm": 500,
+            "label": "sofa_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "tv_console"
+            ],
+            "min_distance_mm": 300,
+            "label": "tv_console_away_from_door"
+          },
+          {
+            "type": "prefer_near_opening",
+            "target_types": [
+              "dining_table"
+            ],
+            "max_distance_mm": 2500,
+            "label": "dining_table_near_window"
+          }
+        ]
+      }
+    },
+    "ngu|-5.5,-3|-3.402,-3|-3.4,-2.2|-2,-2.2|-2,-0.8|-2.5,-0.8|-2.5,2.3|-3.5,2.3|-5.5,2.3": {
+      "roomKey": "-4:-0.5",
+      "roomName": "Phòng ngủ chính",
+      "description": "Phòng ngủ chính đầy đủ đồ có giường đôi queen 2.1m x 1.8m; tủ quần áo 2.0m x 0.65m; 2 đầu giường 0.45m x 0.4m; 1 tủ ngăn kéo 0.9m x 0.45m; 1 bàn học 1.5m x 0.6m và ghế 0.5m x 0.5m; 1 kệ sách 0.8m x 0.35m; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ. Chi phí tối đa 45 triệu.",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "chest_of_drawers",
+          "desk",
+          "chair",
+          "bookshelf",
+          "floor_lamp"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          },
+          "chest_of_drawers": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          },
+          "bookshelf": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2100,
+            1800
+          ],
+          "wardrobe": [
+            2000,
+            650
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "chest_of_drawers": [
+            900,
+            450
+          ],
+          "desk": [
+            1500,
+            600
+          ],
+          "chair": [
+            500,
+            500
+          ],
+          "bookshelf": [
+            800,
+            350
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "chest_of_drawers",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_chest_of_drawers"
+          }
+        ]
+      }
+    },
+    "ngu|-3.402,-3|-3.4,-5|0,-5|0,-2.2|-2,-2.2|-3.4,-2.2": {
+      "roomKey": "-1.5:-3.5",
+      "roomName": "Phòng ngủ 2",
+      "description": "Phòng ngủ đầy đủ đồ có giường đơn 1.9m x 0.95m; tủ quần áo 1.2m x 0.6m; 1 đầu giường 0.45m x 0.4m; 1 bàn học 1.2m x 0.5m và ghế. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ.  ",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "desk",
+          "chair"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            1900,
+            950
+          ],
+          "wardrobe": [
+            1200,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "desk": [
+            1200,
+            500
+          ],
+          "chair": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          }
+        ]
+      }
+    },
+    "ngu|-3.5,2.3|-2.5,2.3|0.2,2.3|0.2,5|-3.5,5": {
+      "roomKey": "-1.5:3.5",
+      "roomName": "Phòng ngủ 3",
+      "description": "Phòng ngủ đầy đủ đồ có giường đơn 1.9m x 0.95m; tủ quần áo 1.2m x 0.6m; 1 đầu giường 0.45m x 0.4m; 1 bàn học 1.2m x 0.5m và ghế. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ.  ",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand",
+          "desk",
+          "chair"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 1
+          },
+          "desk": {
+            "min": 1,
+            "max": 1
+          },
+          "chair": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            1900,
+            950
+          ],
+          "wardrobe": [
+            1200,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ],
+          "desk": [
+            1200,
+            500
+          ],
+          "chair": [
+            500,
+            500
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 500,
+            "label": "wardrobe_away_from_door"
+          },
+          {
+            "type": "avoid_front_zone",
+            "source_type": "wardrobe",
+            "target_types": [
+              "any"
+            ],
+            "min_distance_mm": 500,
+            "label": "clearance_in_front_of_wardrobe"
+          }
+        ]
+      }
+    },
+    "sinh_hoat|-2.5,-0.8|-2,-0.8|-2,-2.2|0,-2.2|0,-5|3.498,-5|3.5,2.3|1.8,2.3|1.8,5|0.2,5|0.2,2.3|-2.5,2.3": {
+      "roomKey": "1:-0.5",
+      "roomName": "Phòng sinh hoạt + bếp",
+      "description": "Phòng khách + bếp + ăn đầy đủ đồ có sofa 2.6m x 1.3m; kệ TV 1.6m x 0.4m; bàn trà 1.1m x 0.5m; 1 ghế armchair 0.85m x 0.85m; 1 bàn đầu sofa 0.45m x 0.45m; 1 đèn sàn; 1 kệ sách 0.8m x 0.35m; 1 bàn ăn 1.5m x 0.9m cùng 4 ghế ăn; 2 tủ bếp 3.0m x 0.6m. Sofa đặt sát tường dài hướng về TV; bàn trà đặt giữa sofa và kệ TV; ghế armchair đặt bên cạnh sofa; bàn ăn đặt gần khu bếp; tủ bếp đặt sát tường. ",
+      "expected": {
+        "required_objects": [
+          "sofa",
+          "tv_console",
+          "coffee_table",
+          "armchair",
+          "sofa_tab",
+          "floor_lamp",
+          "bookshelf",
+          "dining_table",
+          "dining_chair",
+          "kitchen_base_cabinet"
+        ],
+        "count_ranges": {
+          "sofa": {
+            "min": 1,
+            "max": 1
+          },
+          "tv_console": {
+            "min": 1,
+            "max": 1
+          },
+          "coffee_table": {
+            "min": 1,
+            "max": 1
+          },
+          "armchair": {
+            "min": 1,
+            "max": 1
+          },
+          "sofa_tab": {
+            "min": 1,
+            "max": 1
+          },
+          "floor_lamp": {
+            "min": 1,
+            "max": 1
+          },
+          "bookshelf": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_table": {
+            "min": 1,
+            "max": 1
+          },
+          "dining_chair": {
+            "min": 1,
+            "max": 4
+          },
+          "kitchen_base_cabinet": {
+            "min": 1,
+            "max": 2
+          }
+        },
+        "object_sizes": {
+          "sofa": [
+            2600,
+            1300
+          ],
+          "tv_console": [
+            1600,
+            400
+          ],
+          "coffee_table": [
+            1100,
+            500
+          ],
+          "armchair": [
+            850,
+            850
+          ],
+          "sofa_tab": [
+            450,
+            450
+          ],
+          "floor_lamp": [
+            500,
+            500
+          ],
+          "bookshelf": [
+            800,
+            350
+          ],
+          "dining_table": [
+            1500,
+            900
+          ],
+          "dining_chair": [
+            500,
+            500
+          ],
+          "kitchen_base_cabinet": [
+            3000,
+            600
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "min_distance_mm": 500,
+            "label": "sofa_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "tv_console"
+            ],
+            "min_distance_mm": 300,
+            "label": "tv_console_away_from_door"
+          },
+          {
+            "type": "prefer_near_opening",
+            "target_types": [
+              "dining_table"
+            ],
+            "max_distance_mm": 2500,
+            "label": "dining_table_near_window"
+          }
+        ]
+      }
+    },
+    "sinh_hoat|-3.388,3.216|-3.312,-4.808|0.5,-4.8|0.5,-1.2|3.9,-1.2|3.9,0.2|0.5,0.2|0.5,3.2": {
+      "roomKey": "-1:-0.5",
+      "roomName": "Room",
+      "description": "Phòng khách đầy đủ đồ có sofa chữ L 2.6m x 1.6m màu kem; kệ TV 1.4m x 0.4m; bàn trà 1.0m x 0.6m; 1 ghế armchair 0.85m x 0.85m; thảm 1.6m x 2.4m; 2 bàn đầu sofa 0.45m x 0.45m; 1 đèn sàn; 1 kệ sách 0.8m x 0.35m. Sofa đặt sát tường dài hướng về TV; bàn trà đặt giữa sofa và kệ TV; ghế armchair đặt bên cạnh sofa. Chi phí tối đa 55 triệu.",
+      "expected": {
+        "required_objects": [
+          "sofa",
+          "tv_console",
+          "coffee_table"
+        ],
+        "count_ranges": {
+          "sofa": {
+            "min": 1,
+            "max": 2
+          },
+          "tv_console": {
+            "min": 1,
+            "max": 1
+          },
+          "coffee_table": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "sofa": [
+            2600,
+            1600
+          ],
+          "tv_console": [
+            1400,
+            400
+          ],
+          "coffee_table": [
+            1000,
+            600
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "min_distance_mm": 500,
+            "label": "sofa_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "tv_console"
+            ],
+            "min_distance_mm": 300,
+            "label": "tv_console_away_from_door"
+          }
+        ]
+      }
+    },
+    "sinh_hoat|5.5,-2.4|5.5,0.9|7.3,0.9|7.3,2.4|5.5,2.4|5.5,6.8|1.4,6.8|1.4,-2.4": {
+      "roomKey": "3.5:2",
+      "roomName": "Room",
+      "description": "Phòng khách đầy đủ đồ có sofa chữ L 2.6m x 1.6m màu xanh navy; kệ TV 1.6m x 0.4m; bàn trà 1.1m x 0.6m; 1 ghế armchair 0.85m x 0.85m; thảm 2.0m x 3.0m; 2 bàn đầu sofa 0.45m x 0.45m; 1 đèn sàn; 1 kệ sách 0.8m x 0.35m. Sofa đặt sát tường dài hướng về TV; bàn trà đặt giữa sofa và kệ TV; ghế armchair đặt bên cạnh sofa. Chi phí tối đa 65 triệu.",
+      "expected": {
+        "required_objects": [
+          "sofa",
+          "tv_console",
+          "coffee_table"
+        ],
+        "count_ranges": {
+          "sofa": {
+            "min": 1,
+            "max": 2
+          },
+          "tv_console": {
+            "min": 1,
+            "max": 1
+          },
+          "coffee_table": {
+            "min": 1,
+            "max": 1
+          }
+        },
+        "object_sizes": {
+          "sofa": [
+            2600,
+            1600
+          ],
+          "tv_console": [
+            1600,
+            400
+          ],
+          "coffee_table": [
+            1100,
+            600
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "sofa",
+              "sectional_sofa"
+            ],
+            "min_distance_mm": 500,
+            "label": "sofa_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "tv_console"
+            ],
+            "min_distance_mm": 300,
+            "label": "tv_console_away_from_door"
+          }
+        ]
+      }
+    },
+    "ngu|3.6,-1.1|3.6,2.7|0.013,2.7|0,-1.1": {
+      "roomKey": "2:1",
+      "roomName": "Room",
+      "description": "Phòng ngủ đầy đủ đồ có giường đôi 2.0m x 1.5m; tủ quần áo 1.2m x 0.6m; 2 đầu giường 0.45m x 0.4m; 1 bàn học 1.0m x 0.5m và ghế; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường. Chi phí tối đa 35 triệu.",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2000,
+            1500
+          ],
+          "wardrobe": [
+            1200,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 200,
+            "label": "wardrobe_away_from_door"
+          }
+        ]
+      }
+    },
+    "ngu|-2.1,-2.3|1.842,-2.246|1.842,2.554|-2.1,2.5": {
+      "roomKey": "0:0",
+      "roomName": "Room",
+      "description": "Phòng ngủ đầy đủ đồ có giường đôi queen 2.1m x 1.8m; tủ quần áo 1.8m x 0.65m; 2 đầu giường 0.45m x 0.4m; 1 tủ ngăn kéo 0.9m x 0.45m; 1 bàn học 1.2m x 0.6m và ghế 0.5m x 0.5m; 1 kệ sách 0.8m x 0.35m; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ. Chi phí tối đa 45 triệu.",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2100,
+            1800
+          ],
+          "wardrobe": [
+            1800,
+            650
+          ],
+          "nightstand": [
+            450,
+            400
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 200,
+            "label": "wardrobe_away_from_door"
+          }
+        ]
+      }
+    },
+    "ngu|-0.708,-1.308|2.9,-1.2|2.899,3.417|-0.708,3.32": {
+      "roomKey": "1:1",
+      "roomName": "Room",
+      "description": "Phòng ngủ đầy đủ đồ có giường đôi queen 2.1m x 1.8m; tủ quần áo 1.8m x 0.65m; 2 đầu giường 0.45m x 0.4m; 1 tủ ngăn kéo 0.9m x 0.45m; 1 bàn học 1.2m x 0.6m và ghế 0.5m x 0.5m; 1 kệ sách 0.8m x 0.35m; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường; bàn học đặt gần cửa sổ. Chi phí tối đa 45 triệu.",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2100,
+            1800
+          ],
+          "wardrobe": [
+            1800,
+            650
+          ],
+          "nightstand": [
+            450,
+            400
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 200,
+            "label": "wardrobe_away_from_door"
+          }
+        ]
+      }
+    },
+    "ngu|-2.3,-2.1|1.8,-2.1|1.781,1.495|-2.286,1.505": {
+      "roomKey": "-0.5:-0.5",
+      "roomName": "Room",
+      "description": "Phòng ngủ đầy đủ đồ có giường đôi 2.0m x 1.5m; tủ quần áo 1.2m x 0.6m; 2 đầu giường 0.45m x 0.4m; 1 bàn học 1.0m x 0.5m và ghế; 1 đèn sàn. Giường đặt sát tường chính giữa phòng; tủ quần áo đặt sát tường cạnh; đầu giường đặt hai bên giường. Chi phí tối đa 35 triệu.",
+      "expected": {
+        "required_objects": [
+          "bed",
+          "wardrobe",
+          "nightstand"
+        ],
+        "count_ranges": {
+          "bed": {
+            "min": 1,
+            "max": 1
+          },
+          "wardrobe": {
+            "min": 1,
+            "max": 1
+          },
+          "nightstand": {
+            "min": 1,
+            "max": 2
+          }
+        },
+        "object_sizes": {
+          "bed": [
+            2000,
+            1500
+          ],
+          "wardrobe": [
+            1200,
+            600
+          ],
+          "nightstand": [
+            450,
+            400
+          ]
+        },
+        "relations": [
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "bed"
+            ],
+            "min_distance_mm": 900,
+            "label": "bed_away_from_door"
+          },
+          {
+            "type": "avoid_near_opening",
+            "target_types": [
+              "wardrobe"
+            ],
+            "min_distance_mm": 200,
+            "label": "wardrobe_away_from_door"
+          }
+        ]
+      }
+    }
+  }
+}
