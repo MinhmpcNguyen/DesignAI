@@ -1,0 +1,137 @@
+authentication:
+  api_key:
+    name: "X-API-KEY"
+    value: "${TKNT_API_KEY}"
+
+services:
+  semantic_search:
+    enabled: false
+
+  pydantic_ai:
+    agents:
+      normalize_run:
+        model: "gpt-5.4-mini"
+        output_mode: "json"
+        retries: 1
+
+  openai:
+    enabled: true
+    azure: false
+    api_version: "2024-08-01-preview"
+    api_key: "${OPENAI_API_KEY}"
+    public_key: "${OPENAI_PUBLIC_KEY}"
+    private_key_file: "${OPENAI_PRIVATE_KEY_FILE}"
+    base_url: "${OPENAI_BASE_URL}"
+    models:
+      primary:
+        name: "gpt-5.4-mini"
+      helper:
+        name: "gpt-5.4-mini"
+    agent_models:
+      forge:
+        name: "gpt-5.4-mini"
+      planner:
+        name: "gpt-5.4-mini"
+      planner_adaptive_room_rule_primary:
+        name: "gpt-5.4-mini"
+      planner_adaptive_room_rule_fallback_primary:
+        name: "gpt-5.4-mini"
+      planner_adaptive_room_rule_fallback_secondary:
+        name: "gpt-5.4-mini"
+      planner_adaptive_candidate_overrides_primary:
+        name: "gpt-5.4-mini"
+      planner_adaptive_candidate_overrides_fallback_primary:
+        name: "gpt-5.4-mini"
+      planner_adaptive_candidate_overrides_fallback_secondary:
+        name: "gpt-5.4-mini"
+      planner_adaptive_cluster_semantics_primary:
+        name: "gpt-5.4-mini"
+      planner_adaptive_cluster_semantics_fallback_primary:
+        name: "gpt-5.4-mini"
+      planner_adaptive_cluster_semantics_fallback_secondary:
+        name: "gpt-5.4-mini"
+      relation_planner_macro_concept_guidance_primary:
+        name: "gpt-5.4-mini"
+      relation_planner_macro_concept_guidance_fallback_primary:
+        name: "gpt-5.4-mini"
+      relation_planner_macro_concept_guidance_fallback_secondary:
+        name: "gpt-5.4-mini"
+      placer:
+        name: "gpt-5.4-mini"
+      placer_fallback_primary:
+        name: "gpt-5.4-mini"
+      placer_fallback_helper:
+        name: "gpt-5.4-mini"
+      stylist:
+        name: "gpt-5.4-mini"
+      judge:
+        name: "gpt-5.4-mini"
+
+  ollama:
+    enabled: false
+    api_key: "ollama"
+    base_url: "http://localhost:11434/v1"
+    models:
+      primary:
+        name: "gemma3:27b"
+      helper:
+        name: "gemma3:27b"
+
+  mistral:
+    enabled: false
+    api_key: "mistral"
+    base_url: "http://localhost:11434/v1"
+    models:
+      primary:
+        name: "mistral:instruct"
+      helper:
+        name: "mistral:instruct"
+
+  gemini:
+    enabled: false
+    api_key: "${GEMINI_API_KEY}"
+    base_url: "https://generativelanguage.googleapis.com/v1beta"
+    models:
+      primary:
+        name: "gemini-3-flash-preview"
+      helper:
+        name: "gemini-3.1-flash-lite-preview"
+    agent_models:
+      forge:
+        name: "gemini-3-flash-preview"
+      planner:
+        name: "gemini-3-flash-preview"
+      planner_adaptive_room_rule_primary:
+        name: "gemini-3-flash-preview"
+      planner_adaptive_room_rule_fallback_primary:
+        name: "gemini-3.1-flash-lite-preview"
+      planner_adaptive_room_rule_fallback_secondary:
+        name: "gemini-2.5-flash-lite"
+      planner_adaptive_candidate_overrides_primary:
+        name: "gemini-3.1-flash-lite-preview"
+      planner_adaptive_candidate_overrides_fallback_primary:
+        name: "gemini-2.5-flash-lite"
+      planner_adaptive_candidate_overrides_fallback_secondary:
+        name: "gemini-3-flash-preview"
+      planner_adaptive_cluster_semantics_primary:
+        name: "gemini-3.1-flash-lite-preview"
+      planner_adaptive_cluster_semantics_fallback_primary:
+        name: "gemini-3-flash-preview"
+      planner_adaptive_cluster_semantics_fallback_secondary:
+        name: "gemini-2.5-flash-lite"
+      relation_planner_macro_concept_guidance_primary:
+        name: "gemini-3-flash-preview"
+      relation_planner_macro_concept_guidance_fallback_primary:
+        name: "gemini-3.1-flash-lite-preview"
+      relation_planner_macro_concept_guidance_fallback_secondary:
+        name: "gemini-2.5-flash-lite"
+      placer:
+        name: "gemma-3-27b-it"
+      placer_fallback_primary:
+        name: "gemini-2.5-flash"
+      placer_fallback_helper:
+        name: "gemini-2.5-flash-lite"
+      stylist:
+        name: "gemini-3-flash-preview"
+      judge:
+        name: "gemini-3.1-flash-lite-preview"

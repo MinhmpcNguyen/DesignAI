@@ -1,0 +1,12 @@
+.git/
+.env
+.env.*
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+private_key*.enc
+public_key.txt
+*.pem
+*.key
+
