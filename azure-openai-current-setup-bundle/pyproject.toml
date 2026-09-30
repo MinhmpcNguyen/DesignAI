@@ -1,0 +1,67 @@
+[project]
+name = "tknt-normalize-run-api"
+version = "0.1.0"
+description = "FastAPI normalize-run service for TKNT layout pipeline."
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "cryptography>=42.0",
+    "fastapi>=0.111.0",
+    "httpx>=0.26.0",
+    "openai>=1.0.0",
+    "ortools>=9.10.0",
+    "psycopg[binary]>=3.1.0",
+    "pydantic>=2.0.0",
+    "pydantic-ai>=0.0.42",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+    "shapely>=2.0.0",
+    "uvicorn[standard]>=0.30.0",
+]
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.27.0",
+    "ruff>=0.9.0",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.uv]
+package = false
+
+[tool.ruff.lint]
+select = [
+    "B",
+    "C4",
+    "E",
+    "F",
+    "I",
+    "PL",
+    "RUF",
+    "SIM",
+    "UP",
+]
+ignore = [
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.basedpyright]
+typeCheckingMode = "recommended"
+pythonVersion = "3.11"
+include = [
+    ".",
+]
+exclude = [
+    ".venv",
+    "__pycache__",
+]
